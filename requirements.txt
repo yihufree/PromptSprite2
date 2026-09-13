@@ -1,0 +1,10 @@
+customtkinter>=5.2.0
+Pillow>=10.0.0
+pyperclip>=1.8.0
+openpyxl>=3.1.0
+keyboard>=0.13.5
+pystray>=0.19.0
+# 2026-08-18（第020条，P2-R2 修复）：移除未引用的冗余依赖 python-dateutil（grep 全代码无 import）
+# 2026-09-14（V2.0.0）：依赖清单无任何变动——标签系统、条目图集、字段类型体系、
+#   离线结构化向导、联网抓取（urllib/gzip/zlib/base64/html.parser）、短音频试听（winsound）
+#   全部使用 Python 标准库实现，故本文件不新增任何依赖（EXE 体积基本不变）。
