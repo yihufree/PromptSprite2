@@ -8,6 +8,8 @@ build.py - PromptSprite 一键打包脚本（单 EXE）
   2. 确保 requirements.txt 运行依赖已安装（缺失自动安装）
   3. 由 Icons/PSicon.png 生成 build/app.ico
   4. 准备内置完整数据库：复制 data/prompts.db → app/resources/builtin_prompts.db（内嵌进 EXE）
+  4.5 清理/校验内置库"运行态 meta"：clean_builtin_meta.py --apply + --check（2026-09-15 用户要求 C12；
+      **同日升级为硬门禁**：任一步失败即终止打包）
   5. 执行 PyInstaller（onefile + windowed），把所有必要依赖与最新数据打入单 EXE
   6. 更新打包数据文件夹：复制 data/prompts.db → dist/data/prompts.db
   7. 校验产物 dist/PromptSprite.exe 并显示大小
@@ -93,6 +95,37 @@ def _update_dist_data() -> None:
     print(f"[数据] dist/data/prompts.db 已更新为最新数据（{os.path.getsize(DIST_DB) / 1024 / 1024:.1f} MB）")
 
 
+def _clean_builtin_meta() -> bool:
+    """打包前：**清理并校验"出厂内置库"的运行态 meta 键**（2026-09-15 用户要求 C12）。
+
+    背景：内置库由"开发态主库"复制而来，而开发机运行程序会把运行态数据写进它的 meta 表
+    （上次同步时间、窗口大小/视图模式/标签页停留位置，甚至**计算机名** `settings_computer_code`），
+    新用户首次安装会直接继承这些值。此处自动调用项目根的 `clean_builtin_meta.py`：
+      ① `--apply`：删除白名单（schema_version / builtin_manual_version / tag_dict）之外的键，
+         写前自动备份到 `data/backup/`；
+      ② `--check`：复核（退出码 0 = 已无运行态键）。
+
+    **硬门禁**（2026-09-15 用户确认，原实现为"非致命"已改为阻断）：脚本缺失、调用异常、
+    任一步退出码非 0 ⇒ 返回 `False`，由 `main()` 打印错误并 **终止打包**，
+    避免"运行态 / 开发机个人信息"随 EXE 出厂。
+    """
+    script = os.path.join(ROOT, "clean_builtin_meta.py")
+    if not os.path.isfile(script):
+        print("[数据] ✗ 未找到 clean_builtin_meta.py，无法完成出厂库运行态清理校验")
+        return False
+    for args, desc in ((["--apply"], "清理"), (["--check"], "复核")):
+        try:
+            r = subprocess.run([PY, script, *args], cwd=ROOT)
+        except Exception as exc:
+            print("[数据] ✗ 内置库运行态%s调用失败：%s" % (desc, exc))
+            return False
+        if r.returncode != 0:
+            print("[数据] ✗ 内置库运行态%s未通过（退出码 %d）" % (desc, r.returncode))
+            return False
+        print("[数据] ✓ 内置库运行态%s通过" % desc)
+    return True
+
+
 def main() -> None:
     print(f"使用解释器：{PY}")
 
@@ -115,6 +148,12 @@ def main() -> None:
     # 4. 准备内置完整数据库（2026-08-18 第023条新增）
     print("[4/7] 准备内置完整数据库（打包进 EXE）...")
     _prepare_builtin_db()
+
+    # 4.5 清理/校验内置库运行态 meta（2026-09-15 用户要求 C12；同日升级为**硬门禁**）
+    print("[4.5/7] 清理/校验内置库运行态 meta（clean_builtin_meta.py）...")
+    if not _clean_builtin_meta():
+        print("✗ 出厂内置库运行态 meta 清理/校验未通过 → 已终止打包（请按上方提示手工排查后重试）")
+        sys.exit(1)
 
     # 5. 执行 PyInstaller 打包（在项目根目录运行，产物落在 dist/）
     print("[5/7] 执行 PyInstaller 打包（onefile + windowed，含最新数据）...")

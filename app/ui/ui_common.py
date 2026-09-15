@@ -16,6 +16,19 @@ ADD_BTN_STYLE = dict(fg_color="#e8ecf1", hover_color="#d5dce5", text_color="#1f2
 # 导航选中态：比默认按钮颜色稍稍加深，便于识别选中的 根目录→一级→二级 链路
 SEL_BTN_STYLE = dict(fg_color="#25639c", hover_color="#1d4f7c", text_color="white")
 
+# 2026-09-14（阶段 3）：标签 chip 的柔和配色（按标签名哈希分配，同名永远同色）。
+# 由 main_window.py 的 `_tag_color()` 与 quick_add.py 的标签区**共用**（避免两处各写一份）。
+TAG_SOFT_COLORS = ("#5b8def", "#c9709a", "#c9971f", "#2E8B57", "#7A4FBF",
+                   "#1f6f8f", "#8a6d3b", "#4a7c59", "#a04a6c", "#3d7ea6")
+
+
+def tag_color(name: str) -> str:
+    """按标签名哈希取一个柔和底色（同名永远同色）。"""
+    h = 0
+    for ch in (name or ""):
+        h = (h * 31 + ord(ch)) & 0xFFFFFFFF
+    return TAG_SOFT_COLORS[h % len(TAG_SOFT_COLORS)]
+
 
 def rows_to_px(rows) -> int:
     """行数 → 像素（CTkTextbox.height 单位是像素；1 行 ≈ 20px）。

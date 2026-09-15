@@ -18,6 +18,7 @@ from tkinter import messagebox, simpledialog
 import customtkinter as ctk
 
 from .. import config  # 2026-08-29（B2 修复）：新增根目录兜底归入"未明确分类"
+from .. import tagger, tagger_engine  # 2026-09-14（阶段 3）：录入时自动推荐标签
 from ..models import Entry
 
 _HOVER_MS = 200  # 悬停锁定判定时长（秒级换算：0.2 秒）
@@ -26,6 +27,7 @@ _HOVER_MS = 200  # 悬停锁定判定时长（秒级换算：0.2 秒）
 from .ui_common import ADD_BTN_STYLE as _ADD_STYLE
 from .ui_common import SEL_BTN_STYLE as _SEL_STYLE
 from .ui_common import install_edit_capability as _enable_text_undo  # 2026-09-09：文本框撤销/重做
+from .ui_common import tag_color as _tag_color  # 2026-09-14（阶段 3）：标签配色（与主窗口共用）
 
 
 class _Tip:
@@ -89,12 +91,32 @@ _FORM_FIELDS = [
     ("⑩ 图像获取方案", "image_plan", 3),
 ]
 
+# 2026-09-15（批次 7，用户要求）：快速新建窗口"屏内定位 + 高度收敛"常量
+#   · 用户口径：初始窗口距屏幕上边 ≈50，且**任何情况下**整窗（含下边）都在屏幕范围内；
+#   · 尺寸一律按**源码值**（CTk 会乘 DPI 缩放系数换算为物理像素），故屏幕可用空间需除以缩放系数。
+_QW_SRC_W = 1200          # 期望宽（源码值，沿用原 `geometry("1200x700")` 的宽）
+_QW_SRC_H = 700           # 期望高（源码值，沿用原值）
+_QW_TOP_MARGIN = 50       # 距屏幕上边（物理像素）
+_QW_BOTTOM_MARGIN = 40    # 屏幕下边预留（物理像素）
+_QW_MIN_SRC_H = 480       # 高度源码值下限（内容区均为可滚动容器，压矮不丢内容）
+
 
 class QuickAddWindow(ctk.CTkToplevel):
-    def __init__(self, master, db):
+    def __init__(self, master, db, default_cat_id=None):
         super().__init__(master)
         self.db = db
         self.master = master
+        # 2026-09-15（批次 8-A，用户确认）：**默认目标分类**（由主窗口传入"当前视图分类"）。
+        #   作用：① 打开窗口后**不悬停任何分类**也能拿到推荐上下文（原先为 None ⇒ 推荐不出）；
+        #        ② 作为保存目标的兜底（用户悬停/锁定分类时优先用悬停/锁定的那个，不改变原优先级）。
+        self._default_cat_id = default_cat_id
+        # 2026-09-15 17:15（批次 8-D，用户确认）：T2"⑧⑨ 输入停止后自动推荐"（设置开关，默认关）。
+        #   与主窗口**同一开关**（meta `settings_auto_tag_suggest`）、同一防抖时长 800ms。
+        try:
+            self._auto_tag_suggest = self.db.get_meta(config.META_AUTO_TAG_SUGGEST) == "1"
+        except Exception:
+            self._auto_tag_suggest = False
+        self._suggest_timer = None   # 防抖定时器句柄
         self._hover_timer = None
         self._cat_id = None          # 锁定分类 id；None = 未分类
         self._domain_id = None       # 当前悬停选中的根目录 id
@@ -115,7 +137,10 @@ class QuickAddWindow(ctk.CTkToplevel):
         self._l2_styles = {}
 
         self.title("✚ 快速新建提示词（悬停选定分类，无需点击）")
-        self.geometry("1200x700")  # 2026-08-29：增加"项目类别"列，窗口加宽
+        # 2026-09-15（批次 7，用户要求）：原固定 `geometry("1200x700")` **只给尺寸、不给位置**，
+        #   实际位置由窗口管理器决定（实测偏低 ⇒ 窗口下边出屏）。改为"按屏幕收敛 + 水平居中 +
+        #   上边距 50 + 屏内夹取"，尺寸与位置统一由 `_place_on_screen()` 设置（含映射后二次校正）。
+        self._place_on_screen()
         self.resizable(True, True)
         self.transient(master)
         self.grab_set()
@@ -127,6 +152,54 @@ class QuickAddWindow(ctk.CTkToplevel):
         self._build_columns()
         self._build_form()
         self._load_projects()
+
+    def _place_on_screen(self) -> None:
+        """按屏幕收敛尺寸并定位：水平居中 + 上边距 ≈50，保证整窗在屏幕内（2026-09-15 批次 7）。
+
+        做法（与主窗口同口径，**仅作用于本窗口**，不影响其它对话框）：
+          1. 宽/高按屏幕可用空间收敛（源码值 = 物理目标 ÷ DPI 缩放系数）；
+          2. 先按估算尺寸定位，再在**映射后**用真实像素宽高校正两次
+             （映射前 `winfo_width()` 返回 1，故必须二次校正）。
+        用户口径：上边距 50；窗口下边不得超出屏幕（预留 40）；高度不足时压矮（内容区可滚动）。
+        """
+        try:
+            scale = ctk.ScalingTracker.get_window_scaling(self)
+        except Exception:
+            scale = 1.0
+        if not scale or scale <= 0:
+            scale = 1.0
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        # 1) 尺寸收敛（源码值口径）：宽高都不超出屏幕可用空间
+        max_w_src = int(max(sw - 40, 320) / scale)
+        max_h_src = int(max(sh - _QW_TOP_MARGIN - _QW_BOTTOM_MARGIN, 240) / scale)
+        w_src = min(_QW_SRC_W, max_w_src)
+        h_src = min(_QW_SRC_H, max_h_src)
+        if max_h_src >= _QW_MIN_SRC_H:          # 屏幕够高：高度保持在 [下限, 期望] 之间
+            h_src = max(h_src, _QW_MIN_SRC_H)
+        self.geometry(f"{w_src}x{h_src}")
+
+        def _apply() -> None:
+            try:
+                if self.winfo_ismapped():
+                    w_px, h_px = self.winfo_width(), self.winfo_height()
+                else:
+                    w_px, h_px = int(w_src * scale), int(h_src * scale)
+                if w_px <= 1 or h_px <= 1:
+                    return
+                x = max((sw - w_px) // 2, 0)
+                y = _QW_TOP_MARGIN
+                if y + h_px > sh - _QW_BOTTOM_MARGIN:    # 下边出屏 → 上移（但不高于 0）
+                    y = max(sh - _QW_BOTTOM_MARGIN - h_px, 0)
+                if x + w_px > sw:                        # 右边出屏 → 左移
+                    x = max(sw - w_px, 0)
+                self.geometry(f"+{x}+{y}")
+            except Exception:
+                pass
+
+        _apply()
+        self.after(60, _apply)     # 映射后校正（DPI 下真实像素与估算可能相差数像素）
+        self.after(220, _apply)
 
     # ------------------------------------------------------------------ #
     # 布局
@@ -165,6 +238,31 @@ class QuickAddWindow(ctk.CTkToplevel):
         self.name_entry = ctk.CTkEntry(form, height=34)
         self.name_entry.pack(fill="x", padx=8, pady=(0, 2))
 
+        # 2026-09-14（阶段 3）：🏷 标签（自动推荐；推荐结果直接加入＝"默认全选"，点 × 去掉不要的）
+        self._tag_names = []
+        self._rec_last_name = ""
+        ctk.CTkLabel(form, text="🏷 标签", font=("Microsoft YaHei", 12, "bold"),
+                     anchor="w").pack(fill="x", padx=8, pady=(6, 0))
+        _tag_row = ctk.CTkFrame(form, fg_color="transparent")
+        _tag_row.pack(fill="x", padx=8, pady=(0, 2))
+        ctk.CTkButton(_tag_row, text="✨ 推荐标签", width=104, height=24, fg_color="#7A4FBF",
+                      font=("Microsoft YaHei", 11), command=self._suggest_tags
+                      ).pack(side="left")
+        self._tag_entry = ctk.CTkEntry(_tag_row, placeholder_text="输入标签，回车添加")
+        self._tag_entry.pack(side="left", fill="x", expand=True, padx=(6, 0))
+        self._tag_entry.bind("<Return>", lambda _e=None: self._add_tag_from_entry())
+        # 2026-09-15 18:30（批次 9，用户确认 C18 路线①）：新增「📋 选择…」——
+        #   从"库中已用标签 ∪ 词表 ∪ 热点词"候选池多选/新建标签（与主窗口同一交互）
+        ctk.CTkButton(_tag_row, text="📋 选择…", width=84, height=24, fg_color="#5B7CC7",
+                      font=("Microsoft YaHei", 11), command=self._pick_tags_dialog
+                      ).pack(side="left", padx=(6, 0))
+        self._tag_chips_row = ctk.CTkFrame(form, fg_color="transparent")
+        self._tag_chips_row.pack(fill="x", padx=8, pady=(0, 2))
+        self._refresh_tag_chips()
+        # ①名称框**回车 / 失焦** → 自动推荐一次标签（T1，无需设置开关）
+        self.name_entry.bind("<Return>", self._on_name_committed, add="+")
+        self.name_entry.bind("<FocusOut>", self._on_name_committed, add="+")
+
         self._boxes = {}
         for label, key, height in _FORM_FIELDS:
             ctk.CTkLabel(form, text=label, font=("Microsoft YaHei", 12, "bold"),
@@ -188,6 +286,8 @@ class QuickAddWindow(ctk.CTkToplevel):
                 box.configure(height=_PROMPT_EMPTY_H)
                 box.bind("<KeyRelease>",
                          lambda _e=None, b=box: self._fit_prompt_box(b))
+                # 2026-09-15 17:15（批次 8-D）：⑧/⑨ 输入停止 800ms 后自动推荐（T2，开关默认关）
+                box.bind("<KeyRelease>", self._on_prompt_typed, add="+")
 
         # 底部按钮区：固定不随输入区滚动
         footer = ctk.CTkFrame(form_root, fg_color="transparent")
@@ -480,7 +580,9 @@ class QuickAddWindow(ctk.CTkToplevel):
             return self._cat_id
         if self._uncat_locked:
             return None
-        return self._active_cat_id
+        # 2026-09-15（批次 8-A）：无悬停/锁定分类时，回退"主窗口传入的默认目标分类"
+        #   （用户显式点"归入未分类"时上面已提前返回 None，不受影响）
+        return self._active_cat_id or self._default_cat_id
 
     def _save(self) -> None:
         name = self.name_entry.get().strip()
@@ -494,7 +596,14 @@ class QuickAddWindow(ctk.CTkToplevel):
                   works=self._box("works"), image_desc=self._box("image_desc"),
                   prompt_cn=self._box("prompt_cn"), prompt_en=self._box("prompt_en"),
                   image_plan=self._box("image_plan"))
-        self.db.add_entry(e)
+        _new_id = self.db.add_entry(e)
+        # 2026-09-14（阶段 3）：新增保存后写入标签（拿到新 id 才能写）
+        #   注：旧版此窗口没有标签输入项，故此前从不写 entry_tags。
+        try:
+            if self._tag_names:
+                self.db.set_entry_tags(_new_id, self._tag_names)
+        except Exception:
+            pass
         self._saved_count += 1
         self.master.refresh_domains(silent=True)  # 2026-08-18（P1-2）：静默刷新，不打断主窗口连续录入
         self.lock_label.configure(
@@ -506,10 +615,167 @@ class QuickAddWindow(ctk.CTkToplevel):
         box = self._boxes.get(key)
         return box.get("1.0", "end").strip() if box else ""
 
+    # ------------------------------------------------------------------ #
+    # 录入时自动推荐标签（2026-09-14，阶段 3）
+    #   与主窗口同一套引擎与交互：**推荐结果直接加入已选标签（＝"默认全选"）**，
+    #   用户点 chip 上的 "×" 去掉不要的即可；已存在的标签不重复添加（只追加、不覆盖）。
+    # ------------------------------------------------------------------ #
+    def _suggest_ctx_names(self) -> list:
+        """推荐用的分类上下文名（本窗口按"已锁定分类"取分类链）。"""
+        try:
+            index = tagger.build_context_index(self.db)
+            return tagger.entry_context_names(index, self._effective_cat_id())
+        except Exception:
+            return []
+
+    def _suggest_tags(self) -> None:
+        """✨ 按当前表单内容自动推荐标签并**并入**已选。"""
+        texts = {"name": self.name_entry.get().strip()}
+        for k in ("intro", "features", "image_desc", "prompt_cn", "prompt_en"):
+            texts[k] = self._box(k)
+        if not any((texts.get(k) or "").strip() for k in texts):
+            messagebox.showinfo("提示", "请先填写① 风格名称或提示词，再点「✨ 推荐标签」", parent=self)
+            return
+        try:
+            # 2026-09-15 18:15（批次 8-B，用户确认）：本窗口属"UI 单条推荐" ⇒ 启用全词典兜底
+            res = tagger_engine.suggest(texts, tagger.load_dict(self.db),
+                                        self._suggest_ctx_names(),
+                                        fallback_global=True)
+        except Exception as exc:
+            messagebox.showwarning("推荐失败", str(exc), parent=self)
+            return
+        names = tagger_engine.tag_names(res)
+        _note = ""
+        if names:
+            # 2026-09-15 19:30（批次 10）：来源标注——取词优先于词典兜底显示
+            _sources = {t.get("source") for t in res.get("tags") or []}
+            if "标题/提示词" in _sources:
+                _note = "（来源：标题/提示词）"
+            elif "词典兜底" in _sources:
+                _note = "（来源：词典兜底）"
+        added = [n for n in names if n not in self._tag_names]
+        for n in added:
+            self._tag_names.append(n)
+        self._refresh_tag_chips()
+        if names:
+            self.lock_label.configure(text=f"✨ 已推荐 {len(names)} 个标签{_note}（新增 {len(added)} 个）",
+                                      text_color="#7A4FBF")
+        else:
+            self.lock_label.configure(text="⚠ 未推荐出标签，可补充名称/提示词后再试",
+                                      text_color="#E08A00")
+
+    def _on_name_committed(self, _event=None) -> None:
+        """①名称框回车/失焦 → 自动推荐一次（T1；同名不重复推荐）。"""
+        try:
+            name = self.name_entry.get().strip()
+        except Exception:
+            return
+        if not name or name == getattr(self, "_rec_last_name", ""):
+            return
+        self._rec_last_name = name
+        self._suggest_tags()
+
+    # ---- T2：⑧⑨ 输入停止后自动推荐（2026-09-15 批次 8-D，设置开关默认关）---- #
+    def _on_prompt_typed(self, _event=None) -> None:
+        """⑧⑨ 输入后防抖自动推荐（与主窗口同一开关与时长）。"""
+        if not getattr(self, "_auto_tag_suggest", False):
+            return
+        try:
+            if self._suggest_timer is not None:
+                self.after_cancel(self._suggest_timer)
+        except Exception:
+            pass
+        self._suggest_timer = self.after(800, self._suggest_tags_debounced)
+
+    def _suggest_tags_debounced(self) -> None:
+        """防抖到点：仅在有内容时推荐（自动路径**不弹提示框**，避免打断录入）。"""
+        self._suggest_timer = None
+        try:
+            if not (self.name_entry.get().strip()
+                    or any((self._box(k) or "").strip() for k in self._boxes)):
+                return
+        except Exception:
+            return
+        self._suggest_tags()
+
+    def _pick_tags_dialog(self) -> None:
+        """「📋 选择…」：从候选池（已用标签 ∪ 词表 ∪ 热点词）多选/新建标签并并入已选。
+
+        2026-09-15 18:30（批次 9，用户确认 C18 路线①）：结果只 append 到 `self._tag_names`
+        并重绘 chip；**落库仍走既有 `_save()` → `db.set_entry_tags`**，不新增写库方法。
+        """
+        from .main_window import _ListPickDialog   # 延迟导入：main_window 已导入本模块，避免循环导入
+        try:
+            pool = tagger.tag_name_pool(self.db)
+        except Exception:
+            pool = []
+        opts = [{"value": n} for n in pool if n not in (self._tag_names or [])]
+        if not opts:
+            messagebox.showinfo("提示", "没有可选标签（可点「✨ 推荐标签」或直接在输入框新建）",
+                                parent=self)
+            return
+        dlg = _ListPickDialog(self, "选择 · 标签", opts, [], multi=True, allow_new=True)
+        self.wait_window(dlg)
+        if not getattr(dlg, "confirmed", False):
+            return
+        for n in list(dlg.result):
+            s = str(n or "").strip()
+            if s and s not in self._tag_names:
+                self._tag_names.append(s)
+        self._refresh_tag_chips()
+
+    def _refresh_tag_chips(self) -> None:
+        """重绘已选标签 chip 行（点 "×" 移除）"""
+        row = getattr(self, "_tag_chips_row", None)
+        if row is None or not row.winfo_exists():
+            return
+        for w in row.winfo_children():
+            w.destroy()
+        if not getattr(self, "_tag_names", None):
+            ctk.CTkLabel(row, text="（暂无标签；点「✨ 推荐标签」自动推荐）",
+                         text_color="#9aa4b1", font=("Microsoft YaHei", 10)).pack(side="left")
+            return
+        for n in self._tag_names:
+            color = _tag_color(n)
+            chip = ctk.CTkFrame(row, fg_color=color, corner_radius=11)
+            chip.pack(side="left", padx=(0, 6), pady=2)
+            ctk.CTkLabel(chip, text=n, text_color="#ffffff", font=("Microsoft YaHei", 10)
+                         ).pack(side="left", padx=(8, 2), pady=2)
+            ctk.CTkButton(chip, text="×", width=20, height=20, fg_color=color,
+                          hover_color="#8a94a6", text_color="#ffffff",
+                          font=("Microsoft YaHei", 10),
+                          command=lambda s=n: self._remove_tag(s)
+                          ).pack(side="left", padx=(0, 3), pady=2)
+
+    def _add_tag_from_entry(self) -> None:
+        """标签输入框回车 → 加入"""
+        n = self._tag_entry.get().strip()
+        if n and n not in self._tag_names:
+            self._tag_names.append(n)
+        try:
+            self._tag_entry.delete(0, "end")
+        except Exception:
+            pass
+        self._refresh_tag_chips()
+
+    def _remove_tag(self, name: str) -> None:
+        """点 chip 上的 "×" → 移除该标签"""
+        if name in self._tag_names:
+            self._tag_names.remove(name)
+            self._refresh_tag_chips()
+
     def _clear_form(self) -> None:
         self.name_entry.delete(0, "end")
         for box in self._boxes.values():
             box.delete("1.0", "end")
+        # 2026-09-14（阶段 3）：清空标签与"已按名称推荐过"的记录，便于连续录入
+        self._tag_names = []
+        self._rec_last_name = ""
+        try:
+            self._tag_entry.delete(0, "end")
+        except Exception:
+            pass
+        self._refresh_tag_chips()
         # 2026-08-19：清空表单后，⑧/⑨ 提示词文本框恢复默认 6 行高度
         for key in _PROMPT_KEYS:
             box = self._boxes.get(key)
@@ -572,6 +838,14 @@ class QuickAddWindow(ctk.CTkToplevel):
                 messagebox.showinfo("提示", "未找到链接（请输入 http:// 或 https:// 开头网址）")
 
     def _close(self) -> None:
+        # 2026-09-15 17:15（批次 8-D）：关闭窗口前取消"未到点"的自动推荐防抖定时器，
+        #   避免回调打到已销毁的控件上。
+        try:
+            if getattr(self, "_suggest_timer", None) is not None:
+                self.after_cancel(self._suggest_timer)
+        except Exception:
+            pass
+        self._suggest_timer = None
         try:
             self.grab_release()
         except Exception:

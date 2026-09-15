@@ -23,6 +23,7 @@ import os
 import re  # 2026-08-18（第020条，P2-B2 修复）：import re 由 _open_image_plan 函数内上移至模块顶部
 import shutil
 import tkinter as tk
+import tkinter.font as tkfont
 import webbrowser  # 2026-08-18（第015条）：详情"⑩图像获取方案"打开链接按钮
 from datetime import datetime  # 2026-08-29（M4）：增量备份文件名日期
 from tkinter import filedialog, messagebox, simpledialog, ttk  # 2026-09-13（3-c+）：候选列表 Treeview
@@ -32,10 +33,14 @@ import customtkinter as ctk
 import pyperclip
 
 from .. import config
+from .. import ui_appearance   # 2026-09-15（批次 4）：界面外观（字体/字号/颜色）数据层
 from .. import backup as backup_mod  # 2026-09-08（V1.7.0）：导入前快照 preimport_snapshot
+from .. import tagger  # 2026-09-14（阶段 0.5）：标签词表存取/校验/导入导出（纯数据层）
+from .. import tagger_engine  # 2026-09-14（阶段 3）：录入时自动推荐标签（引擎）
 from ..models import Entry
 from ..parser import excel_io, html_export, json_io, md_parser
 from .change_import_dialog import ChangeImportDialog  # 2026-09-08（V1.7.0）：变更包导入向导
+from .batch_tag_dialog import BatchTagDialog  # 2026-09-14（阶段 2）：批量智能自动打标
 from .column_visibility_dialog import ColumnVisibilityDialog  # 2026-09-10：目录隐藏/目录显示对话框
 from .copy_move_dialog import CopyMoveDialog  # 2026-08-21（第004条）：各级目录"复制到/移动到"
 from .field_defs_diff_dialog import confirm_field_defs_file  # 2026-09-13：导入前字段定义差异确认
@@ -52,6 +57,7 @@ from .ui_common import SEL_BTN_STYLE as _SEL_BTN
 from .ui_common import rows_to_px as _rows_to_px
 from .ui_common import install_edit_capability as _enable_text_undo  # 2026-09-09：文本框撤销/重做
 from .ui_common import set_boxes_readonly as _set_boxes_readonly  # 2026-09-09：浏览只读（可选中复制）
+from . import ui_common as _ui_common  # 2026-09-14（阶段 3）：标签配色公共实现（quick_add 共用）
 
 
 # 详情区字段展示配置：(显示名, 数据库字段键, 文本框高度行数)
@@ -78,16 +84,141 @@ _NAV_COL_WIDTHS = (112, 112, 168, 168)
 # Tk 的 pack 会把缺口全部压到最后排入的"重置"上导致其文字被裁切；加宽后该行完整显示。
 # 2026-09-13（1-C-3）：工具栏新增"🏷 标签"按钮（约 +76px），最小宽度同步上调，避免缩窗时
 # "导入/导出/设置/搜索框"被挤出可视区。
-_BASE_MIN_WIDTH = 1496
+# 2026-09-14（用户明确要求，本轮）：**详情区最小宽度减小五分之一**。
+#   详情区宽度 = 窗口宽度 − 16（窗口左右边距） − 560（四级目录） − 224（条目区）；
+#   改动前：1496 − 800 = **696px** → 减小 1/5（−139px）→ **557px**
+#   → 故 _BASE_MIN_WIDTH 由 1496 改为 **1357**（＝557 + 800）。
+#   ⚠ 提醒：2026-09-10 的验证记录是"详情区第 2 行在窗口 1420（详情区 620）时完整显示"，
+#   本次按用户要求降到 557 < 620 → **窗口缩到最窄时，详情区第 2 行可能被压/裁**。
+#   本轮已把该行的「重置」（72→56）与「编辑/浏览」（总宽 134→120）收窄，可抵消一部分；
+#   若仍不理想，请告知（属用户可见行为，需你决定是否再调）。
+# 2026-09-14（用户要求"省宽"）：工具栏最小可用宽度 = 各列最小宽求和 + 左右边距
+#   = 标题242+标签85+目录隐藏107+无类条目105+无标条目105+常用85+新建102+导入76+导出76
+#     +锁定85+设置78+搜索框列(127+10)=137 + 16 = **1299** ← 窗口低于此值工具栏右侧会被裁。
+# 2026-09-14（用户明确要求，本轮 3）：
+#   · `_MIN_WIDTH_FLOOR` **恢复为你原来的 1104**（我此前擅自改到 1230/1329/1299，现按你要求回退）。
+#   · 详情区最小宽度 **+3 个汉字（3×14 = 42px）**：557 → **599** → `_BASE_MIN_WIDTH` 1357 → **1399**。
+#     （详情区宽 = 窗口宽 − 16 − 560（四级目录） − 224（条目区））
+#   · 注：下限回到 1104 后，窗口可被缩到 1104，此时**顶部工具栏右侧会被裁**（这是你原设计的状态）；
+#     四列全显示时的最小宽度为 1399。
+# 2026-09-14（用户明确要求，本轮 4）：**把"当前详情区的实际宽度"定为所有状态下详情区的最小宽度**。
+#   实测（临时脚本，本机 120% 缩放、四列全显示）：
+#     a) 默认窗口（实际 1773 px）下 **详情区 = 685 px**（"目前详情区的宽度"即此值）；
+#     b) 且关系恒定：**详情区 = 窗口实际宽度 − 1088**
+#        （1088 = nav 四列实际 670 + 条目区实际 268 + 其它固定开销 150）；
+#     c) ⚠ 已确认 **CTk 的 `geometry()` 与 `minsize()` 同样按控件缩放(1.2)换算**，
+#        故本常量是"源码值"，实际生效 = 源码 × 1.2。标定实测：
+#          源码 1478 → 窗口最小 1770 → 详情区 682
+#          源码 1496 → 窗口最小 1792 → 详情区 704
+#    → 取 **1481**（窗口最小 ≈ 1773 实际，详情区 ≈ 686 px，比"目前 685"略大 1px，方向安全）。
+#   隐藏分类列时窗口最小会按列宽下调且不低于 _MIN_WIDTH_FLOOR(1104)，详情区只会更大，
+#   故"所有状态下详情区 ≥ 685"恒成立。
+# 2026-09-14（用户明确要求，本轮 6）：**详情区最小宽度改为 550px**（继续看效果）。
+#   实测关系（本机 120% 缩放）：**详情区 = 窗口实际宽度 − 1088**，窗口实际最小 ≈ 源码 × 1.2 − 3；
+#   标定参考：源码 1310 → 窗口 1569 → 详情区 481（源码每 ±1 → 详情区 ±1.2）。
+#   550 ⇒ 窗口实际 1638 ⇒ 源码 ≈ **1368**（实测 1368 → 窗口 ≈1638 → 详情区 ≈550）。
+# 2026-09-14 20:40（用户决定 B，本轮）：详情区最小宽 **550 → 571**。
+#   原因：详情区两行各 3 个按钮改为"统一 96px、上下对齐"后，第二行总需求 = 547px，
+#   而详情区 551 时实际可用行宽仅 527px（详情区 − 行/卡内边距 24）→ 最窄时「重置」被压到 43px。
+#   标定：详情区 = 源码 × 1.2 − 3 − 1088 ⇒ 571 ⇒ 源码 ≈ (571 + 1088 + 3) / 1.2 = **1385**。
+# 2026-09-14 21:05（用户选方案 A）：详情区右侧 4 控件对齐后右块由 113/116 → **142px**
+#   ⇒ 第一行内容需求 552px ⇒ 详情区最小宽 **571 → 578** ⇒ 源码 = (578 + 1088 + 3) / 1.2 = **1391**。
+# 2026-09-14 21:05（实测复核）：578 时仍差 1~2px（实测 6 按钮 94/96、重置 70/72 被挤）；
+#   为"最窄状态下按钮也严格同宽/不裁字"，目标再留余量到 **584** ⇒ 源码 = (584 + 1088) / 1.19797 ≈ **1396**。
+_BASE_MIN_WIDTH = 1396
 _BASE_MIN_HEIGHT = 660
-# 窗口最小宽度下限：顶部工具栏完整显示所需宽度（1012）+ 工具栏左右边距（16）≈ 1028，
-# 2026-09-13（1-C-3）：再计入新增的"🏷 标签"按钮（≈76）→ 1104。
-_MIN_WIDTH_FLOOR = 1104
+# 2026-09-14（用户最终决定，本轮 8）：**窗口最小宽度以"工具栏需要"为准**——
+#   两组工具按钮固定在第一行（不再下移），放不下一行时**只把搜索框移到第二行靠右**；
+#   故窗口可缩到的下限 = "第一行（标题 + 两组按钮）的需求宽度"（搜索框已移走，不再计入）。
+#   实测：第一行需求 ≈1040 实际 + 工具栏左右边距 20 = 1060 ⇒ 源码 = (1060 + 3) / 1.2 ≈ **886**。
+_MIN_WIDTH_FLOOR = 886
+# 2026-09-14（用户要求）：**按"隐藏分类列数"分别标定窗口最小宽度**（详情区目标 550 与工具栏需求取大者）——
+#   依据（实测，本机 120% 缩放）：详情区 = 窗口实际 − 开销，各状态开销 = 1088/928/768/541/314；
+#   目标详情区 550 ⇒ 窗口实际 = 550 + 开销 ⇒ 源码 = (窗口 + 3) / 1.2：
+#     隐藏0列 → 1638 → 1368 ｜ 隐藏1列 → 1478 → 1234 ｜ 隐藏2列 → 1318 → 1101
+#     隐藏3列 → 1091 →  912 ｜ 隐藏4列 → 864 → **886**（受工具栏 1060 限制，实际详情区 ≈746）
+# 2026-09-14 20:40（用户决定 B，本轮）：详情区目标 **550 → 571** ⇒ 各状态按同一口径上调
+#   （源码 = (571 + 开销 + 3) / 1.2，向上取整）：
+#     隐藏0列 → (571+1088+3)/1.2 = 1385 ｜ 隐藏1列 → (571+928+3)/1.2 ≈ 1252
+#     隐藏2列 → (571+768+3)/1.2 ≈ 1119 ｜ 隐藏3列 → (571+541+3)/1.2 ≈ 930
+#     隐藏4列 → 723 → 仍受工具栏下限 1060 限制 ⇒ **886 不变**（该状态实际详情区 ≈746 已足够）
+# 2026-09-14 21:05（用户选方案 A）：目标详情区 571 → **578** ⇒ 各状态同口径上调（向上取整）：
+#     隐藏0 → (578+1088+3)/1.2 ≈ 1391 ｜ 隐藏1 → (578+928+3)/1.2 ≈ 1258
+#     隐藏2 → (578+768+3)/1.2 ≈ 1125 ｜ 隐藏3 → (578+541+3)/1.2 ≈ 935
+# 2026-09-14 21:05（实测复核）：目标再留余量到 **584**（实测 578 时仍差 1~2px）：
+#     隐藏0 → 1396 ｜ 隐藏1 → 1263 ｜ 隐藏2 → 1129 ｜ 隐藏3 → 940（隐藏4 仍 886 不变）
+_NAV_MIN_WIDTH_BY_HIDDEN = (1396, 1263, 1129, 940, 886)
+# 2026-09-14（用户要求，本轮）：工具栏"折成两行"的判定余量（像素，实际值）——
+#   窗口变窄到"放不下一行工具栏"时折行；恢复时需比阈值再宽这么多才展开，避免临界宽度反复折/展。
+_BAR_UNFOLD_MARGIN = 60
+# 2026-09-15（审核 L-7/L-8）：两处新增常量——
+#   ① `_SCREEN_BOTTOM_MARGIN`：屏幕夹取时下边保留的像素（`_fit_window_to_screen` 原先直接用字面量 40，
+#      此处抽为常量；**数值不变**，`_do_center` 的 20px 暂按原样保留，待你决定是否统一）。
+#   ② `_BAR_ROW2_MIN_LEFT`：折行时"第二行首列留白"的下限兜底（源码值；正常情况用实测/缓存值）。
+_SCREEN_BOTTOM_MARGIN = 40
+_BAR_ROW2_MIN_LEFT = 100
+# 2026-09-15（用户要求 8）：标签页搜索框的"防抖"延迟（毫秒）——
+#   标签页每输入一个字符都会**全量重算 + 重建标签云/列表**（622 个标签时很慢），故加延迟；
+#   刻意**不复用**主搜索框的 1500ms（标签页搜索更"轻"，停顿 0.4s 即刷新）。
+_TAG_SEARCH_DEBOUNCE_MS = 400
+# 2026-09-15（用户要求 6+7）：「每页」下拉的选项文案（值 0＝不限＝单页显示全部）
+_TAG_LIMIT_LABELS = ("50", "100", "200", "500", "不限")
+
+
+def _geom_warn(where: str, exc: object) -> None:
+    """几何/缩放相关"静默异常"的统一出口（2026-09-15 审核 L-7）。
+
+    背景：窗口几何/缩放链路原先有 5 处 `except Exception: pass`，一旦真出错（例如窗口不收缩、
+    不做屏幕夹取）用户只看到"窗口位置/大小不对"，而**没有任何日志可查**；打包为无控制台 EXE
+    时更无从排查。本函数只**打印一行**（不改任何控制流、不弹窗），供诊断使用。
+    """
+    try:
+        from datetime import datetime as _dt
+        print(f"[几何] {_dt.now().strftime('%H:%M:%S')} {where}：{exc!r}")
+    except Exception:
+        pass
+# 2026-09-14（用户要求）：工具栏**第二行容器**的 grid 配置（创建与恢复都用它，避免不一致）——
+#   ⚠ 恢复显示时必须带完整参数；写成无参 `row2.grid()` 会把 columnspan/sticky 重置为默认，
+#     导致该容器只占第 0 列并把它撑宽 → 第一行按钮整体右移（实测踩坑）。
+_BAR_ROW2_GRID = dict(row=1, column=0, columnspan=13, sticky="ew",
+                     padx=(2, 6), pady=(2, 0))
+# 2026-09-14（用户要求）：**"所有状态下详情区 ≥ 550"** 的补充约束（随目标值 480→550 同步上调）——
+#   标签页面打开时左侧被"标签页面"占用（`_body` 第 0 列 minsize = 四列合计 560），
+#   若沿用"按隐藏列下调"的最小宽度，实测详情区会被压到 377px（远低于 550）。
+#   该状态实测"窗口 − 详情区"的固定开销 = **945**；按"详情区 ≥ 550"标定：
+#   源码 1250 → 窗口 ≈1497 → 详情区 ≈552 ✅（原 1190 对应详情区 480）。
+#   此项只在标签页面打开时生效（属下限加强，不违反 _MIN_WIDTH_FLOOR=1104）。
+# 2026-09-14 20:40（用户决定 B，本轮）：目标详情区 **550 → 571** ⇒ 源码 = (571 + 945 + 3) / 1.2 ≈ **1266**。
+# 2026-09-14 21:05（用户选方案 A）：目标 **571 → 578** ⇒ 源码 = (578 + 945 + 3) / 1.2 ≈ **1272**。
+# 2026-09-14 21:05（实测复核）：目标再留余量到 **584** ⇒ 源码 = (584 + 945) / 1.19797 ≈ **1277**。
+_TAG_PAGE_MIN_WIDTH = 1277
+# 2026-09-14 20:35（用户要求，本轮）：详情区**两行各 3 个按钮统一宽度**——
+#   目的：让「➜ 移动到 / ↔ 关联到 / ⧉ 复制到」（第一行左起 2~4 个）与
+#   「📋 复制全部 / 复制中文 / 复制英文」（第二行左起第 1~3 个）这 6 个按钮
+#   **大小一致、上下对齐**（用户："大小一样大、上下对齐"）。
+#   取值：6 者中"文字+内边距"需求最大者 = "📋 复制全部" 实际 96px ⇒ 源码 80（本机 120% 缩放，
+#   80 × 1.2 = 96）；取其最大值可保证任何按钮的文字都不被裁。
+#   ⚠ 这两行原来的宽度各自"刚好显示文字"（82/88/90 与 96/78/78），故宽度不一、列不对齐。
+_DETAIL6_BTN_W = 80
+# 2026-09-14 21:05（用户选方案 A）：详情区**右侧 4 个控件的两列统一宽度**——
+#   第一行「✏️ 编辑 / 🔧」与第二行「重置 / 💾 保存」**逐列对齐、两块总宽一致**：
+#     · A 列（左）＝ 编辑 / 重置：编辑文字需求 72px（不可再窄）⇒ 源码 **60**（60×1.2 = 72）；
+#       故"重置"由源码 36（46px）加宽为 **60**（72px）——用户已知悉并同意（方案 A）。
+#     · B 列（右）＝ 🔧 / 保存：保存文字需求 66px（不可再窄）⇒ 源码 **55**（55×1.2 = 66）；
+#       "🔧"（字段管理）随之由 37px 加宽为 **66px**（图标居中，仅内边距变化，文字不变）。
+#   两行右块总宽 = 72 + 4 + 66 = **142px**（原 113 / 116）⇒ 详情区最小宽 571 → 578（见下方常量）。
+_DETAIL_RCOL_A_W = 60
+_DETAIL_RCOL_B_W = 55
 
 # 2026-09-10（用户要求）：搜索框输入防抖——停止输入后再等这么久才真正查询。
 # 作用：避免"输入第一个字符就开始全字段检索 + 条目列表重建"造成的持续刷新与卡顿；
 # 回车 或 点击右侧"🔍"图标 仍可立即查询。
 _SEARCH_DEBOUNCE_MS = 1500
+
+# 2026-09-14（用户要求"无标签条目"入口 方案 C）：搜索框 `#无标签` 语法——
+#   `#无标签`（或预留英文别名 `#none`）＝过滤出"没有任何标签"的条目，可与关键词组合
+#   （如 `#无标签 电影`）；这两个词为**保留词**，不会被当作真实标签名。
+_UNTAGGED_ALIASES = ("无标签", "none")
 
 # 2026-09-07（第5条改进）：详情区 ②~⑩ 字段配色。
 # 每个字段独立成"浅色圆角卡片块"：标签用各自主题色文字、块底淡彩、内容框白底同色细边，
@@ -113,16 +244,68 @@ def _field_style(key: str):
 
 
 # 2026-09-13（1-C-2）：标签 chip 的柔和配色（按标签名哈希分配，界面小样已确认不提供用户自定）
-_TAG_SOFT_COLORS = ("#5b8def", "#c9709a", "#c9971f", "#2E8B57", "#7A4FBF",
-                    "#1f6f8f", "#8a6d3b", "#4a7c59", "#a04a6c", "#3d7ea6")
+# 2026-09-14（阶段 3）：配色与算法已抽到 ui_common（供 quick_add.py 的标签区共用），此处仅保留调用名
+_TAG_SOFT_COLORS = _ui_common.TAG_SOFT_COLORS
 
 
 def _tag_color(name: str) -> str:
     """按标签名哈希取一个柔和底色（同名永远同色）"""
-    h = 0
-    for ch in (name or ""):
-        h = (h * 31 + ord(ch)) & 0xFFFFFFFF
-    return _TAG_SOFT_COLORS[h % len(_TAG_SOFT_COLORS)]
+    return _ui_common.tag_color(name)
+
+
+# 2026-09-14：标签云的宽度估算常量（实测校准）
+#   实测发现：CTkButton **默认 width=140**，故不传 width 时短标签的控件宽度恒为 **168px**
+#   （"长曝光 (6)" 文字仅 86px 也占 168px）→ 原先按"文字宽+20"估算会**严重低估**，
+#   于是判定"一行还能再放一个"，实际放不下 → 最后一个被父容器**裁剪**
+#   （用户反馈："很多是显示了三个长标签，然后右侧有一个小回形标签"）。
+#   修复：① 按钮显式 `width=1` → CTk 按文字自适应（实测 100→104、86→94）；
+#        ② 估算用"文字宽 + 32"（实测最坏情况：控件比文字宽 24px【如 "YY" 22→46】，
+#           再加 padx 4×2 = 8，故取 32 才**保证估算 ≥ 实际**，宁可每行少放也绝不裁剪）；
+#        ③ 可用宽度再扣 40px（滚动条 + wrap 内边距 + 余量）。
+_CLOUD_BTN_PAD = 32            # 每个标签按钮的额外占位（文字宽之外；实测校准值）
+_CLOUD_RESERVED = 40           # 行容器可用宽度需扣减的固定值
+
+# 2026-09-14：文本像素宽度测量（供"标签云自动换行"用；按 (字号,粗体) 缓存 Font 对象）
+_FONT_MEASURE_CACHE = {}
+
+
+def _text_px(text: str, size: int, bold: bool = False) -> int:
+    """测量文本像素宽度；测量失败时按"字符数 × 字号"兜底估算。
+
+    背景：标签云原先所有按钮 `pack(side="left")` 平铺，而 tkinter 的 pack **不会自动换行**
+    → 标签一多就横向溢出被裁剪（用户实测"只看到 3 个标签"）。改为按实测宽度分行。
+    """
+    try:
+        key = (int(size), bool(bold))
+    except (TypeError, ValueError):
+        key = (12, False)
+    f = _FONT_MEASURE_CACHE.get(key)
+    if f is None and key not in _FONT_MEASURE_CACHE:
+        try:
+            f = tkfont.Font(font=("Microsoft YaHei", key[0],
+                                  "bold" if key[1] else "normal"))
+        except Exception:
+            f = None
+        _FONT_MEASURE_CACHE[key] = f
+    if f is None:
+        return len(str(text)) * key[0]
+    try:
+        return int(f.measure(str(text)))
+    except Exception:
+        return len(str(text)) * key[0]
+
+
+# 2026-09-14（性能优化，用户确认）：条目区与标签页的**渲染上限**
+#   实测：每条例目渲染约 54ms、每个标签列表行约 68ms、标签云每项约 27ms；瓶颈在"逐个创建
+#   UI 控件"，纯 SQL 查询仅 3ms。故加上限 + "显示更多"，把首屏时间降到秒级。
+#   2026-09-14 13:40（用户要求进一步提高速度）：
+#     条目区默认 200 → **50**（约 3 秒，"显示更多"步长同步 200 → 50，节奏一致）；
+#     标签页默认 100 → **50**（实测前 50 个标签已覆盖 89.7% 的标签使用量，前 100 仅 91.9%）。
+#     另：集合超过 ENTRY_ALL_CONFIRM_THRESHOLD 时，「全部显示」先二次确认（避免误点后长时间卡死）。
+ENTRY_RENDER_LIMIT = 50        # 条目区首屏渲染条数（0 = 全部）
+ENTRY_RENDER_STEP = 50         # 每次"显示更多"追加条数
+TAG_PAGE_LIMIT = 50            # 标签页（云/列表）首屏显示个数（0 = 全部）
+ENTRY_ALL_CONFIRM_THRESHOLD = 500   # 「全部显示」超过该条数时先二次确认
 
 _COPY_ALL = 0
 _COPY_CN = 1
@@ -571,12 +754,18 @@ class MainWindow(ctk.CTk):
         self.title("PromptSprite（提示精灵）")
         self.geometry("1480x780")  # 2026-08-29（M2）：四列导航，默认宽度 1360→1480
         # 2026-09-10（用户要求 3）：最小宽度改为随"目录隐藏"动态计算（见 apply_nav_visibility）
-        self.minsize(_BASE_MIN_WIDTH, _BASE_MIN_HEIGHT)
+        # 2026-09-14（用户要求）：最小高度同样按屏幕可用高度收敛（`_win_min_height()`），
+        #   保证"窗口缩到最小时整窗（含底边）可见"。
+        self.minsize(_BASE_MIN_WIDTH, self._win_min_height())
 
         # 交互状态
         self._lock_on = False
+        # 2026-09-15（批次 6-2）：标签页**写操作按钮**引用（锁定态即时置灰 / 解锁后恢复用）
+        self._tag_gov_btns = []
         self._cur_domain_id = None
         self._cur_cat_id = None
+        # 2026-09-15（批次 8-A）：最近一次有分类的视图（推荐上下文兜底用，见 `_suggest_ctx_names`）
+        self._last_cat_id = None
         self._view = None          # (kind, ref)：kind ∈ domain/cat/uncat/fav/search
         # 2026-09-14（审核修复 P3）：进入搜索前的浏览视图——清空搜索框时回到它
         self._view_before_search = None
@@ -609,6 +798,29 @@ class MainWindow(ctk.CTk):
         self._tag_page_search = ""
         self._tag_page_sort = "count"         # 列表呈现排序："count" / "name"
         self._view_before_tag_page = None     # 打开标签页面前的条目视图（关闭时恢复）
+        # 2026-09-14（阶段 4 4-b）：热点词页签的搜索过滤词与"新增词条"输入框引用
+        self._hotword_search = ""
+        self._hotword_entry = None
+        # 2026-09-14（性能优化，用户确认）：条目区渲染上限 / 标签一次性预取 / 分批追加
+        self._entry_render_limit = ENTRY_RENDER_LIMIT
+        self._entries_all = []          # 当前条目区**完整**列表（供"显示更多"）
+        self._entries_title = ""        # 当前条目区标题（重渲染用）
+        self._entry_render_shown = []   # 已渲染的条目（追加时只渲染新增部分）
+        self._entry_more_btns = []      # 「显示更多 / 全部显示」按钮引用
+        self._entry_count_lbl = None    # 「共 N 条（已显示前 M 条）」标签引用
+        self._entry_tags_cache = {}     # {entry_id: [标签名]} 一次性预取，消除逐条查询
+        self._tag_page_limit = TAG_PAGE_LIMIT
+        # 2026-09-15（用户要求 6+7）：标签页分页——当前页码（仅"标签云/列表"两档生效；
+        #   页码在渲染时按总页数自动钳制，改每页条数/搜索/排序/切档都会复位到第 1 页）。
+        self._tag_page_no = 1
+        # 2026-09-15（用户要求 8）：标签页/热点词搜索框的防抖定时器句柄
+        self._tag_search_after = None
+        # 2026-09-15（批次 4）：界面外观（字体/字号/颜色）配置——先给空配置，随后由 `_load_settings()` 载入
+        self._ui_appearance = ui_appearance.empty()
+        # 2026-09-14（阶段 3）：录入时自动推荐标签
+        self._auto_tag_suggest = False   # T2：输入提示词后防抖自动推荐（设置开关，默认关）
+        self._suggest_timer = None       # 防抖定时器
+        self._rec_last_name = ""         # 上次已按该名称推荐过（避免重复推荐）
         try:
             self._tag_page_view = self.db.get_meta(config.META_TAG_VIEW) or "cloud"
         except Exception:
@@ -673,6 +885,21 @@ class MainWindow(ctk.CTk):
         self._tip_trigger = None        # 触发提示的控件（文本框，判断光标是否仍在阅读区）
         self._tip_after = None          # 延时弹出/延时关闭定时器 id
         self._tip_hl = None             # 浮窗内上一次加深的行号
+        # 2026-09-14（用户要求，本轮）：工具栏"窗口过窄时折成两行"——
+        #   _bar_row2 = **第二行容器**（默认隐藏）：折行时**只把"搜索框"搬到这里靠右**，
+        #     两组工具按钮**始终留在第一行**（详见 _set_bar_folded 的说明）；
+        #   _bar_folded = 当前是否已折行；_bar_one_row_need = "一行时工具栏所需宽度"（实测缓存）；
+        #   _bar_last_w = 上次处理的窗口宽度（避免 <Configure> 高频重复计算）。
+        # ⚠ 2026-09-15（审核 L-2）：原文写作"_bar_row2 = 第二组按钮(新建/导入/导出/锁定/设置)所在的容器"，
+        #   与最终实现（第二组按钮从不离开第一行）不符 → 已更正。
+        self._bar_row2 = None
+        self._bar_folded = False
+        self._bar_one_row_need = 0
+        self._bar_last_w = 0
+        # 2026-09-15（审核 L-7B）：窗口缩放的"最近一次成功值"缓存（异常时兜底用）；
+        # 2026-09-15（审核 L-8）：折行时"第二行首列留白"的未折行实测缓存。
+        self._scale_cache = None
+        self._bar_row2_left = 0
 
         self._load_settings()   # 2026-08-18：应用持久化设置（窗口大小/视图模式/详情策略）
         self._build_toolbar()
@@ -685,6 +912,8 @@ class MainWindow(ctk.CTk):
         self.refresh_domains()
 
         self.bind("<Escape>", self._on_escape)
+        # 2026-09-14（用户要求，本轮）：窗口尺寸变化时判断工具栏是否需要折成两行（见 _on_root_configure）
+        self.bind("<Configure>", self._on_root_configure, add="+")
         self._center_window()  # 2026-08-18（第022条）：窗口居中（左右居中、纵向略偏上）
 
     def _center_window(self) -> None:
@@ -721,9 +950,17 @@ class MainWindow(ctk.CTk):
                 if y + h > self.winfo_screenheight():    # 极小屏保护：避免窗口底部超出屏幕
                     y = max(self.winfo_screenheight() - h - 20, 0)
                 self.geometry(f"+{x}+{y}")
+                # 2026-09-14（用户要求）：映射后按**真实缩放**再兜底一次——
+                #   ① 重设"最小高度"（防止极小屏上最小高度 > 屏幕可用高度）；
+                #   ② 把窗口宽/高与位置夹回屏幕内（**保证底边可见**）。
+                try:
+                    self.minsize(self._nav_min_width(), self._win_min_height())
+                except Exception as exc:              # 2026-09-15（审核 L-7）：不再静默
+                    _geom_warn("重设最小宽高", exc)
+                self._fit_window_to_screen()
                 _centered = True
-            except Exception:
-                pass
+            except Exception as exc:                  # 2026-09-15（审核 L-7）：不再静默
+                _geom_warn("窗口居中定位", exc)
 
         # 2026-08-19 00:30（第025条）：窗口映射（显示）瞬间触发定位，覆盖 EXE 慢启动场景
         self.bind("<Map>", lambda _e=None: self.after(150, _do_center), add="+")
@@ -739,17 +976,51 @@ class MainWindow(ctk.CTk):
         bar = ctk.CTkFrame(self)
         bar.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
         # 2026-09-10（用户要求 1-（2））：搜索框移到最右侧（"⚙ 设置"右侧、靠边）；
-        # 该列最小宽度 = 搜索输入框 10 汉字(140px) + 右侧放大镜按钮(27px) + 间距(4px) = 171px，
-        # 窗口加宽时随 weight=1 自动变宽，缩小时不小于最小宽度（输入框不小于 10 汉字）。
-        bar.grid_columnconfigure(10, weight=1, minsize=171)
+        # 该列最小宽度 = 搜索输入框(96px) + 右侧放大镜按钮(27px) + 间距(4px) = 127px。
+        # 2026-09-14（用户要求"无标签条目"入口 方案 A）：新增"🏷 无标条目"按钮插在"⭐ 常用"
+        # **左侧**（col4），"⭐ 常用"顺延到其右侧（col5）；其后各列索引整体 +1 → 搜索框列由 10 改为 11。
+        # 2026-09-14（用户要求"省宽"）：搜索框最小宽度 171 → 143（10→8 汉字）→ 127（8→7 汉字）。
+        # 2026-09-14（用户要求，本轮）：**搜索框此前独占全部剩余宽度**（col 只它一个 weight=1）
+        #   → 默认窗口（1792 宽）下被拉到约 559px，过宽。现改为**两列按 1:2 分配**额外宽度：
+        #   · col11 = 弹性**空白**列（weight=2，无控件）；col12 = 搜索框列（weight=1, minsize=260）。
+        #   → 额外宽度的 1/3 给搜索框、2/3 留白（搜索框不再独占全部剩余宽度）。
+        # 2026-09-15（用户要求，本轮）：搜索输入框源码宽 152 → **202**（+50）、🔍 源码宽 1 → **45**（约原 2 倍）
+        #   ⇒ 列最小宽度 183 → **260**（= 202 + 54 + 4，与下方 _build_toolbar 的标定注释一致）。
+        bar.grid_columnconfigure(11, weight=2)                  # 弹性空白（"设置"与搜索框之间留白）
+        bar.grid_columnconfigure(12, weight=1, minsize=260)     # 搜索框列（2026-09-15 用户要求：260）
+
+        # 2026-09-14（用户最终决定，本轮 8）：**工具栏第二行只放"搜索框（输入框+🔍）"，靠右**——
+        #   两组工具按钮（标签/目录显示/无类条目/无标条目/常用 + 新建/导入/导出/锁定/设置）
+        #   始终固定在第一行不再移动；窗口放不下一行时，把搜索框移到本行右端。
+        #   本容器**铺满整行**（`columnspan=13` + `sticky="ew"`）；内部第 0 列留出
+        #   "第一行最左侧按钮左边界"的空白、第 1 列伸展 → 搜索框从该处向右自适应伸展（不外溢）。
+        self._bar_row2 = ctk.CTkFrame(bar, fg_color="transparent")
+        self._bar_row2.grid(**_BAR_ROW2_GRID)
+        self._bar_row2.grid_forget()
 
         ctk.CTkLabel(bar, text="🧩 PromptSprite2", font=("Microsoft YaHei", 18, "bold")
                      ).grid(row=0, column=0, padx=(14, 20), pady=8)
         # 2026-09-10（用户要求 附）：两个汉字的命令按钮（锁定/常用/新建/导入/导出/设置）
         # 宽度再各减 ≈2 个英文字符（≈14px）；已到"文字+内边距"下限的（如设置）只能减到该下限。
-        self.lock_btn = ctk.CTkButton(bar, text="🔒 锁定", width=68,
+        # 2026-09-14（用户要求，本轮 2）：**按钮内边距统一为 5、圆角随之改为 5**、
+        #   **按钮之间间距为 5（源码 padx=2 → 本机 120% 缩放实际每侧 2px、相邻合计 4px，
+        #   是整数源码值下最接近 5 的结果）**。
+        #   内边距机制（已查 customtkinter 5.2.2 源码 ctk_button.py:304-310）：
+        #   每侧内边距 = max(corner_radius, border_width+1, border_spacing) × 控件缩放；
+        #   故把 `corner_radius` 设为 **5**（border_width 默认 0 与 border_spacing 默认 2 均小于 5）
+        #   → 每侧 5（本机 120% 缩放实际渲染 ≈6px）。圆角也随之变为 5（即用户要求的"圆角一起改"）。
+        #   注：CTk 用"圆角值"充当"最小内边距"，两者由同一个参数决定，无法各自独立设置。
+        self.lock_btn = ctk.CTkButton(bar, text="🔒 锁定", width=1, corner_radius=5,
                                       command=self._toggle_lock)
-        self.lock_btn.grid(row=0, column=1, padx=4)
+        # 2026-09-14（用户要求）：按钮顺序调整为
+        #   🏷标签(1) → 🗂目录隐藏(2) → 📂无类条目(3) → 🏷无标条目(4) → ⭐常用(5) → ✚新建(6) →
+        #   ⇩导入(7) → ⇧导出(8) → 🔒锁定(9) → ⚙设置(10) → 搜索框(11)
+        #   即："标签"移到最左侧第一个命令按钮；"锁定"移到"导出"与"设置"之间。
+        #   2026-09-14（"无标签条目"入口 方案 A + 用户要求 4）：在"📂 无类条目"右侧插入
+        #   "🏷 无标条目"（col4），"⭐ 常用"顺延到 col5，故 新建/导入/导出/锁定/设置/搜索框 各 +1。
+        #   2026-09-14（本轮折行设计）：第二组 5 个按钮**一行时仍在第一行**（col6~col10），
+        #   折行时由 `_set_bar_folded` 用 grid(in_=...) 移入第二行容器 `_bar_row2`。
+        self.lock_btn.grid(row=0, column=9, padx=2)
         # 2026-08-22（第007条）：记录锁定按钮默认配色——customtkinter 6.0.0 中
         # configure(fg_color=None) 会抛 ValueError，解锁时须恢复为记录的默认色
         self._lock_btn_default_fg = self.lock_btn.cget("fg_color")
@@ -757,13 +1028,27 @@ class MainWindow(ctk.CTk):
         # 2026-09-10（用户要求 1-（1）、2-（2））：原"🗂 项目列"按钮改名"目录隐藏/目录显示"，
         # 位置移到"🔒 锁定"右侧、"📂 无类条目"左侧；功能改为显示/隐藏各分类列（见 _on_dir_toggle）。
         self.btn_project_toggle = ctk.CTkButton(
-            bar, text="🗂 目录隐藏", width=86, command=self._on_dir_toggle)
-        self.btn_project_toggle.grid(row=0, column=2, padx=4)
+            bar, text="🗂 目录隐藏", width=1, corner_radius=5, command=self._on_dir_toggle)
+        self.btn_project_toggle.grid(row=0, column=2, padx=2)
         # 2026-09-10（用户要求 附）：按钮名称 "未分类条目" → "无类条目"，宽度按新文案贴合（96→84）
-        ctk.CTkButton(bar, text="📂 无类条目", width=84, command=self._show_uncategorized
-                      ).grid(row=0, column=3, padx=4)
-        ctk.CTkButton(bar, text="⭐ 常用", width=68, command=self._show_favorites
-                      ).grid(row=0, column=4, padx=4)
+        # 2026-09-14（用户要求 1）：各命令按钮间距源码值 padx=4 → 3。
+        #   ⚠ 实测纠正：CustomTkinter 会按**控件缩放**换算 grid 的 padx/pady（本机 120% 缩放，
+        #   系数 ≈1.2），3 × 1.2 = 3.6 → **取整回 4**，故在本机上"间距"实际**没有变化**
+        #   （grid_info 实测仍为 4；pady 8→10、(14,20)→(17,24) 同理）。此值在 100% 缩放环境才会
+        #   真正变小。若要在本机也真正收窄，需设为 **padx=2**（2×1.2=2.4→2）——**待你允许后再改**。
+        ctk.CTkButton(bar, text="📂 无类条目", width=1, corner_radius=5,
+                      command=self._show_uncategorized
+                      ).grid(row=0, column=3, padx=2)
+        # 2026-09-14（用户要求"无标签条目"入口 方案 A）：与"📂 无类条目"并列——
+        #   前者找"无分类"的条目，后者找"没有任何标签"的条目；点击后条目区列出全部无标签
+        #   条目（标题栏显示总数），可逐条点选后在详情区打标签。
+        #   2026-09-14（用户要求 3）：按钮文案由"🏷 无标签条目"改为"🏷 无标条目"（与"无类条目"对称）。
+        #   2026-09-14（用户要求 4）：本按钮移到"⭐ 常用"**左侧**（col4），"⭐ 常用"移到其右侧（col5）。
+        self.untagged_btn = ctk.CTkButton(bar, text="🏷 无标条目", width=1, corner_radius=5,
+                                          command=self._show_untagged)
+        self.untagged_btn.grid(row=0, column=4, padx=2)
+        ctk.CTkButton(bar, text="⭐ 常用", width=1, corner_radius=5, command=self._show_favorites
+                      ).grid(row=0, column=5, padx=2)
 
         # 导入/导出下拉菜单
         self.import_menu = tk.Menu(bar, tearoff=0)
@@ -807,42 +1092,57 @@ class MainWindow(ctk.CTk):
         # 2026-09-10（用户要求 3 追加）：工具栏各命令按钮宽度统一缩减 ≈2 个英文字符（≈14 逻辑px），
         # 文字仍完整显示（CTkButton 会自动撑到"文字+内边距"的最小宽度，故不会出现文字裁切）。
         # 2026-09-10（用户要求 附）：名称 "快速新建" → "新建"，宽度再减 ≈14px（96→82）。
-        # 2026-09-13（1-C-3）：工具栏"🏷 标签"按钮（放在"⭐ 常用"右侧），打开/关闭"标签页面"。
-        # 因其插入，原 5~9 列顺移至 6~10 列（搜索框所在列 10 承接 weight=1）。
-        self.tag_page_btn = ctk.CTkButton(bar, text="🏷 标签", width=68,
+        # 2026-09-13（1-C-3）：工具栏"🏷 标签"按钮，打开/关闭"标签页面"。
+        # 2026-09-14（用户要求）：**移到最左侧、成为第一个命令按钮**（原在"⭐ 常用"右侧）。
+        self.tag_page_btn = ctk.CTkButton(bar, text="🏷 标签", width=1, corner_radius=5,
                                           command=self._toggle_tag_page)
-        self.tag_page_btn.grid(row=0, column=5, padx=4)
+        self.tag_page_btn.grid(row=0, column=1, padx=2)
 
-        self.quick_add_btn = ctk.CTkButton(bar, text="✚ 新建", width=82,
+        # ---- 2026-09-14（本轮折行设计）：第二组 5 个按钮（一行时仍在第一行 col6~col10） ----
+        self.quick_add_btn = ctk.CTkButton(bar, text="✚ 新建", width=1, corner_radius=5,
                                            command=self._quick_add)
-        self.quick_add_btn.grid(row=0, column=6, padx=4)
+        self.quick_add_btn.grid(row=0, column=6, padx=2)
 
-        self.import_btn = ctk.CTkButton(bar, text="⇩ 导入", width=60)
-        self.import_btn.grid(row=0, column=7, padx=4)
+        self.import_btn = ctk.CTkButton(bar, text="⇩ 导入", width=1, corner_radius=5)
+        self.import_btn.grid(row=0, column=7, padx=2)
         self.import_btn.bind("<Button-1>",
                              lambda e=None: self._popup_menu(self.import_menu, e))
-        self.export_btn = ctk.CTkButton(bar, text="⇧ 导出", width=60)
-        self.export_btn.grid(row=0, column=8, padx=4)
+        self.export_btn = ctk.CTkButton(bar, text="⇧ 导出", width=1, corner_radius=5)
+        self.export_btn.grid(row=0, column=8, padx=2)
         self.export_btn.bind("<Button-1>",
                              lambda e=None: self._popup_menu(self.export_menu, e))
 
-        # ⚙ 设置已到"文字+内边距"下限，只能由 66 再缩到 62（实宽 79→74）
-        ctk.CTkButton(bar, text="⚙ 设置", width=62, command=self._open_settings  # 2026-08-18：设置入口
-                      ).grid(row=0, column=9, padx=4)
-        # 2026-09-10（用户要求 1-（2））：搜索框移到"⚙ 设置"右侧（工具栏最右、靠边），
-        # 搜索输入框最小宽度保持 10 汉字 = 140px（20 个英文字符宽），不随按钮缩减而变。
+        # ⚙ 设置（与其它命令按钮一致：宽度＝刚好显示文字、内边距 5、间距 5）
+        self.set_btn = ctk.CTkButton(bar, text="⚙ 设置", width=1, corner_radius=5,
+                                     command=self._open_settings)  # 2026-08-18：设置入口
+        self.set_btn.grid(row=0, column=10, padx=2)
+        # 第二组按钮清单（仅供回归测试核对分组；一组/二组**始终同在第一行**，不再搬移）
+        self._bar_group2 = [(self.quick_add_btn, 6), (self.import_btn, 7),
+                            (self.export_btn, 8), (self.lock_btn, 9), (self.set_btn, 10)]
+        # 2026-09-10（用户要求 1-（2））：搜索框移到"⚙ 设置"右侧（工具栏最右、靠边）。
         # 2026-09-10（用户要求 2）：搜索框右侧新增"🔍"小图标按钮，点击即可执行搜索。
+        # 2026-09-14（用户要求"省宽"1）：搜索输入框最小宽度 10 汉字(140) → 8 汉字(112)。
+        # 2026-09-14（用户要求 1，本轮）：再 **112 → 96（≈7 汉字）**，且右侧外边距 10 → 6。
+        #   该列是可收缩列之一（weight=1，另有权重更大的空白列）→ 只影响"窗口被缩到很窄时"的最小宽度。
+        #   实测：窗口最小可用宽度 1357（8 汉字）→ **1299**（本轮，含按钮间距收窄）。
+        # 2026-09-14（用户明确要求，本轮 3）：搜索输入框宽度 **+4 个汉字（4×14 = 56px）：96 → 152**；
+        #   对应列最小宽度 127 → **183**（= 152 + 27 + 4）。
+        # 2026-09-15（用户要求，本轮）：输入框源码宽再 **+50：152 → 202**；
+        #   🔍 由"按文字自适应"（源码 1）改为**固定 45**（本机 ≈54px，约原 27px 的 2 倍）
+        #   ⇒ 对应列最小宽度 183 → **260**（= 202 + 54 + 4）。
         self.search_box = ctk.CTkFrame(bar, fg_color="transparent")
-        self.search_box.grid(row=0, column=10, padx=(4, 10), sticky="ew")
+        self.search_box.grid(row=0, column=12, padx=(4, 6), sticky="ew")
         self.search_entry = ctk.CTkEntry(self.search_box, placeholder_text="搜索提示词（匹配全部字段）",
-                                         width=140)
+                                         width=202)
         self.search_entry.pack(side="left", fill="x", expand=True)
         # 2026-09-10（用户要求）：输入走防抖（停顿 _SEARCH_DEBOUNCE_MS 才查询）；回车立即查询。
         self.search_entry.bind("<KeyRelease>", self._on_search_typing)
         self.search_entry.bind("<Return>", self._on_search_key)
-        self.search_btn = ctk.CTkButton(self.search_box, text="🔍", width=27, height=28,
+        # 2026-09-15（用户要求）：🔍 宽度 1 → **45**（固定宽度；约为原来 27px 的 2 倍）
+        self.search_btn = ctk.CTkButton(self.search_box, text="🔍", width=45, height=28,
+                                        corner_radius=5,
                                         command=self._on_search_click)
-        self.search_btn.pack(side="left", padx=(4, 0))
+        self.search_btn.pack(side="left", padx=(2, 0))
 
     def _build_body(self) -> None:
         body = ctk.CTkFrame(self)
@@ -893,40 +1193,63 @@ class MainWindow(ctk.CTk):
         # 名称输入框已移入详情区（① 条目名称），row1 只保留命令按钮；
         # 2026-09-10（用户要求）："编辑/浏览"与"☆ 收藏"互换位置 →
         #   显示顺序（左→右）＝ ☆ 收藏 → 移动到 → 关联到 → 复制到 …… 编辑/浏览（最右）。
+        # 2026-09-14（用户要求，本轮）：详情区上方**所有按钮**宽度＝"刚好显示文字"（width=1 自适应）、
+        #   内边距 5（corner_radius=5）、按钮之间间距 5（源码 padx=2 → 本机实际每侧 2px、相邻合计 4px）。
         # 2026-09-10（用户第2条）："☆ 收藏"文案短、宽度余量大 → 92→74。
         # 2026-09-10（用户要求）：三个按钮文字标签**去掉末尾省略号**（…）。
-        self.fav_btn = ctk.CTkButton(row1, text="☆ 收藏", width=82)
+        # 2026-09-14（用户要求，本轮）："☆ 收藏"按钮宽度**再增加约 1 个汉字字符**
+        #   （约 +14px 实际，源码 width 由"自适应(width=1)"改为 67 → 实测渲染 ≈80px）。
+        # 2026-09-14 20:29（用户确认"以现状为准"）：本行最终值为 **87**（67 + 20px ≈ 1 个汉字，
+        #   本机字体 15pt ≈ 20px）；测试断言同步为 87。
+        self.fav_btn = ctk.CTkButton(row1, text="☆ 收藏", width=87, corner_radius=5)
         # 2026-09-10（用户要求 附）："移动到/关联到/复制到"宽度缩减到刚好容纳文字标签。
-        self.copyto_btn = ctk.CTkButton(row1, text="⧉ 复制到", width=71,
+        # 2026-09-14 20:35（用户要求，本轮）：这三个按钮改用**统一固定宽度** `_DETAIL6_BTN_W`
+        #   （与第二行"复制全部/复制中文/复制英文"同宽、上下对齐）；
+        #   同时把被外部改坏的文案「➜ 移-动-到」**恢复为「➜ 移动到」**（用户明确：对齐后即可去掉横线）。
+        self.copyto_btn = ctk.CTkButton(row1, text="⧉ 复制到", width=_DETAIL6_BTN_W, corner_radius=5,
                                         command=lambda: None)
-        self.link_btn = ctk.CTkButton(row1, text="↔ 关联到", width=70,
+        self.link_btn = ctk.CTkButton(row1, text="↔ 关联到", width=_DETAIL6_BTN_W, corner_radius=5,
                                       command=lambda: None)
-        self.move_btn = ctk.CTkButton(row1, text="➜ 移动到", width=81,
+        self.move_btn = ctk.CTkButton(row1, text="➜ 移动到", width=_DETAIL6_BTN_W, corner_radius=5,
                                       command=lambda: None)
-        self.fav_btn.pack(side="left", padx=(4, 2))   # 收藏换到最左端
+        # 2026-09-14 20:35（用户要求，本轮）：右侧内边距 2 → 3（+1px），使本行三个按钮的
+        #   起始 x（111）与第二行三个按钮的起始 x（111 = "⑧/⑨ 提示词："标签宽 109 + padx 2）**逐列对齐**。
+        self.fav_btn.pack(side="left", padx=(2, 3))   # 收藏换到最左端
 
         # 2026-09-09：浏览/编辑切换——浏览时详情文本只读（可选中复制），避免误改内容
         # 2026-09-10（用户第2条）：CTkSegmentedButton 的 width 参数不生效，整体宽度由各分段按钮
         # "文案+内边距"自适应，此处显式设置每个分段按钮的宽度。
         # 2026-09-10（用户要求 1）：分段按钮宽度改为"刚好容纳最宽标签（✏️ 编辑）"的最小值——
-        # 实测 "✏️ 编辑" 文字需 60px、"👁 浏览" 需 54px，宽度参数 62 时每段实宽 74px（含内边距），
-        # 两段均不裁切；不能再小于该值，否则文字会被裁切。
-        self.edit_mode_toggle = ctk.CTkSegmentedButton(
-            row1, values=["✏️ 编辑", "👁 浏览"],
-            command=self._on_edit_mode_change, width=112,dynamic_resizing=False) # 关键：禁止自动拉伸
-        self.edit_mode_toggle.set("✏️ 编辑")
-        for _seg_btn in self.edit_mode_toggle._buttons_dict.values():
-            _seg_btn.configure(width=70)
+        # 实测 "✏️ 编辑" 文字 61px、"👁 浏览" 文字 41px（本轮实测值）。
+        # 2026-09-14（用户要求 2 + 本轮"都减小"）：**整体宽度 112 → 100**（实测总宽 134 → 120），
+        #   并把"浏览"段比例再压低（60 → 52）→ 实测实宽 编辑 73→约69、浏览 61→约51；
+        #   下限：编辑段实宽必须 ≥ 其文字宽 61px（否则文字被裁），故整体不宜小于 100。
+        #   ⚠ 2026-09-15（审核 L-4）：以上 3 条均为**历史**——该分段控件已于 2026-09-14 被
+        #     "普通按钮"取代（见下条），其中的宽度数值**不再生效**，仅作沿革留档。
+        # 2026-09-14（用户要求，本轮）：**改为普通按钮**（与「🗂 目录隐藏」同形式）——
+        #   点一下进入"浏览"（按钮显示「👁 浏览」），再点一下回到"编辑"（按钮显示「✏️ 编辑」）；
+        #   即按钮文字始终表示**当前状态**。**该条当时**宽度＝刚好显示文字（width=1）、内边距 5、间距 2
+        #   （⚠ 2026-09-15：现为**固定宽度** `_DETAIL_RCOL_A_W`，见下条）。
+        #   影响面评估：全项目对 edit_mode_toggle 的引用共 6 处（本处创建 + 3 处 set + 2 处 state
+        #   配置），改用普通按钮后 `set()` → `configure(text=...)`，其余（state 禁用/启用）语义不变 → 风险小。
+        # 2026-09-14 21:05（用户选方案 A）：宽度改为**固定** `_DETAIL_RCOL_A_W`（源码 60 → 72px），
+        #   与第二行「重置」同列同宽；且切换"编辑/浏览"文案时宽度**不再变化**（原 width=1 会随文案变宽变窄）。
+        self.edit_mode_toggle = ctk.CTkButton(
+            row1, text="✏️ 编辑", width=_DETAIL_RCOL_A_W, corner_radius=5,
+            command=self._on_edit_mode_click)
         # 2026-09-13（1-A-4，用户指定）：详情区右上"编辑/浏览"**右侧**新增"字段管理"小图标按钮。
         # pack 规则：同为 side="right" 时"先 pack 者更靠右"——故本按钮须在 edit_mode_toggle
         # 之前 pack，才能出现在其右侧；不影响其余按钮的位置与宽度。
+        # 2026-09-14 21:05（用户选方案 A）：宽度改为**固定** `_DETAIL_RCOL_B_W`（源码 55 → 66px），
+        #   与第二行「💾 保存」同列同宽（文字仍是"🔧"，仅内边距变大、图标居中）。
         self.field_mgr_btn = ctk.CTkButton(
-            row1, text="🔧", width=32, height=28, font=("Microsoft YaHei", 14),
+            row1, text="🔧", width=_DETAIL_RCOL_B_W, height=28, corner_radius=5,
+            font=("Microsoft YaHei", 14),
             command=self._open_field_manager)
-        self.field_mgr_btn.pack(side="right", padx=(6, 2))
+        self.field_mgr_btn.pack(side="right", padx=2)
         _attach_tooltip(self.field_mgr_btn, "字段管理（重命名详情区区块）")
         # 2026-09-10（用户要求）：与"☆ 收藏"互换位置 → 编辑/浏览改靠最右端
-        self.edit_mode_toggle.pack(side="right", padx=(8, 4))
+        self.edit_mode_toggle.pack(side="right", padx=2)
         # 2026-09-10（用户要求 2）：移动到/关联到/复制到 紧挨"☆ 收藏"依次向右排列
         self.move_btn.pack(side="left", padx=2)
         self.link_btn.pack(side="left", padx=2)
@@ -934,24 +1257,42 @@ class MainWindow(ctk.CTk):
 
         row2 = ctk.CTkFrame(self.detail_head, fg_color="transparent")
         row2.pack(fill="x", padx=6, pady=(2, 6))
-        ctk.CTkLabel(row2, text="⑧/⑨ 提示词：",
+        # 2026-09-14 20:35（用户要求，本轮）：标签宽度固定为源码 92（实际 110px；其文字需求 109px，
+        #   故不裁字），使本行三个按钮的起始 x 与第一行**完全一致**（112/212/312），实现逐列对齐。
+        ctk.CTkLabel(row2, text="⑧/⑨ 提示词：", width=92,
                      font=("Microsoft YaHei", 13, "bold")).pack(side="left")
         # 2026-09-10（用户要求）："复制中文/复制英文/保存"各减 1 个英文字符（≈7px），
         # 为右侧"重置"腾出空间；保存宽度 78→71（上一条要求已 92→78）；
         # "复制全部"再减 1 个英文字符（86→79），进一步为"重置"腾空间。
-        self.copy_all_btn = ctk.CTkButton(row2, text="📋 复制全部", width=79, fg_color="#2E8B57")
-        self.copy_all_btn.pack(side="left", padx=4)
-        self.copy_cn_btn = ctk.CTkButton(row2, text="复制中文", width=71)
+        # 2026-09-14（用户要求，本轮）：本行按钮全部改为"刚好显示文字"（width=1）+ 内边距 5 + 间距 5。
+        # 2026-09-14 20:35（用户要求，本轮）："复制全部/复制中文/复制英文"改用**统一固定宽度**
+        #   `_DETAIL6_BTN_W`（与第一行"移动到/关联到/复制到"同宽、上下对齐）。
+        self.copy_all_btn = ctk.CTkButton(row2, text="📋 复制全部", width=_DETAIL6_BTN_W,
+                                          corner_radius=5, fg_color="#2E8B57")
+        self.copy_all_btn.pack(side="left", padx=2)
+        self.copy_cn_btn = ctk.CTkButton(row2, text="复制中文", width=_DETAIL6_BTN_W,
+                                         corner_radius=5)
         self.copy_cn_btn.pack(side="left", padx=2)
-        self.copy_en_btn = ctk.CTkButton(row2, text="复制英文", width=71)
+        self.copy_en_btn = ctk.CTkButton(row2, text="复制英文", width=_DETAIL6_BTN_W,
+                                         corner_radius=5)
         self.copy_en_btn.pack(side="left", padx=2)
+        # ⚠ 2026-09-15（审核 L-4）：以下为"保存 / 重置"宽度的**完整沿革**，
+        #   最终取值见**最后一条**：保存 `_DETAIL_RCOL_B_W`（源码 55 → 66px）、重置 `_DETAIL_RCOL_A_W`（源码 60 → 72px）。
         # 2026-09-10（用户要求 3）：保存宽度 −2 个英文字符（≈14px）：92→78；
         # 重置宽度 +2 个英文字符（≈14px）：72→86。
         # 2026-09-10（用户要求）："重置"过宽 → 再减 1 个汉字字符（≈14px）：86→72；
         # "保存"过窄 → 加 1 个英文字符（≈7px）：71→78。
-        self.save_btn = ctk.CTkButton(row2, text="💾 保存", width=78, fg_color="#2E8B57")
+        # 2026-09-14（用户要求，本轮）：宽度改为"刚好显示文字"（width=1）+ 内边距 5 + 间距 5。
+        #   2026-09-14（用户要求，本轮）："重置"宽度明确设为 **3 个汉字字符宽**
+        #   （源码 36 → 实际 ≈43px ≈ 3 汉字；文字"重置"仅 2 汉字，故左右各有约 8px 余量）。
+        # 2026-09-14 20:29（用户确认"以现状为准"）：一度改为 **56**（36 + 20px ≈ 1 个汉字）。
+        # 2026-09-14 20:45（用户最终确认）：**仍取 36**（＝3 个汉字，回到最初要求）。
+        # 2026-09-14 21:05（用户选方案 A，右侧对齐）：为与第一行「✏️ 编辑」（72px）**同列同宽**，
+        #   重置宽度改为 `_DETAIL_RCOL_A_W`（源码 60 → 72px）——用户已知悉并同意。
+        self.save_btn = ctk.CTkButton(row2, text="💾 保存", width=_DETAIL_RCOL_B_W,
+                                      corner_radius=5, fg_color="#2E8B57")
         self.save_btn.pack(side="right", padx=2)
-        self.reset_btn = ctk.CTkButton(row2, text="重置", width=72)
+        self.reset_btn = ctk.CTkButton(row2, text="重置", width=_DETAIL_RCOL_A_W, corner_radius=5)
         self.reset_btn.pack(side="right", padx=2)
 
         # 2026-09-10（用户第1条）：详情内容"白色圆角卡片"独立成 detail_card，
@@ -1393,11 +1734,20 @@ class MainWindow(ctk.CTk):
     def _nav_min_width(self) -> int:
         """按"连续隐藏的分类列宽度"计算当前窗口最小宽度（2026-09-10，用户要求 3）。
 
-        隐藏 n 列 → 最小宽度 = 1360 − 前 n 列列宽之和；不低于 _MIN_WIDTH_FLOOR（1028，
-        低于该值顶部工具栏的"导入/导出/设置/搜索框"会被挤出可视区）。
+        2026-09-14（用户要求"详情区最小宽"，并允许窗口缩得更窄）：
+        改为**按隐藏列数查实测标定表** `_NAV_MIN_WIDTH_BY_HIDDEN`（1396/1263/1129/940/886），
+        使详情区在各状态下都收窄到目标值（**现为 584**；原"用设定列宽做减法"会算偏大 → 详情区被撑宽）。
+        下限 `_MIN_WIDTH_FLOOR`(886) 为"窗口宽度以工具栏需要为准"的实测下限，作为兜底。
+
+        另（"所有状态下详情区 ≥ 目标值"）：**标签页面打开**时左侧被标签页面占用
+        （`_body` 第 0 列 minsize = 560），需同时不低于 `_TAG_PAGE_MIN_WIDTH`（1277）。
+        ⚠ 2026-09-15（审核 L-1）：以上括号内的旧数值（1368/1234/1101/912/773、773、1250）已按当前常量更正。
         """
-        hidden_w = sum(_NAV_COL_WIDTHS[:self._nav_hidden])
-        return max(_BASE_MIN_WIDTH - hidden_w, _MIN_WIDTH_FLOOR)
+        h = max(0, min(int(getattr(self, "_nav_hidden", 0)), len(_NAV_MIN_WIDTH_BY_HIDDEN) - 1))
+        base = _NAV_MIN_WIDTH_BY_HIDDEN[h]
+        if getattr(self, "_tag_page_on", False):
+            base = max(base, _TAG_PAGE_MIN_WIDTH)
+        return max(base, _MIN_WIDTH_FLOOR)
 
     def apply_nav_visibility(self, hidden_count: int) -> None:
         """按"从项目类别起连续隐藏的列数"显示/隐藏左侧四个分类列并更新按钮文案（2026-09-10）。
@@ -1429,7 +1779,106 @@ class MainWindow(ctk.CTk):
         self._apply_dir_toggle_style()   # 2026-09-12（用户要求 3）：详情区"🗂"按钮绿/黄两态
         # 2026-09-10（用户要求 3）：按被隐藏的列宽同步降低窗口最小宽度，
         # 使用户可把窗口（连同右侧详情区）缩得更窄；恢复显示时自动还原。
-        self.minsize(self._nav_min_width(), _BASE_MIN_HEIGHT)
+        # 2026-09-14（用户要求）：最小高度取"屏幕可用高度"与 _BASE_MIN_HEIGHT 的较小者。
+        self.minsize(self._nav_min_width(), self._win_min_height())
+        # 2026-09-14（用户要求，本轮）：**四个分类区全关闭时，窗口自动收缩到"最小宽度"**
+        #   （此时工具栏也处于最窄形态：搜索框下移到第二行）。
+        #   注：打开"标签页面"内部也会调用本方法（hidden=4），但那不是"关闭四区"，
+        #      故用 `_tag_page_on` 排除，避免打开标签页面时窗口被缩窄。
+        if hidden_count >= len(self._nav_cols) and not getattr(self, "_tag_page_on", False):
+            self._shrink_window_to_min_width()
+
+    def _shrink_window_to_min_width(self) -> None:
+        """把窗口**宽度**收缩到当前最小宽度（**高度保持不变**）。2026-09-14 用户要求。
+
+        ⚠ 2026-09-14 20:52（用户报告"窗口高度被增大、下面看不到" → 定位到的根因修复）：
+        原实现用 `self._apply_window_scaling(1)` 求缩放系数（本机返回 **1**，并非真实几何缩放 1.2），
+        再把 `winfo_height()`（**实际像素**）当作**源码值**传回 `geometry()`——而 CTk 的
+        `geometry()` 会再乘一次窗口缩放 ⇒ **高度被放大 1.2 倍**，且每触发一次就再放大一次
+        （934 → 1119 → 1340…）→ 窗口底边跑出屏幕。
+        现改为：**宽高都从 `self.geometry()` 读取源码值**（CTk 的 getter 已按缩放还原），
+        只替换其中的宽度 → 高度严格不变；末尾再调用 `_fit_window_to_screen()` 兜底。
+        """
+        try:
+            src = self.geometry().split("+")[0]            # 源码值，如 "1480x780"
+            w_now, h_now = (int(v) for v in src.split("x")[:2])
+            w_src = max(int(self._nav_min_width()), 1)
+            if w_now <= w_src:                             # 已经不比最小宽更宽 → 不动
+                return
+            self.geometry(f"{w_src}x{h_now}")              # 高度用原源码值，不再换算
+        except Exception as exc:                           # 2026-09-15（审核 L-7）：不再静默
+            _geom_warn("收缩窗口宽度", exc)
+        self._fit_window_to_screen()
+
+    def _window_scale(self) -> float:
+        """当前窗口的几何缩放系数（源码值 → 实际像素）。2026-09-14（高度问题）新增。
+
+        CTk 的 `geometry()` 读写都按"窗口缩放"换算：getter 返回**源码值**，
+        `winfo_width()/winfo_height()` 返回**实际像素**，两者相除即本机缩放系数。
+
+        2026-09-15（审核 L-7B"缩放缓存加固"）：成功时把结果缓存到 `self._scale_cache`；
+        取不到时**优先用缓存值**，无缓存才退回 1.0——避免用错误缩放算出"已在屏内"而跳过夹取。
+        注：上一版注释里提到的 `_apply_window_scaling(1)` 已不再使用（缩放系数改由本方法实测）。
+        """
+        try:
+            w_src = int(self.geometry().split("+")[0].split("x")[0])
+            act = int(self.winfo_width())
+            if w_src > 0 and act > 1:
+                self._scale_cache = act / w_src            # 成功 → 缓存（供异常时兜底）
+                return self._scale_cache
+        except Exception as exc:                           # 2026-09-15（审核 L-7）：不再静默
+            _geom_warn("取窗口缩放系数", exc)
+        if self._scale_cache:                              # L-7B：失败但有缓存 → 用缓存
+            return self._scale_cache
+        return 1.0
+
+    def _max_fit_height_src(self) -> int:
+        """窗口高度（源码值）上限 = 屏幕高度 − 上下留白（任务栏/标题栏，共 80px）。2026-09-14。"""
+        try:
+            return max(int((int(self.winfo_screenheight()) - 80) / max(self._window_scale(), 0.01)), 200)
+        except Exception as exc:                           # 2026-09-15（审核 L-7）：不再静默
+            _geom_warn("算窗口高度上限", exc)
+            return _BASE_MIN_HEIGHT
+
+    def _win_min_height(self) -> int:
+        """窗口最小高度（源码值）：不超过屏幕可用高度，确保"缩到最小也能整窗可见"。2026-09-14。
+
+        ⚠ 命名注意：不能叫 `_min_height`——CTk 自己用 `self._min_height` 保存最小高度（int），
+        会遮蔽同名方法（实测报 `'int' object is not callable`）。
+        """
+        return max(min(_BASE_MIN_HEIGHT, self._max_fit_height_src()), 200)
+
+    def _fit_window_to_screen(self) -> None:
+        """确保窗口**完全落在屏幕内**（重点：**底边不越界**）。2026-09-14 用户要求。
+
+        场景：① 恢复的窗口尺寸高于屏幕可用高度；② 缩放导致高度被放大（见 `_shrink_window_to_min_width`）。
+        做法：先把宽/高（源码值）收敛到屏幕可用范围（下边留 40px、上边留 40px），
+        再把窗口位置夹回屏幕内；CTk 的 `geometry()` 承担缩放换算。
+        """
+        try:
+            if not self.winfo_viewable():
+                return
+            self.update_idletasks()
+            sw, sh = int(self.winfo_screenwidth()), int(self.winfo_screenheight())
+            scale = max(self._window_scale(), 0.01)
+            # 2026-09-15（审核 L-7B）：缩放取值不可信（无任何成功缓存）时**跳过夹取**，
+            #   避免用错误缩放算出"已在屏内"而不做任何处理（原先会静默按 1.0 硬算）。
+            if not self._scale_cache:
+                _geom_warn("屏幕夹取", "缩放系数不可信（无可用缓存）→ 跳过本夹取")
+                return
+            w_src, h_src = (int(v) for v in self.geometry().split("+")[0].split("x")[:2])
+            max_w_src = int(max(sw - 40, 200) / scale)
+            max_h_src = int(max(sh - 80, 200) / scale)
+            new_w, new_h = min(w_src, max_w_src), min(h_src, max_h_src)
+            if (new_w, new_h) != (w_src, h_src):
+                self.geometry(f"{new_w}x{new_h}")
+            w_act, h_act = int(new_w * scale), int(new_h * scale)
+            x = min(max(int(self.winfo_x()), 0), max(sw - w_act, 0))
+            # 下边留白统一用常量（2026-09-15 审核 L-7：抽常量，**数值与原字面量 40 一致**）
+            y = min(max(int(self.winfo_y()), 0), max(sh - h_act - _SCREEN_BOTTOM_MARGIN, 0))
+            self.geometry(f"+{x}+{y}")
+        except Exception as exc:                           # 2026-09-15（审核 L-7）：不再静默
+            _geom_warn("屏幕夹取", exc)
 
     def _apply_dir_toggle_style(self) -> None:
         """按"四级目录是否显示"刷新详情区左下"🗂"按钮配色（2026-09-12，用户要求 3）。
@@ -1505,6 +1954,7 @@ class MainWindow(ctk.CTk):
     def _close_tag_page(self) -> None:
         """关闭标签页面：隐藏容器并**恢复四级目录显示**（用户确认的默认行为）。"""
         self._tag_page_on = False
+        self._cancel_tag_search_timer()   # 2026-09-15（用户要求 8）：关闭时取消未到点的搜索防抖
         try:
             self.tag_frame.grid_remove()
             self._body.grid_columnconfigure(0, minsize=0)   # 交还列宽给四级目录
@@ -1536,17 +1986,28 @@ class MainWindow(ctk.CTk):
             pass
 
     def _refresh_tag_page(self) -> None:
-        """重建标签页面（2026-09-13，1-C-3b）。
+        """重建标签页面（2026-09-13，1-C-3b；2026-09-14 阶段 4 新增「热点词」、阶段 0.5 新增「词表」）。
 
-        结构（自上而下）：标题 → 顶部（搜索 / 标签云⇄列表 / ＋新建）→ 已选栏（chips + 且·或）
-        → 主区（标签云或列表+计数徽标，可滚动）→ 底部管理（重命名 / 合并 / 删除 / 清理未使用）。
-        选择变化后同步刷新条目区（跨分类按标签查询）。
+        结构（自上而下）：标题 → 顶部（搜索 / 四档切换 / ＋新建）→ 已选栏（仅标签档）
+        → 主区（标签云 / 列表+计数徽标 / 热点词管理 / 词表结构预览，可滚动）→ 底部管理
+        （标签档：重命名 / 合并 / 删除 / 清理未使用；热点词档：文本导入 / 热点词更新 / 清空全部；
+          词表档：导出 / 导入 / 恢复出厂）。
+        **只有标签档会刷新条目区**；热点词档与词表档均不改动条目区（互不干扰）。
         """
         tf = getattr(self, "tag_frame", None)
         if tf is None or not tf.winfo_exists():
             return
+        # 2026-09-15（用户要求 8）：重建页面前先取消"未到点"的搜索防抖，避免其打到已销毁的控件上
+        self._cancel_tag_search_timer()
+        # 2026-09-15（批次 6-2）：重建前先清空写操作按钮引用，避免残留已销毁控件的句柄
+        self._tag_gov_btns = []
         for w in tf.winfo_children():
             w.destroy()
+
+        mode = self._tag_page_view            # "cloud" / "list" / "hot" / "dict"
+        is_hot = (mode == "hot")              # 2026-09-14（4-b）：热点词档
+        is_dict = (mode == "dict")            # 2026-09-14（0.5）：词表档
+        is_tag = not (is_hot or is_dict)      # 标签云 / 列表 两档（保持既有行为不变）
 
         # 清理失效选择（标签可能被删除/改名）
         try:
@@ -1555,49 +2016,93 @@ class MainWindow(ctk.CTk):
             valid = set()
         self._tag_page_selected = [n for n in self._tag_page_selected if n in valid]
 
-        ctk.CTkLabel(tf, text="🏷 标签页面", text_color=_TAG_OPEN_BG,
+        _title = {"hot": "🔥 热点词（供自动打标使用）",
+                  "dict": "📚 词表（通用骨架 + 领域维度包）"}.get(mode)
+        ctk.CTkLabel(tf, text=(_title or "🏷 标签页面"), text_color=_TAG_OPEN_BG,
                      font=("Microsoft YaHei", 15, "bold"), anchor="w"
                      ).pack(fill="x", padx=14, pady=(12, 4))
 
-        # ---- 顶部：搜索 / 呈现方式 / 新建 ----
+        # ---- 顶部：搜索（词表档不显示）/ 四档切换 / ＋新建（仅标签档）----
         top = ctk.CTkFrame(tf, fg_color="transparent")
         top.pack(fill="x", padx=12, pady=(0, 4))
-        self._tag_search_entry = ctk.CTkEntry(top, placeholder_text="搜索标签…", height=28)
-        self._tag_search_entry.pack(side="left", fill="x", expand=True)
-        if self._tag_page_search:
-            self._tag_search_entry.insert(0, self._tag_page_search)
-        self._tag_search_entry.bind("<KeyRelease>", self._on_tag_search_typed)
-        seg_v = ctk.CTkSegmentedButton(top, values=["标签云", "列表"], width=132,
+        if not is_dict:
+            self._tag_search_entry = ctk.CTkEntry(
+                top, placeholder_text=("搜索热点词…" if is_hot else "搜索标签…"), height=28)
+            self._tag_search_entry.pack(side="left", fill="x", expand=True)
+            _kw = self._hotword_search if is_hot else self._tag_page_search
+            if _kw:
+                self._tag_search_entry.insert(0, _kw)
+            self._tag_search_entry.bind(
+                "<KeyRelease>",
+                self._on_hotword_search_typed if is_hot else self._on_tag_search_typed)
+        seg_v = ctk.CTkSegmentedButton(top, values=["标签云", "列表", "热点词", "词表"], width=252,
                                        command=self._on_tag_view_change)
-        seg_v.set("标签云" if self._tag_page_view == "cloud" else "列表")
-        seg_v.pack(side="left", padx=(6, 0))
-        ctk.CTkButton(top, text="＋ 新建", width=64, fg_color=_TAG_OPEN_BG,
-                      command=self._on_tag_new).pack(side="left", padx=(6, 0))
+        seg_v.set({"cloud": "标签云", "list": "列表", "hot": "热点词", "dict": "词表"}
+                  .get(mode, "标签云"))
+        seg_v.pack(side="left", padx=(0 if is_dict else 6, 0))
+        if is_tag:
+            ctk.CTkButton(top, text="＋ 新建", width=64, fg_color=_TAG_OPEN_BG,
+                          command=self._on_tag_new).pack(side="left", padx=(6, 0))
+            # 2026-09-15（用户要求 3）：把"且/或"逻辑按钮从下方"已选栏"移到**「＋ 新建」的右侧**。
+            #   注：本行右侧因此多占 ≈91px（源码 76），其左侧的自适应搜索框可用宽度相应减少。
+            _seg_l = ctk.CTkSegmentedButton(top, values=["且", "或"], width=76,
+                                            command=self._on_tag_logic_change)
+            _seg_l.set("且" if self._tag_page_logic == "and" else "或")
+            _seg_l.pack(side="left", padx=(6, 0))
 
-        # ---- 已选栏 ----
-        sel = ctk.CTkFrame(tf, fg_color="transparent")
-        sel.pack(fill="x", padx=12, pady=(2, 2))
-        ctk.CTkLabel(sel, text="已选：", font=("Microsoft YaHei", 11),
-                     text_color="#5b6b7c").pack(side="left")
-        if not self._tag_page_selected:
-            ctk.CTkLabel(sel, text="（未选择）", font=("Microsoft YaHei", 11),
-                         text_color="#9aa4b1").pack(side="left")
-        for n in self._tag_page_selected:
-            col = _tag_color(n)
-            chip = ctk.CTkFrame(sel, fg_color=col, corner_radius=11)
-            chip.pack(side="left", padx=(0, 5), pady=2)
-            ctk.CTkLabel(chip, text=n, text_color="#ffffff",
-                         font=("Microsoft YaHei", 11)
-                         ).pack(side="left", padx=(8, 2), pady=2)
-            ctk.CTkButton(chip, text="×", width=18, height=18, fg_color=col,
-                          hover_color="#8a94a6", text_color="#ffffff",
-                          font=("Microsoft YaHei", 11),
-                          command=lambda s=n: self._on_tag_toggle(s)
-                          ).pack(side="left", padx=(0, 3), pady=2)
-        seg_l = ctk.CTkSegmentedButton(sel, values=["且", "或"], width=76,
-                                       command=self._on_tag_logic_change)
-        seg_l.set("且" if self._tag_page_logic == "and" else "或")
-        seg_l.pack(side="right")
+        # ---- 已选栏（仅标签档：热点词/词表与"按标签过滤条目"无关）----
+        if is_tag:
+            sel = ctk.CTkFrame(tf, fg_color="transparent")
+            sel.pack(fill="x", padx=12, pady=(2, 2))
+            ctk.CTkLabel(sel, text="已选：", font=("Microsoft YaHei", 11),
+                         text_color="#5b6b7c").pack(side="left")
+            if not self._tag_page_selected:
+                ctk.CTkLabel(sel, text="（未选择）", font=("Microsoft YaHei", 11),
+                             text_color="#9aa4b1").pack(side="left")
+            for n in self._tag_page_selected:
+                col = _tag_color(n)
+                chip = ctk.CTkFrame(sel, fg_color=col, corner_radius=11)
+                chip.pack(side="left", padx=(0, 5), pady=2)
+                ctk.CTkLabel(chip, text=n, text_color="#ffffff",
+                             font=("Microsoft YaHei", 11)
+                             ).pack(side="left", padx=(8, 2), pady=2)
+                ctk.CTkButton(chip, text="×", width=18, height=18, fg_color=col,
+                              hover_color="#8a94a6", text_color="#ffffff",
+                              font=("Microsoft YaHei", 11),
+                              command=lambda s=n: self._on_tag_toggle(s)
+                              ).pack(side="left", padx=(0, 3), pady=2)
+            # 2026-09-15（用户要求 3）：原在本行右侧的"且/或"按钮**已上移到顶部「＋ 新建」右侧**
+            #   （见 `_refresh_tag_page` 的 top 区）→ 本行现在整行都可用于展示已选标签 chips。
+
+        # ---- 固定头部（统计 / 排序）2026-09-15（用户要求 6+1）：**不随内容滚动** ----
+        #   原先"共 N 个标签 + 显示条数下拉"建立在滚动区 `_tag_main` **内部** → 一滚动就看不见。
+        #   2026-09-15（用户要求 2）：**分页与「每页」控件已下移到页面最底部的"无标签条目"行**
+        #   （见本函数末尾的 `row2`）→ 本行只保留"统计"与"排序"。
+        #   仅"标签云/列表"两档使用（热点词/词表档不显示，互不干扰）。
+        self._tag_head = None
+        self._tag_stat_lbl = None
+        self._tag_page_lbl = None
+        self._tag_limit_om = None
+        self._tag_page_btns = {}
+        self._tag_sort_seg = None       # 2026-09-15（用户要求 1）：列表档排序控件（固定头部，仅列表档显示）
+        self._tag_sort_lbl = None
+        self._tag_bottom_row = None     # 2026-09-15（用户要求 2）：底部行（无标签按钮 + 分页/每页）
+        self._tag_page_group = None     # 2026-09-15（用户要求）：底部行内"分页+每页"整组（靠右）
+        if is_tag:
+            self._tag_head = ctk.CTkFrame(tf, fg_color="transparent")
+            self._tag_head.pack(fill="x", padx=10, pady=(2, 0))
+            self._tag_stat_lbl = ctk.CTkLabel(
+                self._tag_head, text="", font=("Microsoft YaHei", 10), text_color="#5b6b7c")
+            self._tag_stat_lbl.pack(side="left")
+            # 2026-09-15（用户要求 1）：列表档的「排序：」也移到固定头部（原先在滚动区内，
+            #   一滚动就看不见）。**仅"列表"档显示**——显隐与取值由 `_update_tag_head` 统一处理。
+            #   位置：pack 顺序在所有"side=right"控件之后 → 显示在它们的**左侧**。
+            self._tag_sort_seg = ctk.CTkSegmentedButton(
+                self._tag_head, values=["计数", "名称"], width=120,
+                command=self._on_tag_sort_change)
+            self._tag_sort_seg.set("计数" if self._tag_page_sort == "count" else "名称")
+            self._tag_sort_lbl = ctk.CTkLabel(self._tag_head, text="排序：",
+                                              font=("Microsoft YaHei", 10), text_color="#5b6b7c")
 
         # ---- 主区（可滚动）----
         self._tag_main = ctk.CTkScrollableFrame(tf, fg_color="transparent")
@@ -1606,16 +2111,118 @@ class MainWindow(ctk.CTk):
         # ---- 底部管理 ----
         mgr = ctk.CTkFrame(tf, fg_color="transparent")
         mgr.pack(fill="x", padx=12, pady=(2, 10))
-        for _txt, _cmd in (("重命名", self._on_tag_rename), ("合并…", self._on_tag_merge),
-                           ("删除", self._on_tag_delete), ("清理未使用", self._on_tag_purge)):
-            ctk.CTkButton(mgr, text=_txt, width=76, height=26, fg_color="#8a94a6",
-                          font=("Microsoft YaHei", 11), command=_cmd
-                          ).pack(side="left", padx=(0, 5))
-        ctk.CTkLabel(mgr, text="选中标签 → 条目区即时过滤", font=("Microsoft YaHei", 10),
-                     text_color="#9aa4b1").pack(side="right")
+        if is_hot:
+            # 2026-09-14（4-b）：热点词模式的底部按钮（与标签治理按钮互不干扰）
+            # 2026-09-15（批次 6-2 补充，用户选定"一并置灰"）：3 个按钮均为**写操作**
+            #   （文本导入 / 抓取写库 / 清空全部）⇒ 纳入 `_tag_gov_btns`，锁定态一并置灰。
+            for _txt, _cmd in (("📋 文本导入…", self._on_hotword_import),
+                               ("🔄 热点词更新…", self._on_hotword_fetch),
+                               ("🗑 清空全部", self._on_hotword_clear)):
+                _b = ctk.CTkButton(mgr, text=_txt, width=104, height=26, fg_color="#8a94a6",
+                                   font=("Microsoft YaHei", 11), command=_cmd)
+                _b.pack(side="left", padx=(0, 5))
+                self._tag_gov_btns.append(_b)
+            try:
+                _hn = self.db.count_hotwords()
+            except Exception:
+                _hn = 0
+            ctk.CTkLabel(mgr, text=f"共 {_hn} 个词条（自动打标 ⑧ 维度）",
+                         font=("Microsoft YaHei", 10),
+                         text_color="#9aa4b1").pack(side="right")
+        elif is_dict:
+            # 2026-09-14（0.5）：词表档的底部按钮（导出 / 导入 / 恢复出厂）
+            # 2026-09-15（批次 6-2 补充，用户选定"一并置灰"）：其中"⬇ 导入词表…/↺ 恢复出厂词表"
+            #   是**写操作** ⇒ 纳入 `_tag_gov_btns` 置灰；"⬆ 导出词表…"是只读 ⇒ **保持可用**。
+            for _txt, _cmd, _write in (("⬆ 导出词表…", self._on_dict_export, False),
+                                       ("⬇ 导入词表…", self._on_dict_import, True),
+                                       ("↺ 恢复出厂词表", self._on_dict_reset, True)):
+                _b = ctk.CTkButton(mgr, text=_txt, width=110, height=26, fg_color="#8a94a6",
+                                   font=("Microsoft YaHei", 11), command=_cmd)
+                _b.pack(side="left", padx=(0, 5))
+                if _write:
+                    self._tag_gov_btns.append(_b)
+            ctk.CTkLabel(mgr, text="权威数据存于数据库（可编辑）", font=("Microsoft YaHei", 10),
+                         text_color="#9aa4b1").pack(side="right")
+        else:
+            # 2026-09-15（批次 6-2，用户选定"禁用（可见但置灰）"）：标签页治理按钮
+            #   重命名 / 合并… / 删除 / 清理未使用 / 🤖 批量打标 均为**写操作** ⇒ 锁定态置灰。
+            #   引用收集到 `self._tag_gov_btns`，由 `_apply_tag_gov_lock()` 即时刷新
+            #   （页面重建后立即同步，锁定开关切换时由 `_apply_lock_state()` 同步）。
+            for _txt, _cmd in (("重命名", self._on_tag_rename), ("合并…", self._on_tag_merge),
+                               ("删除", self._on_tag_delete), ("清理未使用", self._on_tag_purge)):
+                _b = ctk.CTkButton(mgr, text=_txt, width=76, height=26, fg_color="#8a94a6",
+                                   font=("Microsoft YaHei", 11), command=_cmd)
+                _b.pack(side="left", padx=(0, 5))
+                self._tag_gov_btns.append(_b)
+            # 2026-09-14（阶段 2）：批量智能自动打标入口（另一入口在"⚙ 设置 → 标签与词表"）
+            _bb = ctk.CTkButton(mgr, text="🤖 批量打标…", width=104, height=26, fg_color="#7A4FBF",
+                                font=("Microsoft YaHei", 11), command=self._open_batch_tag)
+            _bb.pack(side="left", padx=(0, 5))
+            self._tag_gov_btns.append(_bb)
+            ctk.CTkLabel(mgr, text="选中→过滤条目", font=("Microsoft YaHei", 10),
+                         text_color="#9aa4b1").pack(side="right")
+            # 2026-09-14（用户要求"无标签条目"入口 方案 B）：标签页面内的入口，与工具栏
+            #   "🏷 无标签"按钮同源（同一 `_show_untagged`），此处**带实时数量**，便于就地看到
+            #   还有多少条没打标签。**单独一行**：上面 5 个治理按钮已占满 560px 面板宽，
+            #   挤在同一行会被裁切。仅标签档显示（热点词/词表档不加，互不干扰）。
+            row2 = ctk.CTkFrame(tf, fg_color="transparent")
+            row2.pack(fill="x", padx=12, pady=(0, 10))
+            self._tag_bottom_row = row2      # 2026-09-15（用户要求 2）：底部行引用（供自测/后续使用）
+            # 2026-09-15（审核 M-2，用户同意）：count_untagged 失败时返回 −1 → 此处显示"未知"，
+            #   不再把"库异常"显示成"（0）"而掩盖故障。
+            try:
+                _un_n = self.db.count_untagged()
+            except Exception:
+                _un_n = -1
+            _un_txt = ("⚠ 无标签条目（未知）" if _un_n < 0
+                       else f"⚠ 无标签条目（{_un_n}）")
+            _un_btn = ctk.CTkButton(row2, text=_un_txt, width=136, height=26,
+                                    fg_color="#C77700", hover_color="#A66200",
+                                    font=("Microsoft YaHei", 11), command=self._show_untagged)
+            _un_btn.pack(side="left")
+            # 2026-09-15（用户选方案 A）：原在此处的灰色提示文字改为**悬停提示**——
+            #   实测底部行放不下"按钮 + 提示文字 + 分页/每页控件"（需 ≈800px、可用 ≈575px），
+            #   故提示文字不占位（信息不丢）。
+            _attach_tooltip(_un_btn, "点击→条目区列出全部无标签条目，可逐条打标签")
+            # ---- 分页 + 「每页」：2026-09-15（用户要求 2）：从固定头部下移到本行 ----
+            #   2026-09-15（用户要求，本轮）：整组**在本行依次靠右**（"无标签条目"按钮保持靠左不动）。
+            #   做法：整组放进一个子容器 `pg` 并让其 `side="right"` 贴右边界；组内仍按
+            #   [⏮ ◀ 第X/Y页 ▶ ⏭ | 每页 ▾] **从左到右**排列（用 side="left"），避免顺序被反转。
+            pg = ctk.CTkFrame(row2, fg_color="transparent")
+            pg.pack(side="right")
+            self._tag_page_group = pg
+            for _key, _txt, _cmd, _pad in (("first", "⏮", self._on_tag_page_first, (0, 0)),
+                                           ("prev", "◀", self._on_tag_page_prev, (4, 0))):
+                _b = ctk.CTkButton(pg, text=_txt, width=28, height=24, fg_color="#8a94a6",
+                                   font=("Microsoft YaHei", 11), command=_cmd)
+                _b.pack(side="left", padx=_pad)
+                self._tag_page_btns[_key] = _b
+            self._tag_page_lbl = ctk.CTkLabel(pg, text="", font=("Microsoft YaHei", 10),
+                                              text_color="#5b6b7c")
+            self._tag_page_lbl.pack(side="left", padx=(6, 4))
+            for _key, _txt, _cmd, _pad in (("next", "▶", self._on_tag_page_next, (4, 0)),
+                                           ("last", "⏭", self._on_tag_page_last, (4, 0))):
+                _b = ctk.CTkButton(pg, text=_txt, width=28, height=24, fg_color="#8a94a6",
+                                   font=("Microsoft YaHei", 11), command=_cmd)
+                _b.pack(side="left", padx=_pad)
+                self._tag_page_btns[_key] = _b
+            ctk.CTkLabel(pg, text="每页", font=("Microsoft YaHei", 10),
+                         text_color="#5b6b7c").pack(side="left", padx=(8, 4))
+            self._tag_limit_om = ctk.CTkOptionMenu(pg, width=76, values=list(_TAG_LIMIT_LABELS),
+                                                   command=self._on_tag_limit_change,
+                                                   font=("Microsoft YaHei", 11))
+            self._tag_limit_om.pack(side="left")
+
+        # 2026-09-15（批次 6-2，用户在"同类漏网"议题上选定"一并置灰"）：三档的**写操作按钮**
+        #   统一按锁定态置灰——标签档 5 个（治理按钮）/ 热点词档 3 个 / 词表档 2 个；
+        #   "⬆ 导出词表…"为只读，**不**纳入置灰。此处统一调用，保证"页面重建后不漏置灰"。
+        self._apply_tag_gov_lock()
 
         self._render_tag_main()
-        self._show_entries_by_tags()
+        if is_tag:
+            # 只有标签档刷新条目区：热点词档/词表档**不改动条目区**，避免"管理词库/词表"时
+            # 把用户当前的条目浏览结果清空（互不干扰，2026-09-14）
+            self._show_entries_by_tags()
 
     # ---- 标签页面：主区渲染 ---- #
     def _tag_cloud_font(self, count: int) -> int:
@@ -1629,63 +2236,184 @@ class MainWindow(ctk.CTk):
         return 11
 
     def _render_tag_main(self) -> None:
-        """渲染标签云或"列表 + 计数徽标"（按搜索词过滤）"""
+        """渲染标签云或"列表 + 计数徽标"（按搜索词过滤）；2026-09-14（4-b）新增"热点词"分支。"""
         box = getattr(self, "_tag_main", None)
         if box is None or not box.winfo_exists():
             return
         for w in box.winfo_children():
             w.destroy()
+        if self._tag_page_view == "hot":
+            self._render_hotwords()          # 2026-09-14（阶段 4 4-b）：热点词页签
+            return
+        if self._tag_page_view == "dict":
+            self._render_dict_panel()        # 2026-09-14（阶段 0.5）：词表页签
+            return
         try:
             all_tags = self.db.list_tags_with_counts()
         except Exception:
             all_tags = []
         kw = self._tag_page_search
         tags = [t for t in all_tags if (not kw) or (kw in t["name"])]
+        lim = int(getattr(self, "_tag_page_limit", TAG_PAGE_LIMIT) or 0)   # 0＝不限（单页全部）
         if not all_tags:
             ctk.CTkLabel(box, text="（暂无标签：可在条目详情区的 🏷 标签块中为条目打标签）",
                          text_color="#9aa4b1", font=("Microsoft YaHei", 11)).pack(
                 anchor="w", padx=6, pady=8)
+            self._update_tag_head(0, 0, 1, 1, lim)
             return
         if not tags:
             ctk.CTkLabel(box, text="（没有匹配的标签）", text_color="#9aa4b1",
                          font=("Microsoft YaHei", 11)).pack(anchor="w", padx=6, pady=8)
+            self._update_tag_head(len(all_tags), 0, 1, 1, lim)
             return
 
-        if self._tag_page_view == "list":
-            self._render_tag_list(tags)
+        # 2026-09-14（性能优化，用户确认"默认前 100 + 可切全部"）：622 个标签全量渲染实测
+        #   17~42 秒（每项 27~68ms，瓶颈在逐个创建 UI 控件；纯查询仅 3ms）→ 当时"只显示前 N 个（截断）"。
+        # 2026-09-15（用户要求 6+7）：改为**分页**——`_tag_page_limit` 语义 = "**每页 N 条**"
+        #   （0／"不限"＝单页显示全部）；页码越界自动钳制，改每页条数/搜索/排序/切档都复位到第 1 页。
+        if self._tag_page_sort == "name":
+            ordered = sorted(tags, key=lambda t: t["name"])
         else:
-            self._render_tag_cloud(tags)
+            ordered = sorted(tags, key=lambda t: (-int(t.get("entry_count") or 0), t["name"]))
+        total = len(ordered)
+        per = lim if lim > 0 else max(total, 1)
+        pages = max(1, (total + per - 1) // per)
+        page = min(max(int(getattr(self, "_tag_page_no", 1)), 1), pages)
+        self._tag_page_no = page
+        off = (page - 1) * per
+        shown = ordered[off:off + per]
+        # 统计文案 / 每页下拉 / 页码 / 翻页按钮状态 → 全部更新到**固定头部**（不在滚动区内）
+        self._update_tag_head(len(all_tags), len(tags), pages, page, lim)
+
+        if self._tag_page_view == "list":
+            self._render_tag_list(shown)
+        else:
+            self._render_tag_cloud(shown)
+
+    def _update_tag_head(self, total_all: int, total_match: int, pages: int,
+                         page: int, lim: int) -> None:
+        """更新标签页的"统计 / 每页条数 / 页码 / 翻页按钮 / 排序"显示状态。
+
+        2026-09-15（用户要求 6+7+2）：这些控件**都不在滚动区内**——
+        "统计/排序"在页面顶部固定行 `_tag_head`，"每页/页码/翻页"在页面底部行 `_tag_bottom_row`
+        （"无标签条目"按钮右侧）→ 因此滚动标签云时始终可见、可随时调整单页条数。
+        """
+        try:
+            if self._tag_stat_lbl is not None and self._tag_stat_lbl.winfo_exists():
+                self._tag_stat_lbl.configure(
+                    text=(f"共 {total_all} 个标签"
+                          + (f"（匹配 {total_match} 个）" if self._tag_page_search else "")))
+            if self._tag_limit_om is not None and self._tag_limit_om.winfo_exists():
+                self._tag_limit_om.set("不限" if lim <= 0 else str(lim))
+            if self._tag_page_lbl is not None and self._tag_page_lbl.winfo_exists():
+                self._tag_page_lbl.configure(text=f"第 {page} / {pages} 页")
+            for _k, _b in (self._tag_page_btns or {}).items():
+                if not _b.winfo_exists():
+                    continue
+                _ok = ((_k in ("first", "prev") and page > 1)
+                       or (_k in ("next", "last") and page < pages))
+                _b.configure(state=("normal" if _ok else "disabled"))
+            # 2026-09-15（用户要求 1）：「排序：」控件**仅"列表"档显示**（标签云按固定档位渲染，无需排序）
+            if self._tag_sort_seg is not None and self._tag_sort_seg.winfo_exists():
+                self._tag_sort_seg.set("计数" if self._tag_page_sort == "count" else "名称")
+                if self._tag_page_view == "list":
+                    if not self._tag_sort_seg.winfo_ismapped():
+                        self._tag_sort_seg.pack(side="right")
+                        self._tag_sort_lbl.pack(side="right", padx=(0, 4))
+                else:
+                    self._tag_sort_seg.pack_forget()
+                    self._tag_sort_lbl.pack_forget()
+        except Exception as exc:
+            print(f"[标签页] 更新固定头部失败：{exc!r}")
+
+    def _on_tag_limit_change(self, value: str) -> None:
+        """标签页「每页」条数切换。
+
+        2026-09-14：原为"显示前 N 个"（截断）。2026-09-15（用户要求 6+7）：语义改为"**每页 N 条**"
+        （"不限"＝0＝单页显示全部）；改每页条数后**回到第 1 页**。
+        """
+        self._tag_page_limit = {"不限": 0, "100": 100, "200": 200, "500": 500}.get(value, 50)
+        self._tag_page_no = 1
+        self._render_tag_main()
+
+    def _tag_goto_page(self, no: int) -> None:
+        """跳转页码（2026-09-15 用户要求 7）。页码在 `_render_tag_main` 内按总页数自动钳制；
+        **只重建主区**（不重建页面框架）→ 不丢搜索框焦点。
+        """
+        self._tag_page_no = max(1, int(no))
+        self._render_tag_main()
+
+    def _on_tag_page_first(self) -> None:
+        self._tag_goto_page(1)
+
+    def _on_tag_page_prev(self) -> None:
+        self._tag_goto_page(int(getattr(self, "_tag_page_no", 1)) - 1)
+
+    def _on_tag_page_next(self) -> None:
+        self._tag_goto_page(int(getattr(self, "_tag_page_no", 1)) + 1)
+
+    def _on_tag_page_last(self) -> None:
+        # 传一个足够大的页码，由 `_render_tag_main` 钳制到实际末页
+        self._tag_goto_page(10 ** 6)
 
     def _render_tag_cloud(self, tags) -> None:
-        """标签云：按计数分档字号、哈希柔和色、悬停提示含义、点击选中（选中＝实心）"""
+        """标签云：按计数分档字号、哈希柔和色、点击选中（选中＝实心）。
+
+        2026-09-14 修复（用户反馈"标签云只显示 3 个标签"）：原先所有按钮共用一个 Frame
+        并 `pack(side="left")` 平铺，而 tkinter 的 pack **不会自动换行** → 标签一多就横向
+        溢出，超出面板宽度的部分被裁剪（该面板只支持垂直滚动）；而标签按计数降序，所以
+        恰好只看到前 3 个（视觉/人像/产品）。现改为**按实测文字宽度自动换行**。
+        """
         box = self._tag_main
         wrap = ctk.CTkFrame(box, fg_color="transparent")
         wrap.pack(fill="x", padx=6, pady=6)
+
+        # 可用宽度：优先取主区实际宽度；首次渲染（控件尚未映射，宽度为 1）时按标签页面宽度估算
+        avail = 0
+        for _w in (box, getattr(self, "tag_frame", None)):
+            try:
+                if _w is not None:
+                    avail = max(avail, int(_w.winfo_width()))
+            except Exception:
+                pass
+        if avail < 200:
+            avail = sum(_NAV_COL_WIDTHS)
+        avail = max(200, avail - _CLOUD_RESERVED)   # 扣滚动条 / 内边距 / 余量（2026-09-14 实测校准）
+
+        row, used = None, 0
         for t in tags:
             name, cnt = t["name"], int(t.get("entry_count") or 0)
             col = _tag_color(name)
             picked = name in self._tag_page_selected
-            btn = ctk.CTkButton(
-                wrap, text=f"{name} ({cnt})", height=max(28, self._tag_cloud_font(cnt) + 14),
-                font=("Microsoft YaHei", self._tag_cloud_font(cnt),
-                      "bold" if cnt >= 40 else "normal"),
+            fs = self._tag_cloud_font(cnt)
+            bold = cnt >= 40
+            label = f"{name} ({cnt})"
+            wpx = _text_px(label, fs, bold) + _CLOUD_BTN_PAD
+            if wpx > avail - 12:                       # 单个标签超宽 → 截断显示，避免被裁剪
+                keep = max(4, int((avail - 12) / max(1, _text_px("x", fs, bold))) - 6)
+                label = name[:keep] + "… (%d)" % cnt
+                wpx = _text_px(label, fs, bold) + _CLOUD_BTN_PAD
+            if row is None or (used and used + wpx > avail):
+                row = ctk.CTkFrame(wrap, fg_color="transparent")
+                row.pack(fill="x")
+                used = 0
+            ctk.CTkButton(
+                row, text=label, width=1,      # 2026-09-14：width=1 → 按文字自适应（默认 140 会强制撑宽）
+                height=max(28, fs + 14),
+                font=("Microsoft YaHei", fs, "bold" if bold else "normal"),
                 fg_color=(col if picked else "transparent"),
                 text_color=("#ffffff" if picked else col),
                 border_width=1, border_color=col, corner_radius=12,
-                command=lambda s=name: self._on_tag_toggle(s))
-            btn.pack(side="left", padx=4, pady=4)
+                command=lambda s=name: self._on_tag_toggle(s)
+            ).pack(side="left", padx=4, pady=4)
+            used += wpx
 
     def _render_tag_list(self, tags) -> None:
         """列表 + 计数徽标：每行 复选框 + 色点 + 标签名 + 条目数徽标；可按计数/名称排序"""
         box = self._tag_main
-        head = ctk.CTkFrame(box, fg_color="transparent")
-        head.pack(fill="x", padx=6, pady=(4, 2))
-        ctk.CTkLabel(head, text="排序：", font=("Microsoft YaHei", 10),
-                     text_color="#5b6b7c").pack(side="left")
-        seg = ctk.CTkSegmentedButton(head, values=["计数", "名称"], width=120,
-                                     command=self._on_tag_sort_change)
-        seg.set("计数" if self._tag_page_sort == "count" else "名称")
-        seg.pack(side="left")
+        # 2026-09-15（用户要求 1）：原先建在**滚动区内**的「排序：计数/名称」已上移到**固定头部**
+        #   （见 `_refresh_tag_page` 的 `_tag_head`，由 `_update_tag_head` 控制显隐与取值）
+        #   → 本函数不再创建排序控件，列表首行即数据行。
         if self._tag_page_sort == "name":
             ordered = sorted(tags, key=lambda t: t["name"])
         else:
@@ -1711,23 +2439,58 @@ class MainWindow(ctk.CTk):
                          font=("Microsoft YaHei", 10)).pack(side="right", padx=(4, 2))
 
     # ---- 标签页面：交互 ---- #
+    def _cancel_tag_search_timer(self) -> None:
+        """取消尚未到点的"标签页搜索防抖"定时器（2026-09-15 用户要求 8）。"""
+        if self._tag_search_after is not None:
+            try:
+                self.after_cancel(self._tag_search_after)
+            except Exception:
+                pass
+            self._tag_search_after = None
+
     def _on_tag_search_typed(self, _event=None) -> None:
+        """标签页搜索框：**延迟刷新**（2026-09-15 用户要求 8：防止逐字不停刷新）。
+
+        原先每输入一个字符就 `_render_tag_main()`（全量重算 + 重建标签云/列表，622 个标签时很慢）。
+        现改为：只记下关键词并排一个 **400ms 防抖**定时器，到点才 `_apply_tag_search()` 重建主区；
+        注意**不重建搜索框本身**（否则会丢输入焦点与光标位置）。
+        """
         ent = getattr(self, "_tag_search_entry", None)
         if ent is None or not ent.winfo_exists():
             return
         self._tag_page_search = ent.get().strip()
+        self._cancel_tag_search_timer()
+        try:
+            self._tag_search_after = self.after(_TAG_SEARCH_DEBOUNCE_MS, self._apply_tag_search)
+        except Exception:
+            self._apply_tag_search()
+
+    def _apply_tag_search(self) -> None:
+        """防抖到点后真正应用"标签页搜索"（页码复位到第 1 页，只重建主区）。"""
+        self._tag_search_after = None
+        self._tag_page_no = 1
         self._render_tag_main()
 
     def _on_tag_view_change(self, value: str) -> None:
-        self._tag_page_view = "list" if value == "列表" else "cloud"
+        # 2026-09-14（阶段 4 4-b 新增「热点词」；阶段 0.5 新增「词表」）
+        old = self._tag_page_view
+        new = {"列表": "list", "热点词": "hot", "词表": "dict"}.get(value, "cloud")
+        self._tag_page_view = new
+        self._tag_page_no = 1        # 2026-09-15（用户要求 7）：切档回到第 1 页
         try:
-            self.db.set_meta(config.META_TAG_VIEW, self._tag_page_view)   # 记住上次选择
+            self.db.set_meta(config.META_TAG_VIEW, new)   # 记住上次选择
         except Exception:
             pass
-        self._render_tag_main()
+        if new in ("hot", "dict") or old in ("hot", "dict"):
+            # 进出"热点词/词表"档：顶部搜索框占位、已选栏、底部按钮组都不同 → 需重建整页
+            self._refresh_tag_page()
+        else:
+            # 标签云 ⇄ 列表：与既有行为**完全一致**（只重渲染主区，不动条目区、不失焦搜索框）
+            self._render_tag_main()
 
     def _on_tag_sort_change(self, value: str) -> None:
         self._tag_page_sort = "name" if value == "名称" else "count"
+        self._tag_page_no = 1        # 2026-09-15（用户要求 7）：改排序回到第 1 页
         self._render_tag_main()
 
     def _on_tag_logic_change(self, value: str) -> None:
@@ -1770,6 +2533,9 @@ class MainWindow(ctk.CTk):
             self._show_detail(e)
 
     def _on_tag_new(self) -> None:
+        # 2026-09-15（批次 6-3，用户选定"仅入口拦截 + toast 提示"）：锁定态拦截（本入口原无任何拦截）
+        if not self._assert_unlocked("新建标签"):
+            return
         name = simpledialog.askstring("新建标签", "请输入标签名称：", parent=self)
         if not name or not name.strip():
             return
@@ -1782,6 +2548,9 @@ class MainWindow(ctk.CTk):
         self._refresh_tag_page()
 
     def _on_tag_rename(self) -> None:
+        # 2026-09-15（批次 6-3b）：统一守卫（本入口原先仅靠按钮置灰，方法内无判断）
+        if not self._assert_unlocked("重命名标签"):
+            return
         if len(self._tag_page_selected) != 1:
             messagebox.showinfo("提示", "请先在标签页面中选中**恰好一个**标签。", parent=self)
             return
@@ -1803,6 +2572,9 @@ class MainWindow(ctk.CTk):
         self._refresh_detail_if_safe()
 
     def _on_tag_merge(self) -> None:
+        # 2026-09-15（批次 6-3b）：统一守卫（本入口原先仅靠按钮置灰，方法内无判断）
+        if not self._assert_unlocked("合并标签"):
+            return
         if len(self._tag_page_selected) != 1:
             messagebox.showinfo("提示", "请先选中**恰好一个**标签作为「来源」，再输入要并入的目标标签名。",
                                 parent=self)
@@ -1831,6 +2603,9 @@ class MainWindow(ctk.CTk):
         self._refresh_detail_if_safe()
 
     def _on_tag_delete(self) -> None:
+        # 2026-09-15（批次 6-3b）：统一守卫（本入口原先仅靠按钮置灰，方法内无判断）
+        if not self._assert_unlocked("删除标签"):
+            return
         if not self._tag_page_selected:
             messagebox.showinfo("提示", "请先选中要删除的标签（可多选）。", parent=self)
             return
@@ -1850,6 +2625,9 @@ class MainWindow(ctk.CTk):
         self._refresh_detail_if_safe()
 
     def _on_tag_purge(self) -> None:
+        # 2026-09-15（批次 6-3b）：统一守卫（本入口原先仅靠按钮置灰，方法内无判断）
+        if not self._assert_unlocked("清理未使用标签"):
+            return
         if not messagebox.askyesno(
                 "清理未使用标签",
                 "将清除**没有任何条目关联**的标签（不影响条目与其它标签）。确定吗？", parent=self):
@@ -1857,6 +2635,640 @@ class MainWindow(ctk.CTk):
         n = self.db.purge_unused_tags()
         self.toast(f"✅ 已清理 {n} 个未使用标签")
         self._refresh_tag_page()
+
+    # ------------------------------------------------------------------ #
+    # 热点词页签（2026-09-14 11:15，阶段 4 之 4-b / 4-c / 4-d / 4-e）
+    #   热点词表 = "自动打标"⑧ 维度的候选词库（与 tags 表完全隔离，不产生任何标签）。
+    #   入口双通道：① 标签页面「热点词」页签；② 设置对话框「热点词管理…」按钮（复用同一界面）。
+    #   维护三通道：① 逐条手动添加；② 文本导入 / 粘贴；③ 「热点词更新」从来源网址抓取。
+    # ------------------------------------------------------------------ #
+    def _on_hotword_search_typed(self, _event=None) -> None:
+        """热点词页签的搜索框：仅过滤显示，不改动词表。
+
+        2026-09-15（用户要求 8）：与标签页搜索合并走同一套 **400ms 防抖**
+        （热点词档同样是"每键一次全量重建"，且两档共用同一个搜索框控件与同一个定时器句柄）。
+        """
+        ent = getattr(self, "_tag_search_entry", None)
+        if ent is None or not ent.winfo_exists():
+            return
+        self._hotword_search = ent.get().strip()
+        self._cancel_tag_search_timer()
+        try:
+            self._tag_search_after = self.after(_TAG_SEARCH_DEBOUNCE_MS, self._apply_tag_search)
+        except Exception:
+            self._apply_tag_search()
+
+    def _render_hotwords(self) -> None:
+        """渲染热点词管理面板：新增输入行 + 词条列表（每行可逐条删除）。"""
+        box = getattr(self, "_tag_main", None)
+        if box is None or not box.winfo_exists():
+            return
+
+        # ---- 新增行 ----
+        addrow = ctk.CTkFrame(box, fg_color="transparent")
+        addrow.pack(fill="x", padx=6, pady=(6, 2))
+        self._hotword_entry = ctk.CTkEntry(
+            addrow, placeholder_text="输入热点词，回车添加（一次可粘贴多个）", height=30)
+        self._hotword_entry.pack(side="left", fill="x", expand=True)
+        self._hotword_entry.bind("<Return>", self._on_hotword_add)
+        ctk.CTkButton(addrow, text="＋ 添加", width=76, height=30, fg_color=_TAG_OPEN_BG,
+                      command=self._on_hotword_add).pack(side="left", padx=(6, 0))
+
+        # ---- 词条列表 ----
+        try:
+            words = self.db.list_hotwords()
+        except Exception:
+            words = []
+        kw = self._hotword_search
+        shown = [w for w in words if (not kw) or (kw in w)]
+
+        if not words:
+            ctk.CTkLabel(
+                box,
+                text=("（热点词表为空）\n"
+                      "· 逐条添加：在上方输入后回车\n"
+                      "· 批量添加：点底部「📋 文本导入…」粘贴或导入文件\n"
+                      "· 从网站获取：点底部「🔄 热点词更新…」，填写来源网址后抓取\n"
+                      "说明：热点词会在「自动打标」时作为 ⑧ 维度标签使用，每条例目最多取 1 个。"),
+                text_color="#9aa4b1", justify="left",
+                font=("Microsoft YaHei", 11)).pack(anchor="w", padx=10, pady=10)
+            return
+        if not shown:
+            ctk.CTkLabel(box, text="（没有匹配的热点词）", text_color="#9aa4b1",
+                         font=("Microsoft YaHei", 11)).pack(anchor="w", padx=10, pady=8)
+            return
+
+        head = ctk.CTkFrame(box, fg_color="transparent")
+        head.pack(fill="x", padx=6, pady=(4, 2))
+        ctk.CTkLabel(head,
+                     text=(f"共 {len(words)} 个词条（匹配 {len(shown)} 个）" if kw
+                           else f"共 {len(words)} 个词条"),
+                     font=("Microsoft YaHei", 10), text_color="#5b6b7c").pack(side="left")
+
+        for w in shown:
+            row = ctk.CTkFrame(box, fg_color="transparent")
+            row.pack(fill="x", padx=6, pady=1)
+            ctk.CTkFrame(row, width=11, height=11, corner_radius=6,
+                         fg_color=_tag_color(w)).pack(side="left", padx=(2, 6))
+            ctk.CTkLabel(row, text=w, anchor="w", font=("Microsoft YaHei", 12),
+                         text_color="#1b2733").pack(side="left", fill="x", expand=True)
+            ctk.CTkButton(row, text="×", width=24, height=22, fg_color="#c9d3df",
+                          hover_color="#D9534F", text_color="#1b2733",
+                          font=("Microsoft YaHei", 11),
+                          command=lambda s=w: self._on_hotword_delete(s)).pack(side="right")
+
+    def _on_hotword_add(self, _event=None) -> None:
+        """把输入框内容加入热点词表（支持一次粘贴多个，按常见分隔符自动拆分）。"""
+        # 2026-09-15（批次 6-3，用户选定"仅入口拦截 + toast 提示"）：锁定态拦截（本入口原无任何拦截）
+        if not self._assert_unlocked("添加热点词"):
+            return
+        ent = getattr(self, "_hotword_entry", None)
+        if ent is None or not ent.winfo_exists():
+            return
+        words = self.db.parse_hotwords_text(ent.get())
+        if not words:
+            self.toast("⚠ 请输入有效热点词（单个词条不超过 24 字符）")
+            return
+        res = self.db.add_hotwords(words)
+        try:
+            ent.delete(0, "end")
+        except Exception:
+            pass
+        msg = f"✅ 已添加 {res['added_count']} 个热点词"
+        if res["skipped"]:
+            msg += f"（{res['skipped']} 个已存在）"
+        if res["invalid"]:
+            msg += f"（忽略 {res['invalid']} 个非法项）"
+        self.toast(msg + f"，现有 {res['total']} 个")
+        self._render_tag_main()
+
+    def _on_hotword_delete(self, name: str) -> None:
+        """删除单个热点词（即时生效，无需确认：可随时再加回）。"""
+        # 2026-09-15（批次 6-3，用户选定"仅入口拦截 + toast 提示"）：锁定态拦截（本入口原无任何拦截）
+        if not self._assert_unlocked("删除热点词"):
+            return
+        if self.db.remove_hotwords([name]):
+            self.toast(f"✅ 已删除热点词：{name}")
+        self._render_tag_main()
+
+    def _on_hotword_clear(self) -> None:
+        """清空全部热点词（二次确认；不影响已有标签与条目）。"""
+        # 2026-09-15（批次 6-3b）：统一守卫（本入口原先仅靠按钮置灰，方法内无判断）
+        if not self._assert_unlocked("清空热点词"):
+            return
+        n = self.db.count_hotwords()
+        if n == 0:
+            self.toast("热点词表已为空")
+            return
+        if not messagebox.askyesno(
+                "清空热点词",
+                f"将清空全部 {n} 个热点词（不影响已有标签与条目）。\n\n确定吗？", parent=self):
+            return
+        self.db.set_hotwords([])
+        self.toast(f"✅ 已清空 {n} 个热点词")
+        self._render_tag_main()
+
+    def _on_hotword_import(self) -> None:
+        """「文本导入…」（4-c）：弹窗内粘贴 / 导入文件 → 解析预览 → **并集追加**或整体替换。"""
+        # 2026-09-15（批次 6-3b）：统一守卫（本入口原先仅靠按钮置灰，方法内无判断）
+        if not self._assert_unlocked("导入热点词文本"):
+            return
+        win = ctk.CTkToplevel(self)
+        win.title("📋 热点词文本导入")
+        win.transient(self)
+        win.grab_set()
+        win.geometry("640x470")
+
+        ctk.CTkLabel(win, text="粘贴或编辑热点词：每行一个；也支持逗号、顿号、分号、竖线分隔"
+                               "（单个词条不超过 24 字符，超出会被忽略）",
+                     justify="left", font=("Microsoft YaHei", 12)
+                     ).pack(anchor="w", padx=14, pady=(12, 4))
+        box = ctk.CTkTextbox(win, height=190, font=("Microsoft YaHei", 12))
+        box.pack(fill="both", expand=True, padx=14, pady=4)
+        status = ctk.CTkLabel(win, text="", justify="left", font=("Microsoft YaHei", 11),
+                              text_color="#5b6b7c")
+        status.pack(anchor="w", padx=14, pady=(0, 4))
+
+        def _parsed():
+            return self.db.parse_hotwords_text(box.get("1.0", "end"))
+
+        def _preview() -> None:
+            words = _parsed()
+            have = set(self.db.list_hotwords())
+            new = [w for w in words if w not in have]
+            if not words:
+                status.configure(text="未解析到词条。", text_color="#9aa4b1")
+                return
+            status.configure(
+                text=f"解析到 {len(words)} 个词条；其中新增 {len(new)} 个、已存在 {len(words) - len(new)} 个。",
+                text_color=("#2E8B57" if new else "#5b6b7c"))
+
+        def _set_text(text: str) -> None:
+            box.delete("1.0", "end")
+            box.insert("1.0", text)
+            _preview()
+
+        def _read_file() -> None:
+            path = filedialog.askopenfilename(
+                title="选择词表文件", parent=win,
+                filetypes=[("文本/表格文件", "*.txt *.csv *.md *.tsv"),
+                           ("JSON 文件", "*.json"), ("全部文件", "*.*")])
+            if not path:
+                return
+            try:
+                with open(path, "r", encoding="utf-8-sig", errors="replace") as f:
+                    content = f.read()
+            except Exception as exc:
+                messagebox.showwarning("读取失败", str(exc), parent=win)
+                return
+            if path.lower().endswith(".json"):     # 兼容 ["词1","词2"] 与 {"hotwords": [...]}
+                try:
+                    data = json.loads(content)
+                except Exception:
+                    data = None
+                if isinstance(data, list):
+                    content = "\n".join(str(x) for x in data)
+                elif isinstance(data, dict):
+                    for k in ("hotwords", "words", "tags", "list"):
+                        if isinstance(data.get(k), list):
+                            content = "\n".join(str(x) for x in data[k])
+                            break
+            _set_text(content)
+
+        def _paste() -> None:
+            try:
+                txt = pyperclip.paste() or ""
+            except Exception:
+                txt = ""
+            if not txt.strip():
+                status.configure(text="剪贴板为空或无法读取。", text_color="#D9534F")
+                return
+            cur = box.get("1.0", "end").strip()
+            _set_text((cur + "\n" + txt) if cur else txt)
+
+        def _apply() -> None:
+            words = _parsed()
+            if not words:
+                status.configure(text="没有可导入的词条。", text_color="#D9534F")
+                return
+            res = self.db.add_hotwords(words)
+            self.toast(f"✅ 已导入 {res['added_count']} 个热点词（跳过 {res['skipped']} 个），"
+                       f"现有 {res['total']} 个")
+            win.destroy()
+            self._render_tag_main()
+
+        def _replace() -> None:
+            words = _parsed()
+            if not words:
+                status.configure(text="没有可替换的词条。", text_color="#D9534F")
+                return
+            if not messagebox.askyesno(
+                    "替换词表",
+                    f"将用这 {len(words)} 个词条「替换」当前全部热点词（不可撤销）。\n\n确定吗？",
+                    parent=win):
+                return
+            n = self.db.set_hotwords(words)
+            self.toast(f"✅ 热点词表已替换为 {n} 个词条")
+            win.destroy()
+            self._render_tag_main()
+
+        btns = ctk.CTkFrame(win, fg_color="transparent")
+        btns.pack(fill="x", padx=14, pady=(2, 12))
+        ctk.CTkButton(btns, text="从文件导入…", width=106, fg_color="#8a94a6",
+                      command=_read_file).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(btns, text="从剪贴板粘贴", width=110, fg_color="#8a94a6",
+                      command=_paste).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(btns, text="清空输入框", width=96, fg_color="#8a94a6",
+                      command=lambda: _set_text("")).pack(side="left")
+        ctk.CTkButton(btns, text="替换词表", width=92, fg_color="#E08A00",
+                      command=_replace).pack(side="right")
+        ctk.CTkButton(btns, text="添加到词表", width=104, fg_color="#2E8B57",
+                      command=_apply).pack(side="right", padx=(0, 6))
+        ctk.CTkButton(btns, text="取消", width=76,
+                      command=win.destroy).pack(side="right", padx=(0, 6))
+
+        box.bind("<KeyRelease>", lambda _e: _preview())
+        _preview()
+        win.update_idletasks()
+        win.geometry(f"+{max(self.winfo_x() + 40, 0)}+{max(self.winfo_y() + 60, 0)}")
+
+    def _on_hotword_fetch(self) -> None:
+        """「热点词更新…」（4-d）：填写来源网址 → 抓取 → 预览候选 → **并集追加**。
+
+        - 来源网址为空时不做任何请求；来源列表随抓取一并保存到 meta（下次自动带出）。
+        - 复用既有 `app/parser/fetcher.py`（标准库 urllib，**零新增依赖**）；**懒加载**导入。
+        - 抓取失败 / 疑似被拦截：如实提示并继续下一个来源（不整体中止）。
+        """
+        # 2026-09-15（批次 6-3b）：统一守卫（本入口原先仅靠按钮置灰，方法内无判断）
+        if not self._assert_unlocked("更新热点词"):
+            return
+        _MAX = 500        # 单次并入的词条上限（防误抓整站）
+        src_urls = self.db.list_hotword_sources()
+
+        win = ctk.CTkToplevel(self)
+        win.title("🔄 热点词更新")
+        win.transient(self)
+        win.grab_set()
+        win.geometry("680x560")
+
+        ctk.CTkLabel(win, text="来源网址（每行一个 http/https 网址；默认留空，由你填写）\n"
+                               "· 建议填写「每行一个词条」的文本 / JSON / Markdown 页面\n"
+                               "· 抓取为只读一次请求；失败或被拦截会如实提示，不影响下一个来源",
+                     justify="left", font=("Microsoft YaHei", 12)
+                     ).pack(anchor="w", padx=14, pady=(12, 4))
+        src_box = ctk.CTkTextbox(win, height=76, font=("Microsoft YaHei", 12))
+        src_box.pack(fill="x", padx=14, pady=(0, 4))
+        if src_urls:
+            src_box.insert("1.0", "\n".join(src_urls))
+
+        status = ctk.CTkLabel(win, text="", justify="left", font=("Microsoft YaHei", 11),
+                              text_color="#5b6b7c")
+        status.pack(anchor="w", padx=14, pady=(0, 2))
+        result_box = ctk.CTkTextbox(win, height=220, font=("Microsoft YaHei", 11))
+        result_box.pack(fill="both", expand=True, padx=14, pady=(0, 4))
+
+        state = {"new": []}
+
+        def _extract(text: str):
+            """从抓取到的文本中提取候选词条（去脚本/样式/标签；按行与常见分隔符拆分）。"""
+            t = re.sub(r"<script[\s\S]*?</script>", " ", text or "", flags=re.I)
+            t = re.sub(r"<style[\s\S]*?</style>", " ", t, flags=re.I)
+            t = re.sub(r"<[^>]+>", "\n", t)        # 标签 → 换行，利于"每行一个词条"
+            t = t.replace("&nbsp;", " ").replace("&amp;", "&")
+            out = []
+            for w in self.db.parse_hotwords_text(t):
+                if re.fullmatch(r"[\W_]+", w):     # 纯符号
+                    continue
+                out.append(w)
+            return out
+
+        def _read_urls():
+            items = [x.strip() for x in src_box.get("1.0", "end").splitlines() if x.strip()]
+            return [u for u in items if u.lower().startswith(("http://", "https://"))]
+
+        def _do_fetch() -> None:
+            urls = _read_urls()
+            if not urls:
+                status.configure(text="请先填写至少一个 http/https 来源网址。", text_color="#D9534F")
+                return
+            self.db.set_hotword_sources(urls)      # 顺手记住来源，下次自动带出
+            fetch_btn.configure(state="disabled", text="抓取中…")
+            found, lines = [], []
+            try:
+                from ..parser import fetcher       # 懒加载：仅在真正抓取时引入
+                for i, u in enumerate(urls, 1):
+                    status.configure(text=f"（{i}/{len(urls)}）正在抓取：{u}", text_color="#5b6b7c")
+                    win.update_idletasks()
+                    res = fetcher.fetch_url(u)
+                    if not res.get("ok"):
+                        lines.append(f"✗ {u}\n    失败：{res.get('error') or '未知错误'}")
+                        continue
+                    got = _extract(res.get("text") or "")
+                    found.extend(got)
+                    lines.append(f"✓ {u}\n    状态 {res.get('status')} · {res.get('bytes')} 字节"
+                                 f" · 解析出 {len(got)} 个候选"
+                                 + ("　⚠ 疑似被网站拦截，建议换来源" if res.get("blocked_hint") else ""))
+            except Exception as exc:               # 不整体中止：如实报告
+                lines.append(f"✗ 抓取异常：{exc}")
+            finally:
+                try:
+                    fetch_btn.configure(state="normal", text="开始抓取")
+                except Exception:
+                    pass
+
+            uniq, seen = [], set()
+            for w in found:
+                if w not in seen:
+                    seen.add(w)
+                    uniq.append(w)
+            have = set(self.db.list_hotwords())
+            new = [w for w in uniq if w not in have][:_MAX]
+            state["new"] = new
+            tail = (f"\n\n候选词条：去重后 {len(uniq)} 个，其中可新增 {len(new)} 个"
+                    + (f"（超出 {_MAX} 个上限的部分已省略）" if len(uniq) > _MAX else "")
+                    + "：\n" + "\n".join(new)) if new else "\n\n没有可新增的词条。"
+            result_box.delete("1.0", "end")
+            result_box.insert("1.0", "\n".join(lines) + tail)
+            status.configure(text=f"抓取完成：候选 {len(uniq)} 个，可新增 {len(new)} 个。",
+                             text_color=("#2E8B57" if new else "#5b6b7c"))
+
+        def _apply() -> None:
+            new = state.get("new") or []
+            if not new:
+                status.configure(text="没有可并入的词条（请先抓取）。", text_color="#D9534F")
+                return
+            res = self.db.add_hotwords(new)
+            self.toast(f"✅ 已并入 {res['added_count']} 个热点词（跳过 {res['skipped']} 个），"
+                       f"现有 {res['total']} 个")
+            state["new"] = []
+            win.destroy()
+            self._render_tag_main()
+
+        btns = ctk.CTkFrame(win, fg_color="transparent")
+        btns.pack(fill="x", padx=14, pady=(2, 12))
+        fetch_btn = ctk.CTkButton(btns, text="开始抓取", width=104, fg_color=_TAG_OPEN_BG,
+                                  command=_do_fetch)
+        fetch_btn.pack(side="left")
+        ctk.CTkButton(btns, text="保存来源", width=92, fg_color="#8a94a6",
+                      command=lambda: self.toast(
+                          f"✅ 已保存 {self.db.set_hotword_sources(_read_urls())} 个来源网址")
+                      ).pack(side="left", padx=(6, 0))
+        ctk.CTkButton(btns, text="并入词表", width=96, fg_color="#2E8B57",
+                      command=_apply).pack(side="right")
+        ctk.CTkButton(btns, text="关闭", width=76,
+                      command=win.destroy).pack(side="right", padx=(0, 6))
+
+        status.configure(text=("已带出 %d 个已保存的来源网址。" % len(src_urls)) if src_urls
+                                else "尚未配置来源网址。")
+        win.update_idletasks()
+        win.geometry(f"+{max(self.winfo_x() + 40, 0)}+{max(self.winfo_y() + 40, 0)}")
+
+    def _open_hotword_manager(self) -> None:
+        """「热点词管理…」入口（4-e，供设置对话框调用）。
+
+        复用标签页面的【热点词】页签——**两处入口共享同一界面与同一份数据**（零重复实现）；
+        若标签页面尚未打开则先打开，再切到"热点词"档。
+        """
+        self._tag_page_view = "hot"
+        try:
+            self.db.set_meta(config.META_TAG_VIEW, "hot")
+        except Exception:
+            pass
+        if not self._tag_page_on:
+            self._open_tag_page()
+        else:
+            self._refresh_tag_page()
+
+    # ------------------------------------------------------------------ #
+    # 词表页签（2026-09-14 12:00，阶段 0.5）
+    #   词表 = 通用骨架 + 领域维度包 + 领域判定表；出厂种子见 app/tagger_dict.py（阶段 0 产出）。
+    #   权威数据存于数据库 meta（键 tag_dict），**可编辑、可扩展**：
+    #   要"新增一个大类"（如「学术」）= 在导出的 JSON 里加一个 domains 块后再导入。
+    #   入口双通道：① 标签页面「词表」页签；② 设置对话框「📚 词表管理…」按钮（复用同一界面）。
+    #   词表本身不参与本步任何匹配计算（匹配引擎属阶段 1），此处只做查看与维护。
+    # ------------------------------------------------------------------ #
+    def _render_dict_panel(self) -> None:
+        """渲染词表结构预览（只读）：概要 + 通用骨架 + 各领域包的维度与标签清单。"""
+        box = getattr(self, "_tag_main", None)
+        if box is None or not box.winfo_exists():
+            return
+        try:
+            data = tagger.load_dict(self.db)
+            s = tagger.dict_summary(data)
+        except Exception as exc:
+            ctk.CTkLabel(box, text=f"（词表读取失败：{exc}）", text_color="#D9534F",
+                         font=("Microsoft YaHei", 11)).pack(anchor="w", padx=10, pady=10)
+            return
+
+        def _row(text, color="#1b2733", size=12, bold=False):
+            ctk.CTkLabel(box, text=text, text_color=color, justify="left", anchor="w",
+                         font=("Microsoft YaHei", size, "bold" if bold else "normal")
+                         ).pack(fill="x", padx=10, pady=(6, 0))
+
+        _row(f"版本 v{s.get('version')} ｜ 更新于 {s.get('updated_at')} ｜ "
+             f"标签总数 {s.get('标签总数')} ｜ 领域包 {len(s.get('领域包') or {})} 个",
+             color="#5b6b7c", size=11)
+        _row("【通用骨架】（所有领域共用）", color=_TAG_OPEN_BG, bold=True)
+        for dim, labels in (data.get("universal") or {}).items():
+            _row(f"　{dim}（{len(labels)}）：{' · '.join(labels.keys())}")
+
+        for dom, info in (s.get("领域包") or {}).items():
+            _row(f"【领域包：{dom}】{info['维度数']} 个维度 / {info['标签数']} 个标签",
+                 color=_TAG_OPEN_BG, bold=True)
+            for dim, labels in ((data.get("domains") or {}).get(dom) or {}).items():
+                _row(f"　{dim}（{len(labels)}）：{' · '.join(labels.keys())}")
+
+        _row("说明：以数据库中的词表为准（可编辑）。要新增一个大类（例如「学术」）："
+             "点「⬆ 导出词表…」导出 JSON → 在 domains 里加一个「学术」块"
+             "（并在 universal.领域 与 domain_map 各加一项）→ 点「⬇ 导入词表…」导入即可。",
+             color="#9aa4b1", size=11)
+
+    def _on_dict_export(self) -> None:
+        """导出词表为 JSON 文件（供外部编辑 / 备份 / 换机搬运）。"""
+        path = filedialog.asksaveasfilename(
+            title="导出词表", parent=self, defaultextension=".json",
+            initialfile="tag_dict.json",
+            filetypes=[("JSON 文件", "*.json"), ("全部文件", "*.*")])
+        if not path:
+            return
+        res = tagger.export_dict(self.db, path)
+        if res.get("ok"):
+            self.toast(f"✅ 词表已导出（{res.get('tags')} 个标签）：{os.path.basename(path)}")
+        else:
+            messagebox.showwarning("导出失败", str(res.get("error")), parent=self)
+
+    def _on_dict_import(self) -> None:
+        """从 JSON 文件导入词表（整体替换；导入前自动备份当前词表）。"""
+        # 2026-09-15（批次 6-3b）：统一守卫（本入口原先仅靠按钮置灰，方法内无判断）
+        if not self._assert_unlocked("导入词表"):
+            return
+        path = filedialog.askopenfilename(
+            title="导入词表", parent=self,
+            filetypes=[("JSON 文件", "*.json"), ("全部文件", "*.*")])
+        if not path:
+            return
+        read = tagger.read_dict_file(path)          # 先只读校验，避免"确认了才发现格式错"
+        if not read.get("ok"):
+            detail = "\n".join(read.get("errors") or []) or str(read.get("error"))
+            messagebox.showwarning("词表文件不合法",
+                                   f"{detail}\n\n未做任何修改。", parent=self)
+            return
+        new_tags = tagger.count_tags(read["data"])
+        doms = "、".join((read["data"].get("domains") or {}).keys())
+        if not messagebox.askyesno(
+                "导入词表",
+                f"将用该文件「替换」当前词表。\n\n· 文件标签总数：{new_tags}\n"
+                f"· 领域包：{doms}\n\n导入前会自动备份当前词表。确定吗？", parent=self):
+            return
+        res = tagger.import_dict(self.db, path)
+        if not res.get("ok"):
+            detail = "\n".join(res.get("errors") or []) or str(res.get("error"))
+            messagebox.showwarning("导入失败", detail, parent=self)
+            return
+        self.toast(f"✅ 词表已导入（{res['before_tags']} → {res['tags']} 个标签），原词表已备份")
+        self._render_tag_main()
+
+    def _on_dict_reset(self) -> None:
+        """恢复出厂词表（出厂种子见 app/tagger_dict.py；恢复前自动备份当前词表）。"""
+        # 2026-09-15（批次 6-3b）：统一守卫（本入口原先仅靠按钮置灰，方法内无判断）
+        if not self._assert_unlocked("恢复出厂词表"):
+            return
+        try:
+            cur = tagger.count_tags(tagger.load_dict(self.db))
+        except Exception:
+            cur = 0
+        if not messagebox.askyesno(
+                "恢复出厂词表",
+                f"将把词表恢复为「出厂默认」（当前 {cur} 个标签将被替换）。\n\n"
+                "恢复前会自动备份当前词表。确定吗？", parent=self):
+            return
+        res = tagger.reset_dict(self.db)
+        self.toast(f"✅ 已恢复出厂词表（{res['tags']} 个标签）")
+        self._render_tag_main()
+
+    def _open_dict_manager(self) -> None:
+        """「📚 词表管理…」入口（阶段 0.5，供设置对话框调用）。
+
+        与「🏷 热点词管理…」同一做法：复用标签页面的【词表】页签（两处入口同一界面、同一份数据）。
+        """
+        self._tag_page_view = "dict"
+        try:
+            self.db.set_meta(config.META_TAG_VIEW, "dict")
+        except Exception:
+            pass
+        if not self._tag_page_on:
+            self._open_tag_page()
+        else:
+            self._refresh_tag_page()
+
+    def _open_batch_tag(self) -> None:
+        """打开「🤖 批量智能自动打标」对话框（2026-09-14，阶段 2）。
+
+        入口双通道：① 标签页面（标签档）底部按钮；② 设置 → 标签与词表 页。
+        2026-09-14（目标库增强）：把当前库文件路径一并传入，对话框可切换"目标库＝其他库文件"。
+        """
+        # 2026-09-15（批次 6-3b，用户选定"仅入口拦截"）：统一守卫——
+        #   锁定态不打开批量打标对话框（对话框内可批量写标签，且可指向"其他库文件"）。
+        if not self._assert_unlocked("打开批量打标"):
+            return
+        BatchTagDialog(self, self.db,
+                       db_path=os.path.join(config.data_dir(), config.DB_FILE_NAME))
+
+    # ------------------------------------------------------------------ #
+    # 工具栏"折成两行"（2026-09-14 用户设计）
+    # ------------------------------------------------------------------ #
+    def _toolbar_one_row_need(self) -> int:
+        """返回"一行时工具栏所需宽度"（实际像素，含工具栏左右外边距）。
+
+        注（2026-09-15 审核 L-3 更正）：折行时**只搬移搜索框**、第一行内容不变，
+        故 `bar.winfo_reqwidth()` 折行前后其实一致（原注释"第二组已不在第一行"是旧设计残留）。
+        仍采用"**未折行时实测并缓存**"的取法：缓存值可自动适应不同 DPI / 字体（不用写死常量），
+        并避免每次 <Configure> 都触发一次布局测量。
+        """
+        b = getattr(self, "untagged_btn", None)
+        bar = b.master if b is not None else None
+        if bar is None or not bar.winfo_exists():
+            return 0
+        if not self._bar_folded:
+            # 工具栏左右外边距：源码 padx=8 → 本机缩放后约 10，两侧合计 20
+            self._bar_one_row_need = bar.winfo_reqwidth() + 20
+            # 2026-09-15（审核 L-8）：同时缓存"第一行最左按钮的左边界"（折行时作第二行首列宽）。
+            #   ⚠ `winfo_x()` 在控件尚未布局时会**合法返回 0**（不抛异常），故必须在**未折行**时实测缓存，
+            #   折行时若实时值 ≤0 就用本缓存值兜底（否则搜索框会"贴左"而不是"靠右"）。
+            try:
+                _x = int(self.tag_page_btn.winfo_x())
+                if _x > 0:
+                    self._bar_row2_left = _x
+            except Exception as exc:
+                _geom_warn("缓存工具栏左边界", exc)
+        return self._bar_one_row_need
+
+    def _on_root_configure(self, _event=None) -> None:
+        """窗口尺寸变化 → 按"是否放得下一行工具栏"自动折成两行 / 恢复一行（幂等、含滞后）。"""
+        if _event is not None and getattr(_event, "widget", None) is not self:
+            return
+        try:
+            w = self.winfo_width()
+        except Exception:
+            return
+        if w == self._bar_last_w:      # 宽度未变（如仅高度变化）→ 不重复计算
+            return
+        self._bar_last_w = w
+        need = self._toolbar_one_row_need()
+        if not need or w <= 1:         # 尚未完成布局
+            return
+        if not self._bar_folded and w < need:
+            self._set_bar_folded(True)
+        elif self._bar_folded and w >= need + _BAR_UNFOLD_MARGIN:
+            self._set_bar_folded(False)
+
+    def _set_bar_folded(self, folded: bool) -> None:
+        """把**搜索框（输入框+🔍）**在"第一行最右"与"第二行靠右"之间搬移（幂等）。
+
+        2026-09-14 用户最终决定：两组工具按钮固定第一行不变，只让搜索框下移到第二行靠右；
+        搜索框搬走后，第一行的搜索列 `minsize` 同时置 0，避免留出一条空白。
+        """
+        row2 = getattr(self, "_bar_row2", None)
+        box = getattr(self, "search_box", None)
+        if row2 is None or box is None or not row2.winfo_exists():
+            return
+        folded = bool(folded)
+        if folded == self._bar_folded:
+            return
+        self._bar_folded = folded
+        bar = row2.master
+        try:
+            box.grid_forget()
+            if folded:
+                # 第二行：左侧先留出"第一行最左侧图标（第一个按钮）的左边界"这么宽，
+                # 搜索框从该处向右**自适应伸展**（sticky="ew"）——
+                # 既满足"靠右"，又保证"搜索框左边不越过第一行最左侧图标的左边"。
+                try:
+                    _left = max(int(self.tag_page_btn.winfo_x()), 0)   # 相对工具栏的 x
+                except Exception as exc:
+                    _left = 0
+                    _geom_warn("取工具栏左边界", exc)
+                if _left <= 0:
+                    # 2026-09-15（审核 L-8）：未完成布局时 winfo_x() 会**合法返回 0**（不抛异常），
+                    #   原 except 兜底形同虚设 → 这里用"未折行时实测缓存"，再退到常量下限。
+                    _left = max(int(getattr(self, "_bar_row2_left", 0)), _BAR_ROW2_MIN_LEFT)
+                row2.grid_columnconfigure(0, weight=0, minsize=_left)
+                row2.grid_columnconfigure(1, weight=1)
+                box.grid(in_=row2, row=0, column=1, sticky="ew")
+                # 2026-09-15（审核 L-8）：补 `weight=0`——原先只清 minsize、保留 weight=1，
+                #   与恢复分支（下方 3035 行 weight=1, minsize=260）不对称，第一行仍留约 1/3 弹性空白。
+                bar.grid_columnconfigure(12, weight=0, minsize=0)
+                # ⚠ 必须带**完整参数**恢复本容器的 grid 配置：若写成 `row2.grid()`（无参），
+                #   Tk 会把配置重置为默认（columnspan=1、sticky=""、padx=0）→ 本容器只占第 0 列
+                #   并把它撑宽，导致**第一行所有按钮整体右移**（2026-09-14 实测踩坑，已修）。
+                row2.grid(**_BAR_ROW2_GRID)
+            else:
+                # 第一行最右（原列位 col12）
+                box.grid(in_=bar, row=0, column=12, padx=(4, 6), sticky="ew")
+                bar.grid_columnconfigure(12, weight=1, minsize=260)   # 2026-09-15：183 → 260（与创建处一致）
+                row2.grid_forget()
+        except Exception:
+            pass
 
     def _popup_menu(self, menu, event) -> None:
         """弹出菜单（容错包装：Tk 边界情况下回调可能被零参数调用 → event 为 None 时忽略）
@@ -2146,6 +3558,7 @@ class MainWindow(ctk.CTk):
         if not self._confirm_unsaved():
             return
         self._cur_cat_id = cat_id
+        self._last_cat_id = cat_id   # 2026-09-15（批次 8-A）：记住"最近一次有分类的视图"
         if self.db.category_has_children(cat_id):
             self._refresh_l2()          # 有子级：重建二级列展示子分类
             self._view = ("cat", cat_id)
@@ -2175,6 +3588,18 @@ class MainWindow(ctk.CTk):
             return
         self._view = ("fav", None)
         self._render_entries(self.db.list_favorites(), "⭐ 常用")
+
+    # 2026-09-14（用户要求"无标签条目"入口 方案 A）：工具栏"🏷 无标条目"按钮的响应。
+    #   列出所有**没有任何标签**的条目（按修改时间倒序），标题带总数；用户可逐条点选，
+    #   在详情区打标签（详情区标签编辑区已具备）。视图 kind="untagged"、ref=关键词（""＝不过滤），
+    #   与搜索框 `#无标签` 语法（方案 C）共用同一渲染分支。
+    #   2026-09-14（用户要求 2）：本视图的 _entries_all 即"全部无标签条目"，故
+    #   打开「🤖 批量打标」后选「范围＝当前列表」即可对这批条目批量打标。
+    def _show_untagged(self) -> None:
+        if not self._confirm_unsaved():
+            return
+        self._view = ("untagged", "")
+        self._restore_view()
 
     def _cancel_search_timer(self) -> None:
         """取消尚未到点的"搜索防抖"定时器（2026-09-10，用户要求）"""
@@ -2229,6 +3654,19 @@ class MainWindow(ctk.CTk):
                       or (isinstance(cur, tuple) and cur and cur[0] in ("search", "search_tag")))
         if (tags or kw) and not _in_search:
             self._view_before_search = cur
+        # 2026-09-14（用户要求"无标签条目"入口 方案 C）：`#无标签` / `#none` 保留词。
+        #   命中则切到"无标签条目"视图（可带关键词过滤）；若同时写了其他真实 `#标签`，
+        #   语义自相矛盾（无标签的条目不可能带这些标签）→ 明确提示，不静默忽略用户输入。
+        if any(t in _UNTAGGED_ALIASES for t in tags):
+            rest = [t for t in tags if t not in _UNTAGGED_ALIASES]
+            if rest:
+                self._view = None
+                self._render_entries(
+                    [], "🏷 “#无标签”不能与 #" + "、#".join(rest) + " 同时使用")
+                return
+            self._view = ("untagged", kw)
+            self._restore_view()
+            return
         if tags:
             ids, names = [], []
             for n in tags:
@@ -2282,6 +3720,24 @@ class MainWindow(ctk.CTk):
             self._render_entries(self.db.list_uncategorized(), "📂 未分类")
         elif kind == "fav":
             self._render_entries(self.db.list_favorites(), "⭐ 常用")
+        elif kind == "untagged":
+            # 2026-09-14（"无标签条目"入口 方案 A + 方案 C 共用）：ref = 关键词（""＝不过滤）。
+            #   标题里的总数每次重建都重算，故"给某条打了标签"后该条会立即移出并更新计数。
+            # 2026-09-15（审核 L-9）：**本通路补容错**——原先与"计数通路"（有 try + −1 哨兵）不一致，
+            #   库被锁/损坏/缺表时异常会冒泡到 Tk 回调（无控制台 EXE 下表现为"点了没反应"）。
+            try:
+                items = self.db.list_untagged()
+                if ref:
+                    keep = {e["id"] for e in self.db.search(ref)}
+                    items = [e for e in items if e["id"] in keep]
+            except Exception as exc:
+                _geom_warn("无标签条目列表", exc)
+                self._render_entries([], "🏷 无标签条目（读取失败，请检查数据文件）")
+                return
+            title = ("🏷 无标签条目"
+                     + (f"　+　“{ref}”" if ref else "")
+                     + f"（共 {len(items)} 条）")
+            self._render_entries(items, title)
         elif kind == "search":
             self._render_entries(self.db.search(ref), f"搜索结果（{ref}）")
         elif kind == "tag":
@@ -2336,6 +3792,16 @@ class MainWindow(ctk.CTk):
         self._restore_view()
 
     def _render_entries(self, entries, title: str) -> None:
+        # 2026-09-14（性能优化，用户确认"默认前 200 条 + 显示更多"）：
+        #   实测每条例目渲染约 54ms（100 条≈5.4 秒、2329 条≈137 秒），瓶颈在逐个创建 UI 控件。
+        #   故先记下**完整**列表，再按上限截断渲染；其余由「显示更多 / 全部显示」按需追加。
+        self._entries_all = list(entries or [])
+        self._entries_title = title
+        _lim = int(getattr(self, "_entry_render_limit", ENTRY_RENDER_LIMIT) or 0)
+        shown = (self._entries_all[:_lim]
+                 if (_lim and len(self._entries_all) > _lim) else list(self._entries_all))
+        entries = shown
+
         self.entry_frame.configure(label_text=title)
         self._hide_entry_overview()  # 2026-09-09：列表重建前收起"全部条目名"浮层
         self._entry_ov_names = []
@@ -2360,9 +3826,30 @@ class MainWindow(ctk.CTk):
             command=self._start_new_entry)
         self._add_entry_btn.pack(fill="x", padx=6, pady=(4, 2))
 
+        # 2026-09-14：被截断时显示"已显示前 N 条 · 剩余 M 条" + 「显示更多 / 全部显示」
+        # （整行 fill=x，适配条目区仅 224px 的窄宽度；不再截断后按钮置灰）
+        self._entry_more_btns = []
+        self._entry_count_lbl = None
+        if len(shown) < len(self._entries_all):
+            self._entry_count_lbl = ctk.CTkLabel(
+                self.entry_frame, text=self._entry_count_text(),
+                text_color="#8a94a6", font=("Microsoft YaHei", 10))
+            self._entry_count_lbl.pack(fill="x", padx=8, pady=(2, 0))
+            _b1 = ctk.CTkButton(self.entry_frame,
+                                text=f"▼ 显示更多（+{ENTRY_RENDER_STEP}）", height=26,
+                                font=("Microsoft YaHei", 11), fg_color="#25639c",
+                                command=self._show_more_entries)
+            _b1.pack(fill="x", padx=6, pady=(2, 0))
+            _b2 = ctk.CTkButton(self.entry_frame,
+                                text=f"全部显示（共 {len(self._entries_all)} 条）", height=24,
+                                font=("Microsoft YaHei", 11), fg_color="#6b7280",
+                                command=lambda: self._show_more_entries(all_=True))
+            _b2.pack(fill="x", padx=6, pady=(2, 0))
+            self._entry_more_btns = [_b1, _b2]
+
         toggle = ctk.CTkFrame(self.entry_frame, fg_color="transparent")
         toggle.pack(fill="x", padx=6, pady=(4, 2))
-        ctk.CTkLabel(toggle, text=f"共 {len(entries)} 条",
+        ctk.CTkLabel(toggle, text=f"共 {len(self._entries_all)} 条",
                      text_color="gray").pack(side="left")
         switch = ctk.CTkSegmentedButton(toggle, values=["卡片", "列表"], width=150,
                                         command=self._set_view_mode)
@@ -2370,32 +3857,121 @@ class MainWindow(ctk.CTk):
         switch.pack(side="right")
 
         if not entries:
+            self._entry_render_shown = []
+            self._entry_tags_cache = {}
             ctk.CTkLabel(self.entry_frame, text="（暂无条目）",
                          text_color="gray").pack(pady=30)
             self._scroll_top(self.entry_frame)  # 2026-09-07（第4条改进）
             return
-        if self._view_mode == "card":
-            for e in entries:
-                self._add_card(e)
-        else:
-            for e in entries:
-                self._add_row(e)
-        self._entry_ov_names = [e["name"] for e in entries]  # 2026-09-09：悬停浮层数据
-        self._entry_ov_ids = [e["id"] for e in entries]      # 2026-09-11 09:27（用户要求 3）：高亮定位
+        # 2026-09-14：一次性预取标签（消除"逐条查询"的 N+1），再渲染
+        self._entry_tags_cache = self._prefetch_entry_tags(entries)
+        self._entry_render_shown = []
+        self._append_entry_items(entries)
         self._scroll_top(self.entry_frame)  # 2026-09-07（第4条改进）：切换分类后条目列回到顶部
+
+    # ---- 条目区：渲染上限相关辅助（2026-09-14 性能优化） ---- #
+    def _entry_count_text(self) -> str:
+        """「已显示前 N 条 · 剩余 M 条（共 X 条）」提示文本。"""
+        total = len(getattr(self, "_entries_all", []) or [])
+        cur = len(getattr(self, "_entry_render_shown", []) or [])
+        return f"已显示前 {cur} 条 · 剩余 {max(0, total - cur)} 条（共 {total} 条）"
+
+    def _prefetch_entry_tags(self, entries) -> dict:
+        """一次性预取条目标签（消除 N+1 逐条查询；仅在开启"条目处显示标签"时执行）。"""
+        if not getattr(self, "_show_tags_in_list", False):
+            return {}
+        try:
+            return self.db.list_tags_for_entries([e["id"] for e in entries])
+        except Exception:
+            return {}
+
+    def _append_entry_items(self, items) -> None:
+        """把条目**追加**渲染到条目区末尾（供"显示更多"复用，不重建已渲染部分）。"""
+        items = list(items or [])
+        if not items:
+            return
+        for e in items:
+            if self._view_mode == "card":
+                self._add_card(e)
+            else:
+                self._add_row(e)
+        self._entry_render_shown = (list(getattr(self, "_entry_render_shown", []) or [])
+                                   + items)
+        self._entry_ov_names = [x["name"] for x in self._entry_render_shown]
+        self._entry_ov_ids = [x["id"] for x in self._entry_render_shown]
+
+    def _show_more_entries(self, all_: bool = False) -> None:
+        """追加渲染更多条目（只渲染新增部分；不重建已有控件，避免重复开销）。"""
+        total = len(getattr(self, "_entries_all", []) or [])
+        cur = len(getattr(self, "_entry_render_shown", []) or [])
+        if cur >= total:
+            return
+        if all_:
+            # 2026-09-14 13:40（用户确认）：超大集合先二次确认，避免误点后界面长时间无响应
+            if total > ENTRY_ALL_CONFIRM_THRESHOLD:
+                _secs = int(total * 0.054) + 1      # 按实测 54ms/条 估算
+                if not messagebox.askyesno(
+                        "全部显示",
+                        f"将一次渲染全部 {total} 条条目，约需 {_secs} 秒"
+                        "（渲染期间界面无响应、不可中断）。\n\n"
+                        "建议改用「▼ 显示更多」分步加载。确定要全部显示吗？", parent=self):
+                    return
+            self._entry_render_limit = 0
+            end = total
+        else:
+            self._entry_render_limit = (int(getattr(self, "_entry_render_limit",
+                                                   ENTRY_RENDER_STEP) or 0)
+                                        + ENTRY_RENDER_STEP)
+            end = min(self._entry_render_limit, total)
+        # 先给出"已点击"的反馈（渲染期间界面会短暂无响应，与既有行为一致）
+        for b in (getattr(self, "_entry_more_btns", None) or []):
+            try:
+                b.configure(state="disabled")
+            except Exception:
+                pass
+        try:
+            self.update_idletasks()
+        except Exception:
+            pass
+
+        self._append_entry_items(self._entries_all[cur:end])
+        # 追加部分的标签：只补查新增条目
+        if getattr(self, "_show_tags_in_list", False):
+            try:
+                self._entry_tags_cache.update(
+                    self.db.list_tags_for_entries([e["id"] for e in self._entries_all[cur:end]]))
+            except Exception:
+                pass
+        try:
+            if self._entry_count_lbl is not None and self._entry_count_lbl.winfo_exists():
+                self._entry_count_lbl.configure(text=self._entry_count_text())
+            done = len(self._entry_render_shown) >= total
+            if not done and self._entry_more_btns:
+                self._entry_more_btns[0].configure(
+                    text=f"▼ 显示更多（+{ENTRY_RENDER_STEP}）")
+            for b in (self._entry_more_btns or []):
+                if b.winfo_exists():
+                    b.configure(state=("disabled" if done else "normal"))
+        except Exception:
+            pass
 
     def _entry_tags_display(self, entry_id: int):
         """条目区标签显示 → (短文本, 完整文本)。
 
         2026-09-13（1-C-4b）：设置关闭或无标签时返回 ("", "")；短文本超长按字符截断
         （条目区不加宽，故用截断 + 悬浮查看的处理方式）。
+        2026-09-14：优先用**一次性预取的缓存** `_entry_tags_cache`（消除逐条查询的 N+1）。
         """
         if not self._show_tags_in_list:
             return "", ""
-        try:
-            names = self.db.list_entry_tag_names(entry_id)
-        except Exception:
-            names = []
+        cache = getattr(self, "_entry_tags_cache", None)
+        if cache is not None and entry_id in cache:
+            names = cache.get(entry_id) or []
+        else:
+            try:
+                names = self.db.list_entry_tag_names(entry_id)
+            except Exception:
+                names = []
         if not names:
             return "", ""
         full = "、".join(names)
@@ -2410,7 +3986,9 @@ class MainWindow(ctk.CTk):
         top.pack(fill="x", padx=8, pady=(6, 0))
         star = "★ " if e["is_favorite"] else ""
         ctk.CTkLabel(top, text=f"{star}{e['name']}",
-                     font=_ENTRY_NAME_FONT_CARD, anchor="w").pack(side="left")
+                     font=ui_appearance.font("entry_rows", _ENTRY_NAME_FONT_CARD,
+                                             self._ui_appearance),
+                     anchor="w").pack(side="left")
         # 2026-09-13（1-C-4b）：可选显示标签（默认关）
         _short, _full = self._entry_tags_display(e["id"])
         if _short:
@@ -2432,14 +4010,18 @@ class MainWindow(ctk.CTk):
         if _short:
             _left = ctk.CTkFrame(row, fg_color="transparent")
             _left.pack(side="left", padx=8, pady=3)
-            ctk.CTkLabel(_left, text=f"{star}{e['name']}", font=_ENTRY_NAME_FONT_LIST,
+            ctk.CTkLabel(_left, text=f"{star}{e['name']}",
+                         font=ui_appearance.font("entry_rows", _ENTRY_NAME_FONT_LIST,
+                                                 self._ui_appearance),
                          anchor="w").pack(anchor="w")
             _tl = ctk.CTkLabel(_left, text="🏷 " + _short, text_color="#7A4FBF",
                                font=("Microsoft YaHei", 10), anchor="w")
             _tl.pack(anchor="w")
             _FieldTooltip(_tl, "标签：" + _full)
         else:
-            ctk.CTkLabel(row, text=f"{star}{e['name']}", font=_ENTRY_NAME_FONT_LIST,
+            ctk.CTkLabel(row, text=f"{star}{e['name']}",
+                         font=ui_appearance.font("entry_rows", _ENTRY_NAME_FONT_LIST,
+                                                 self._ui_appearance),
                          anchor="w").pack(side="left", padx=8, pady=4)
         summary = ((e["intro"] or "").replace("\n", " ")[:36]) or "（无介绍）"
         ctk.CTkLabel(row, text=summary, text_color="gray", anchor="e",
@@ -2518,9 +4100,11 @@ class MainWindow(ctk.CTk):
             if not lb.winfo_exists():
                 return
             idx = self._entry_ov_ids.index(self._entry_ov_cur)
+            # 2026-09-15（批次 4）：复原色用与浮层相同的配色（用户若改过背景/文字色，此处同步）
+            _bg, _fg = getattr(self, "_entry_ov_colors", (_ENTRY_OV_BG, _ENTRY_OV_FG))
             if self._entry_ov_hl is not None and self._entry_ov_hl != idx:
-                lb.itemconfig(self._entry_ov_hl, background=_ENTRY_OV_BG,
-                              foreground=_ENTRY_OV_FG)   # 复原上一行默认配色
+                lb.itemconfig(self._entry_ov_hl, background=_bg,
+                              foreground=_fg)   # 复原上一行默认配色
             lb.itemconfig(idx, background=_ENTRY_OV_HL_BG, foreground=_ENTRY_OV_HL_FG)
             self._entry_ov_hl = idx
             lb.see(idx)   # 条目多于浮层可视行数时，把高亮行滚入可视区
@@ -2608,6 +4192,36 @@ class MainWindow(ctk.CTk):
         self._entry_ov_listbox = None
         self._entry_ov_hl = None   # 2026-09-11 09:27（用户要求 3）：浮层已销毁，清空高亮行记录
 
+    # ---------------- 外观设置叠加（2026-09-15 批次 4） ---------------- #
+    def _default_ctk_font(self) -> tuple:
+        """CTk 当前默认字体 (family, size, "normal")。
+
+        用途：把外观设置叠加到**未显式指定字体**的控件（如 ⑧/⑨ 提示词文本框）上时，
+        需要知道"原值"是什么，才能真正做到"未设置＝与改动前完全一致"。
+        """
+        try:
+            if getattr(self, "_ctk_default_font", None) is None:
+                _f = ctk.CTkFont()
+                self._ctk_default_font = (str(_f.cget("family")), int(_f.cget("size")), "normal")
+            return self._ctk_default_font
+        except Exception:
+            return ("Microsoft YaHei", 14, "normal")
+
+    def _look_kwargs(self, group: str, base_font=None) -> dict:
+        """返回"外观设置"叠加后的控件参数（供创建控件时 `**` 展开）。
+
+        **未设置任何字体/颜色时返回空 dict** ⇒ 调用处的控件与改动前**完全一致**（零差异）。
+        """
+        data = self._ui_appearance or {}
+        g = (data.get(group) or {})
+        kw = {}
+        if g.get("family") or g.get("size"):
+            kw["font"] = ui_appearance.font(group, base_font or self._default_ctk_font(), data)
+        _fg = ui_appearance.color(group, data, "fg", None)
+        if _fg:
+            kw["text_color"] = _fg
+        return kw
+
     def _show_entry_overview(self) -> None:
         """在条目列左侧浮出当前分类下全部条目名称（可滚动，超长自动横向滚动）。"""
         if not self._entry_ov_names or self._entry_ov_popup is not None:
@@ -2615,15 +4229,21 @@ class MainWindow(ctk.CTk):
         names = self._entry_ov_names
         popup = tk.Toplevel(self.entry_frame)
         popup.wm_overrideredirect(True)
-        popup.configure(bg="#ffffff")
+        # 2026-09-15（批次 4）：本浮层的字体（组 entry_ov）与配色（bg/fg）可由设置叠加——
+        #   未设置时与原值**完全一致**；标题栏仍是主题蓝，不随背景色变化。
+        _ov_bg = ui_appearance.color("entry_ov", self._ui_appearance, "bg", _ENTRY_OV_BG)
+        _ov_fg = ui_appearance.color("entry_ov", self._ui_appearance, "fg", _ENTRY_OV_FG)
+        self._entry_ov_colors = (_ov_bg, _ov_fg)   # 供"鼠标移动高亮复原"使用同一套配色
+        popup.configure(bg=_ov_bg)
         # 2026-09-12（用户要求 1）：浮层内文字字号＝条目区"条目名称"字号（随当前视图模式）
         name_font = (_ENTRY_NAME_FONT_CARD if self._view_mode == "card"
                      else _ENTRY_NAME_FONT_LIST)
+        name_font = ui_appearance.font("entry_ov", name_font, self._ui_appearance)
         head = tk.Label(popup, text=f"📋 条目名称一览（共 {len(names)} 条）",
                         bg="#25639c", fg="white", padx=8, pady=4,
                         font=name_font)
         head.pack(fill="x")
-        body = tk.Frame(popup, bg="#ffffff")
+        body = tk.Frame(popup, bg=_ov_bg)
         body.pack(fill="both", expand=True)
         sb = tk.Scrollbar(body)
         sb.pack(side="right", fill="y")
@@ -2633,7 +4253,7 @@ class MainWindow(ctk.CTk):
         rows = min(max(len(names), _ENTRY_OV_MIN_ROWS), _ENTRY_OV_MAX_ROWS)
         lb = tk.Listbox(body, font=name_font, activestyle="none",
                         width=width, height=rows,
-                        bg=_ENTRY_OV_BG, fg=_ENTRY_OV_FG,   # 2026-09-11 09:27（用户要求 3）：显式配色
+                        bg=_ov_bg, fg=_ov_fg,   # 2026-09-11 09:27（用户要求 3）：显式配色
                         yscrollcommand=sb.set, borderwidth=0, highlightthickness=0)
         for i, n in enumerate(names, 1):
             lb.insert("end", f"{i}. {n}")
@@ -2787,17 +4407,21 @@ class MainWindow(ctk.CTk):
         except Exception:
             return
         popup.wm_overrideredirect(True)
-        popup.configure(bg="#ffffff")
+        # 2026-09-15（批次 4）：本浮窗的字体（组 field_tip）与文字色/背景色可由设置叠加——
+        #   未设置时与原值**完全一致**（背景默认白、文字默认 #111111）；标题栏仍是主题蓝。
+        _tip_bg = ui_appearance.color("field_tip", self._ui_appearance, "bg", "#ffffff")
+        _tip_fg = ui_appearance.color("field_tip", self._ui_appearance, "fg", "#111111")
+        popup.configure(bg=_tip_bg)
         head = tk.Label(popup, text=f"📄 {title} · 完整内容",
                         bg="#25639c", fg="white", padx=8, pady=4, anchor="w",
                         font=("Microsoft YaHei", 10, "bold"))
         head.pack(fill="x")
-        bd = tk.Frame(popup, bg="#ffffff")
+        bd = tk.Frame(popup, bg=_tip_bg)
         bd.pack(fill="both", expand=True)
         sb = tk.Scrollbar(bd)
         sb.pack(side="right", fill="y")
-        # 2026-09-12（用户要求 1）：字号固定 14pt；高度固定最小值 18 行，内容多时按行增加
-        tip_font = _TIP_FONT
+        # 2026-09-12（用户要求 1）：字号默认固定 14pt（可由设置叠加）；高度固定最小值 18 行，内容多时按行增加
+        tip_font = ui_appearance.font("field_tip", _TIP_FONT, self._ui_appearance)
         try:
             import tkinter.font as tkfont
             line_px = tkfont.Font(root=popup, font=tip_font).metrics("linespace") or 20
@@ -2808,7 +4432,7 @@ class MainWindow(ctk.CTk):
         lines = (text or "").count("\n") + 1
         show_lines = min(max(lines, _TIP_MIN_LINES), _TIP_MAX_LINES, fit_lines)
         tip = tk.Text(bd, font=tip_font, wrap="word", height=show_lines,
-                      bg="#ffffff", fg="#111111", relief="flat", borderwidth=0,
+                      bg=_tip_bg, fg=_tip_fg, relief="flat", borderwidth=0,
                       highlightthickness=0, padx=8, pady=6,
                       yscrollcommand=sb.set, cursor="arrow")
         tip.insert("1.0", text or "")
@@ -3370,6 +4994,10 @@ class MainWindow(ctk.CTk):
         只写已渲染的字段（避免误清空未渲染/已归档字段的值）；
         内置 10 字段不在此列（仍由 entries 既有列承载）。
         """
+        # 2026-09-15（批次 6-3b）：统一守卫（本方法由 _save_detail/_save_new_entry 内部调用，
+        #   外层已拦；此处为"防御性冗余"，确保任何路径都不会在锁定态写字段值）
+        if not self._assert_unlocked("保存自定义字段"):
+            return
         if entry_id is None:
             return
         self._field_problem_list = []
@@ -3447,6 +5075,16 @@ class MainWindow(ctk.CTk):
         ctk.CTkLabel(block, text="🏷 标签", text_color="#7A4FBF",
                      font=("Microsoft YaHei", 12, "bold"), anchor="w"
                      ).pack(fill="x", padx=12, pady=(8, 2))
+        # 2026-09-14（阶段 3）：自动推荐标签（结果**并入**已选标签＝默认全选；点 × 去掉不要的）
+        rec = ctk.CTkFrame(block, fg_color="transparent")
+        rec.pack(fill="x", padx=10, pady=(0, 4))
+        self._rec_btn = ctk.CTkButton(rec, text="✨ 推荐标签", width=104, height=24,
+                                      fg_color="#7A4FBF", font=("Microsoft YaHei", 11),
+                                      command=self._suggest_tags)
+        self._rec_btn.pack(side="left")
+        ctk.CTkLabel(rec, text="按名称/提示词自动推荐，结果直接加入下方标签（点 × 可去掉）",
+                     text_color="#9aa4b1", font=("Microsoft YaHei", 10)
+                     ).pack(side="left", padx=(6, 0))
         # 已选 chip 行
         self._tag_chips_row = ctk.CTkFrame(block, fg_color="transparent")
         self._tag_chips_row.pack(fill="x", padx=10, pady=(0, 4))
@@ -3460,6 +5098,12 @@ class MainWindow(ctk.CTk):
         self._tag_add_btn = ctk.CTkButton(row, text="＋ 添加", width=76,
                                           command=self._add_tag_from_entry)
         self._tag_add_btn.pack(side="left", padx=(6, 0))
+        # 2026-09-15 18:30（批次 9，用户确认 C18 路线①）：新增「📋 选择…」——从
+        #   "库中已用标签 ∪ 词表 ∪ 热点词"候选池中**多选/新建**后并入已选（复用 _ListPickDialog）。
+        self._tag_pick_btn = ctk.CTkButton(row, text="📋 选择…", width=84, height=28,
+                                           fg_color="#5B7CC7",
+                                           command=self._pick_tags_dialog)
+        self._tag_pick_btn.pack(side="left", padx=(6, 0))
         # 自动补全建议行（2026-09-13 用户要求：**按内容自动大小**——无匹配时整行不占位，
         # 避免输入框下方留出一大片无作用空白；有匹配时才 pack 出来）
         self._tag_sugg_row = ctk.CTkFrame(block, fg_color="transparent", height=1)
@@ -3511,7 +5155,9 @@ class MainWindow(ctk.CTk):
         matches = []
         if text:
             try:
-                all_names = [t["name"] for t in self.db.list_tags()]
+                # 2026-09-15 18:30（批次 9，用户确认 C19）：自动补全数据源由"仅 tags 表"
+                #   扩展为"库中已用标签 ∪ 词表 ∪ 热点词"（与「📋 选择…」候选池同一来源）
+                all_names = tagger.tag_name_pool(self.db)
             except Exception:
                 all_names = []
             matches = [n for n in all_names if text in n and n not in self._tag_names][:8]
@@ -3549,6 +5195,33 @@ class MainWindow(ctk.CTk):
             return
         self._add_tag_name(ent.get())
 
+    def _pick_tags_dialog(self) -> None:
+        """「📋 选择…」：从候选池（已用标签 ∪ 词表 ∪ 热点词）多选/新建标签并并入已选。
+
+        2026-09-15 18:30（批次 9，用户确认 C18 路线①）：复用全项目唯一的
+        "可搜索 + 多选 + 预选 + 新建" 对话框 `_ListPickDialog`；
+        结果逐个交给既有 `_add_tag_name()`（自带去重 + 置脏 + 重绘），**不改保存流程**。
+        """
+        if self._browse_mode and not self._adding_new:
+            self.toast("ℹ 浏览态为只读，请点「✎ 编辑」后再选择标签")
+            return
+        if not self._assert_unlocked("选择标签"):
+            return
+        try:
+            pool = tagger.tag_name_pool(self.db)
+        except Exception:
+            pool = []
+        opts = [{"value": n} for n in pool if n not in (self._tag_names or [])]
+        if not opts:
+            self.toast("⚠ 没有可选标签（可先点「✨ 推荐标签」或直接在输入框新建）")
+            return
+        dlg = _ListPickDialog(self, "选择 · 标签", opts, [], multi=True, allow_new=True)
+        self.wait_window(dlg)
+        if not getattr(dlg, "confirmed", False):
+            return
+        for n in list(dlg.result):
+            self._add_tag_name(n)
+
     def _remove_tag(self, name: str) -> None:
         """移除已选标签"""
         if name in self._tag_names:
@@ -3559,9 +5232,133 @@ class MainWindow(ctk.CTk):
 
     def _save_entry_tags(self, entry_id: Optional[int]) -> None:
         """把当前已选标签写入 entry_tags（整体替换；虚拟新增态 entry_id=None 时跳过）"""
+        # 2026-09-15（批次 6-3b）：统一守卫（本方法由 _save_detail/_save_new_entry 内部调用，
+        #   外层已拦；此处为"防御性冗余"）
+        if not self._assert_unlocked("保存标签"):
+            return
         if entry_id is None:
             return
         self.db.set_entry_tags(entry_id, self._tag_names)
+
+    # ------------------------------------------------------------------ #
+    # 录入时自动推荐标签（2026-09-14，阶段 3）
+    #   行为与用户要求一致：**推荐结果直接并入已选标签（即"默认全选"）**，用户点 chip 上的
+    #   "×"去掉不要的即可；已存在的标签不会重复添加（只追加、不覆盖）。
+    #   触发方式：①（默认启用）「✨ 推荐标签」按钮 + ①名称框回车/失焦；
+    #            ②（设置开关，默认关）⑧中文/⑨英文输入停止 800ms 后防抖重算。
+    # ------------------------------------------------------------------ #
+    def _suggest_ctx_names(self) -> list:
+        """推荐用的分类上下文名（新建态取目标分类；浏览/编辑态取该条目的分类链）。
+
+        2026-09-15（批次 8-A，用户确认）：新增态 `_add_target` 为空时**不再直接返回 []**，
+        改为回退"当前视图分类 → 最近一次有分类的视图"⇒ 解决"在未分类/搜索等视图下新增时
+        推荐必空"的问题（实测无上下文时 300 条里仅 4 条能出标签）。编辑/浏览态逻辑不变。
+        """
+        try:
+            index = tagger.build_context_index(self.db)
+            cid = self._add_target if self._adding_new else None
+            # 2026-09-15（批次 8-A）：新增态上下文兜底
+            if self._adding_new and cid is None:
+                cid = self._cur_cat_id or self._last_cat_id
+            if cid is None and self._detail_entry_id is not None:
+                e = self.db.get_entry(self._detail_entry_id)
+                cid = (e or {}).get("category_id")
+            return tagger.entry_context_names(index, cid) if cid else []
+        except Exception:
+            return []
+
+    def _suggest_tags(self) -> None:
+        """✨ 自动推荐标签：按当前表单内容推荐 1~3 个标签并**并入**已选标签。"""
+        if (self._browse_mode and not self._adding_new
+                and self._detail_entry_id is not None):
+            self.toast("ℹ 浏览态为只读，请点「✎ 编辑」后再推荐标签")
+            return
+        try:
+            dict_data = tagger.load_dict(self.db)
+        except Exception:
+            self.toast("⚠ 词表读取失败，无法推荐标签")
+            return
+        texts = {k: self._box_text(k) for k in
+                 ("name", "intro", "features", "image_desc", "prompt_cn", "prompt_en")}
+        try:
+            nm = self._name_entry.get().strip()
+            if nm:
+                texts["name"] = nm
+        except Exception:
+            pass
+        if not any((texts.get(k) or "").strip() for k in texts):
+            self.toast("⚠ 请先填写名称或提示词，再点「✨ 推荐标签」")
+            return
+        try:
+            # 2026-09-15 18:15（批次 8-B，用户确认）：**UI 单条推荐**启用"全词典兜底"
+            #   （判不出领域时对全部领域包打分）；批量打标/离线打标不传该参数 ⇒ 行为不变。
+            res = tagger_engine.suggest(texts, dict_data, self._suggest_ctx_names(),
+                                        fallback_global=True)
+        except Exception as exc:
+            self.toast(f"⚠ 推荐失败：{exc}")
+            return
+        names = tagger_engine.tag_names(res)
+        _note = ""
+        if names:
+            # 2026-09-15 19:30（批次 10）：来源标注——取词优先于词典兜底显示
+            _sources = {t.get("source") for t in res.get("tags") or []}
+            if "标题/提示词" in _sources:
+                _note = "（来源：标题/提示词）"
+            elif "词典兜底" in _sources:
+                _note = "（来源：词典兜底）"
+        if not names:
+            self.toast("⚠ 未推荐出标签（可补充名称/提示词后再试）")
+            return
+        added = []
+        for n in names:
+            if n not in self._tag_names:
+                self._tag_names.append(n)
+                added.append(n)
+        if added:
+            self._mark_dirty()
+        self._refresh_tag_chips()
+        self.toast("✨ 已推荐 %d 个标签%s%s" % (
+            len(names), _note,
+            ("（新增 %d 个）" % len(added)) if added else "（均已存在）"))
+
+    def _on_name_committed(self, _event=None) -> None:
+        """①名称框回车/失焦 → 自动推荐一次（T1；同名不重复推荐，避免反复打扰）。"""
+        try:
+            name = self._name_entry.get().strip()
+        except Exception:
+            return
+        if not name or name == getattr(self, "_rec_last_name", ""):
+            return
+        self._rec_last_name = name
+        self._suggest_tags()
+
+    def _on_prompt_typed(self, _event=None) -> None:
+        """⑧⑨ 输入后防抖自动推荐（T2，设置开关默认关）。"""
+        if not getattr(self, "_auto_tag_suggest", False):
+            return
+        if self._browse_mode and not self._adding_new:
+            return                        # 浏览态只读，不推荐
+        try:
+            if self._suggest_timer is not None:
+                self.after_cancel(self._suggest_timer)
+        except Exception:
+            pass
+        self._suggest_timer = self.after(800, self._suggest_tags_debounced)
+
+    def _suggest_tags_debounced(self) -> None:
+        self._suggest_timer = None
+        self._suggest_tags()
+
+    def _bind_auto_suggest_triggers(self) -> None:
+        """把 T2 防抖触发挂到 ⑧中文 / ⑨英文 文本框（详情区每次重建后调用一次）。"""
+        for key in ("prompt_cn", "prompt_en"):
+            box = (getattr(self, "_detail_boxes", None) or {}).get(key)
+            if box is None:
+                continue
+            try:
+                box.bind("<KeyRelease>", self._on_prompt_typed, add="+")
+            except Exception:
+                pass
 
     # ---- 详情显示模式（2026-09-13，1-B 修复：此前设置值从未参与渲染）---- #
     def _entry_domain_names(self, e) -> list:
@@ -3648,8 +5445,9 @@ class MainWindow(ctk.CTk):
             self.save_btn.configure(command=lambda: None)
             self.reset_btn.configure(command=lambda: None)
             # 2026-09-09：无条目时编辑/浏览切换无意义 → 禁用并回到编辑态
+            # 2026-09-14：改普通按钮后，`set()` → `configure(text=...)`
             try:
-                self.edit_mode_toggle.set("✏️ 编辑")
+                self.edit_mode_toggle.configure(text="✏️ 编辑")
                 self.edit_mode_toggle.configure(state="disabled")
             except Exception:
                 pass
@@ -3786,7 +5584,10 @@ class MainWindow(ctk.CTk):
             self.edit_mode_toggle.configure(state="normal")  # 非新增态恢复切换可用
         except Exception:
             pass
+        self._sync_edit_mode_btn()   # 2026-09-14：普通按钮文字同步为当前状态
         self._refresh_detail_header()
+        # 2026-09-14（阶段 3）：挂接"自动推荐标签"的输入触发点（①名称框已在建框时绑定）
+        self._bind_auto_suggest_triggers()
         self._scroll_top(self.detail_scroll)  # 2026-09-07（第4条改进）：打开新条目详情回到顶部
 
     # ------------------------------------------------------------------ #
@@ -3989,7 +5790,8 @@ class MainWindow(ctk.CTk):
             toggle.pack(side="right")
 
         box = ctk.CTkTextbox(block, height=base_h, fg_color=box_bg,
-                             border_width=1, border_color=box_border, corner_radius=6)
+                             border_width=1, border_color=box_border, corner_radius=6,
+                             **self._look_kwargs(key))   # 2026-09-15（批次 4）：⑧/⑨ 字体/文字色可叠加
         box.pack(fill="x", padx=6, pady=(0, 8))
         box.insert("1.0", e[key] or "")
         box.bind("<KeyRelease>", self._mark_dirty)
@@ -4086,8 +5888,27 @@ class MainWindow(ctk.CTk):
         self._gallery_box = ctk.CTkFrame(wrap, fg_color="transparent")
         self._gallery_box.pack(fill="x", pady=(2, 0))
 
+        # 2026-09-15（批次 6-1，用户要求"锁定态图片/图集写操作**完全禁止**"）：
+        #   ⚠ 根因（实测确认）：这几个按钮原先**总是以 normal 创建**，而"锁定/浏览"的状态刷新
+        #   （`_apply_browse()` 在 `_apply_lock_state()` 内被调用）**可能在渲染详情区之前**就已执行过
+        #   ⇒ 锁定态下渲染出来的图片/图集按钮仍是**可点**的（此前多次实测均为 normal）。
+        #   现按当前"锁定 或 浏览态"**直接以置灰状态创建**，与详情区其余控件保持一致。
+        _img_st = ("disabled" if (self._lock_on or (self._browse_mode and not self._adding_new
+                                                   and self._detail_entry_id is not None))
+                   else "normal")
+
+        def _apply_img_st() -> None:
+            for _btn in (self._pick_img_btn, self._remove_img_btn,
+                         self._gallery_add_btn, self._gallery_url_btn,
+                         *getattr(self, "_gallery_btns", [])):
+                try:
+                    _btn.configure(state=_img_st)
+                except Exception:
+                    pass
+
         self._render_image_preview()
         self._render_gallery()
+        _apply_img_st()      # 图集项按钮在 `_render_gallery()` 内创建 → 在其后统一套用同一状态
         return wrap
 
     # ---- 图集：数据与渲染（2026-09-13，第 2 期 2-b）------------------- #
@@ -4188,6 +6009,9 @@ class MainWindow(ctk.CTk):
 
     def _add_gallery_local(self) -> None:
         """图集：添加本地图片（已存条目立即复制落库；新建态仅暂存源路径＝做法 B）"""
+        # 2026-09-15（批次 6-3b）：统一守卫（本入口原先仅靠按钮置灰，方法内无判断）
+        if not self._assert_unlocked("添加图集图片"):
+            return
         path = filedialog.askopenfilename(
             title="选择图片（加入图集）", parent=self,
             filetypes=[("图片文件", "*.png *.jpg *.jpeg *.gif *.webp *.bmp"),
@@ -4214,6 +6038,9 @@ class MainWindow(ctk.CTk):
 
     def _add_gallery_url(self) -> None:
         """图集：添加图片外链（http/https）"""
+        # 2026-09-15（批次 6-3b）：统一守卫（本入口原先仅靠按钮置灰，方法内无判断）
+        if not self._assert_unlocked("添加图集外链"):
+            return
         url = simpledialog.askstring("添加图片链接", "请输入图片网址（http/https）：", parent=self)
         if not url or not url.strip():
             return
@@ -4231,6 +6058,9 @@ class MainWindow(ctk.CTk):
 
     def _remove_gallery_item(self, idx: int) -> None:
         """图集：移除第 idx 张"""
+        # 2026-09-15（批次 6-3b）：统一守卫（本入口原先仅靠按钮置灰，方法内无判断）
+        if not self._assert_unlocked("移除图集图片"):
+            return
         items = self._gallery_items()
         if idx < 0 or idx >= len(items):
             return
@@ -4243,6 +6073,9 @@ class MainWindow(ctk.CTk):
 
     def _move_gallery_item(self, idx: int, delta: int) -> None:
         """图集：第 idx 张上移/下移"""
+        # 2026-09-15（批次 6-3b）：统一守卫（本入口原先仅靠按钮置灰，方法内无判断）
+        if not self._assert_unlocked("调整图集顺序"):
+            return
         items = self._gallery_items()
         if idx < 0 or idx >= len(items):
             return
@@ -4260,6 +6093,9 @@ class MainWindow(ctk.CTk):
 
     def _download_gallery_item(self, idx: int) -> None:
         """图集：把外链图"下载到本地"（联网；失败保持外链并保留 source_url）"""
+        # 2026-09-15（批次 6-3b）：统一守卫（本入口原先仅靠按钮置灰，方法内无判断）
+        if not self._assert_unlocked("下载图集图片"):
+            return
         items = self._gallery_items()
         if idx < 0 or idx >= len(items) or self._detail_entry_id is None:
             return
@@ -4291,6 +6127,10 @@ class MainWindow(ctk.CTk):
 
     def _materialize_staged_images(self, entry_id: int) -> None:
         """新建条目保存成功后，把"做法 B"暂存的封面与图集源文件复制落库（2-b/2-c）。"""
+        # 2026-09-15（批次 6-3b）：统一守卫（本方法由 _save_new_entry 内部调用，外层已拦；
+        #   此处为"防御性冗余"）
+        if not self._assert_unlocked("保存图片"):
+            return
         try:
             if self._staged_cover and os.path.isfile(self._staged_cover):
                 src = self._staged_cover
@@ -4414,6 +6254,9 @@ class MainWindow(ctk.CTk):
         btn.configure(text="⏸ 精简显示" if opened else "⏵ 显示全部字段", state=state)
 
     def _save_detail(self) -> None:
+        # 2026-09-15（批次 6-3b）：统一守卫（原先仅靠 save_btn 置灰；方法内无 _lock_on 判断）
+        if not self._assert_unlocked("保存条目修改"):
+            return
         if self._detail_entry_id is None:
             return
         cur = self.db.get_entry(self._detail_entry_id)
@@ -4469,7 +6312,12 @@ class MainWindow(ctk.CTk):
 
         2026-09-06：支持"新增条目"态——有未保存的新增内容时同样提示，
         【是】保存本次新增后继续切换、【否】放弃、【取消】返回。
+        2026-09-15（批次 6-3，用户选定"锁定态不弹保存询问"）：锁定＝只读 ⇒
+        未保存的修改**不落库**、也不再弹窗打扰；直接按"不保存（放弃）"继续切换。
         """
+        if self._lock_on:
+            self._detail_dirty = False
+            return True
         if not self._detail_dirty:
             return True
         if self._adding_new:
@@ -4565,11 +6413,20 @@ class MainWindow(ctk.CTk):
         ctk.CTkLabel(card, text="① 条目名称（风格名称）",
                      font=("Microsoft YaHei", 13, "bold"), anchor="w",
                      text_color="#1d4e89").pack(fill="x", padx=12, pady=(8, 2))
-        self._name_entry = ctk.CTkEntry(card, height=44,
-                                        font=("Microsoft YaHei", 15, "bold"))
+        # 2026-09-15（批次 4）：①名称框的字体/字号可由设置叠加（组 name_field）。
+        #   · 未设置时 `font()` 原样返回基础字体、高度保持 44 ⇒ 与改动前**完全一致**；
+        #   · 设置了字号时按字号**等比放大输入框高度**（44 × size/15），避免大字号被上下裁切。
+        _nf_base = ("Microsoft YaHei", 15, "bold")
+        _nf_font = ui_appearance.font("name_field", _nf_base, self._ui_appearance)
+        _nf_size = ui_appearance.size("name_field", self._ui_appearance)
+        _nf_h = max(44, int(round(44 * int(_nf_size) / 15.0))) if _nf_size else 44
+        self._name_entry = ctk.CTkEntry(card, height=_nf_h, font=_nf_font)
         self._name_entry.pack(fill="x", padx=12, pady=(0, 8))
         self._name_entry.insert(0, initial)
         self._name_entry.bind("<KeyRelease>", self._mark_dirty)
+        # 2026-09-14（阶段 3）：①名称框**回车 / 失焦**时自动推荐一次标签（T1，无需开关）
+        self._name_entry.bind("<Return>", self._on_name_committed)
+        self._name_entry.bind("<FocusOut>", self._on_name_committed)
 
     def _build_detail_location_hint(self, entry_id: int) -> None:
         """详情区顶部"所在位置"提示行（2026-09-07 阶段3）。
@@ -4682,7 +6539,7 @@ class MainWindow(ctk.CTk):
         self._hide_field_tip()         # 2026-09-12（用户要求 2）：新增表单重建前先收起字段浮动提示
         self._browse_mode = False  # 新增必须录入 → 强制编辑模式
         try:
-            self.edit_mode_toggle.set("✏️ 编辑")
+            self.edit_mode_toggle.configure(text="✏️ 编辑")   # 2026-09-14：普通按钮改为 configure(text)
             self.edit_mode_toggle.configure(state="disabled")
         except Exception:
             pass
@@ -4727,6 +6584,10 @@ class MainWindow(ctk.CTk):
         _enable_text_undo(self.detail_scroll)
         self._apply_browse()
         self._refresh_detail_header()
+        # 2026-09-15 17:15（批次 8-D，用户确认）：新增态同样挂接 T2"输入停止后自动推荐"触发点。
+        #   此前唯一调用点在详情态（_build_detail 末尾）⇒ 即使设置里打开"自动推荐标签"，
+        #   主窗口新增态也不会触发任何自动推荐；此处补齐（逻辑与详情态完全一致）。
+        self._bind_auto_suggest_triggers()
         self._scroll_top(self.detail_scroll)  # 2026-09-07（第4条改进）：打开新增表单回到顶部
 
         if not self._lock_on:
@@ -4753,7 +6614,8 @@ class MainWindow(ctk.CTk):
             toggle = ctk.CTkButton(head, text="展开", width=52, height=22, **_ADD_BTN)
             toggle.pack(side="right")
             box = ctk.CTkTextbox(block, height=_COLLAPSED_H, fg_color=box_bg,
-                                 border_width=1, border_color=box_border, corner_radius=6)
+                                 border_width=1, border_color=box_border, corner_radius=6,
+                                 **self._look_kwargs(key))   # 2026-09-15（批次 4）：⑧/⑨ 可叠加
             box.pack(fill="x", padx=6, pady=(0, 6))
 
             def _toggle_prompt(b=box, t=toggle):
@@ -4893,6 +6755,10 @@ class MainWindow(ctk.CTk):
         默认（保存按钮）：保存后停留空白新增态并聚焦名称框，支持连续录入。
         名称缺失时给出提示并返回 False（阻止切换继续）。
         """
+        # 2026-09-15（批次 6-3b）：统一守卫（原先仅靠 save_btn 置灰 + 入口判断；
+        #   返回 False ＝ 阻止继续切换，语义与"名称缺失"一致）
+        if not self._assert_unlocked("保存新增条目"):
+            return False
         if not self._adding_new:
             return False
         name = self._name_entry.get().strip()
@@ -4986,6 +6852,9 @@ class MainWindow(ctk.CTk):
         2026-09-13（2-b/2-c）：**新建条目态也可选图**（做法 B：只记源路径，保存成功后才复制落库）；
         已存条目沿用既有"立即复制并写 image_path"逻辑。
         """
+        # 2026-09-15（批次 6-3b）：统一守卫（原先只判浏览态、无 _lock_on 判断；仅靠按钮置灰）
+        if not self._assert_unlocked("选择图片"):
+            return
         if self._browse_mode:  # 浏览态禁止改动
             return
         path = filedialog.askopenfilename(
@@ -5023,6 +6892,9 @@ class MainWindow(ctk.CTk):
 
     def _remove_image(self) -> None:
         """移除封面图片（新建态只清除暂存；已存条目删除文件并清空 image_path）"""
+        # 2026-09-15（批次 6-3b）：统一守卫（原先只判浏览态、无 _lock_on 判断；仅靠按钮置灰）
+        if not self._assert_unlocked("移除图片"):
+            return
         if self._browse_mode:  # 浏览态禁止改动
             return
         if self._detail_entry_id is None:
@@ -5232,6 +7104,20 @@ class MainWindow(ctk.CTk):
     # ------------------------------------------------------------------ #
     # 锁定开关
     # ------------------------------------------------------------------ #
+    def _assert_unlocked(self, action: str = "") -> bool:
+        """统一锁定守卫（2026-09-15 批次 6-3，用户选定"全覆盖 + 拦截并 toast 提示"）。
+
+        用法：所有**写操作入口**首行调用 `if not self._assert_unlocked("动作名"): return`。
+          · 未锁定 → 返回 True（放行，零副作用）；
+          · 已锁定 → **拦截**：弹 toast 提示并返回 False（调用方立即 return，不写任何数据）。
+        action 为动作名（如"新增标签"），用于提示语；缺省用通用提示。
+        """
+        if not self._lock_on:
+            return True
+        self.toast(f"⚠ 已锁定，无法{action}" if action else "⚠ 已锁定，此操作已阻止",
+                   color="#D9534F")
+        return False
+
     def _toggle_lock(self) -> None:
         self._lock_on = not self._lock_on
         # 2026-08-22（第007条）：解锁时恢复记录的默认配色（customtkinter 6.0.0
@@ -5254,6 +7140,25 @@ class MainWindow(ctk.CTk):
             except Exception:
                 pass
             self._set_child_states(child, state)
+
+    def _apply_tag_gov_lock(self) -> None:
+        """按锁定态刷新标签页的**写操作按钮**（2026-09-15 批次 6-2，含用户选定"一并置灰"）。
+
+        纳入范围（全部为写操作）：
+          · 标签档 5 个：重命名 / 合并… / 删除 / 清理未使用 / 🤖 批量打标…
+          · 热点词档 3 个：📋 文本导入… / 🔄 热点词更新… / 🗑 清空全部
+          · 词表档 2 个：⬇ 导入词表… / ↺ 恢复出厂词表
+        **不**纳入："⬆ 导出词表…"（只读）。
+        用户选定"禁用（可见但置灰）"⇒ 锁定态 `state="disabled"`，解锁态 `"normal"`。
+        幂等：页面重建后与锁定开关切换时均可重复调用；控件可能已销毁（页面重建），故全部容错。
+        """
+        _st = "disabled" if self._lock_on else "normal"
+        for _b in list(getattr(self, "_tag_gov_btns", [])):
+            try:
+                if _b.winfo_exists():
+                    _b.configure(state=_st)
+            except Exception:
+                pass
 
     def _apply_lock_state(self, rebuild_nav: bool = False) -> None:
         """锁定：只能查询和复制，禁止移动/删除/新增/重命名/导入/编辑保存等（2026-08-21 第005条扩展）。
@@ -5334,15 +7239,36 @@ class MainWindow(ctk.CTk):
                 w.configure(state="normal" if copy_ok else "disabled")
             except Exception:
                 pass
+        # 2026-09-15（批次 6-2）：标签页治理按钮随锁定态置灰/恢复（可见但不可点）
+        self._apply_tag_gov_lock()
         # 2026-09-09：锁定/无条目状态处理完后再应用"浏览只读"，避免互相覆盖
         self._apply_browse()
 
     # ------------------------------------------------------------------ #
     # 浏览 / 编辑 切换（2026-09-09：避免浏览与编辑混用时的误操作）
     # ------------------------------------------------------------------ #
+    def _on_edit_mode_click(self) -> None:
+        """「✏️ 编辑 / 👁 浏览」普通按钮的点击回调（2026-09-14 用户要求：改为普通切换按钮）。
+
+        点一下切到"浏览"（按钮显示「👁 浏览」），再点一下切回"编辑"（按钮显示「✏️ 编辑」）；
+        按钮文字始终表示**当前状态**。
+        """
+        self._on_edit_mode_change("✏️ 编辑" if self._browse_mode else "👁 浏览")
+
+    def _sync_edit_mode_btn(self) -> None:
+        """把「编辑/浏览」按钮文字同步为**当前状态**（2026-09-14 改普通按钮后新增，幂等）。"""
+        w = getattr(self, "edit_mode_toggle", None)
+        if w is None:
+            return
+        try:
+            w.configure(text=("👁 浏览" if self._browse_mode else "✏️ 编辑"))
+        except Exception:
+            pass
+
     def _on_edit_mode_change(self, value: str) -> None:
-        """编辑/浏览分段开关回调：浏览=文本只读（可选中复制）+ 禁用编辑类按钮。"""
+        """编辑/浏览切换：浏览=文本只读（可选中复制）+ 禁用编辑类按钮。"""
         self._browse_mode = (value == "👁 浏览")
+        self._sync_edit_mode_btn()      # 2026-09-14：按钮文字跟随当前状态
         if self._browse_mode:
             self._apply_browse()
             self.toast("已切换为浏览模式（详情内容只读，可选中复制）", color="#25639c")
@@ -5373,8 +7299,12 @@ class MainWindow(ctk.CTk):
                     pass
         # 2026-09-13（1-C-2）：标签控件随"浏览/编辑"态启用或禁用（浏览态只读，防误改）
         # 2026-09-13（2-b）：封面按钮（选择/移除图片）与图集按钮同样**真正置灰**。
-        _st = "disabled" if browsing else "normal"
-        for _attr in ("_tag_entry", "_tag_add_btn",
+        # 2026-09-15（批次 6-1，用户要求"锁定态下图片/图集写操作**完全禁止**"）：并入**锁定态**判断——
+        #   原先只看"浏览态"，而本方法在 `_apply_lock_state()` 末尾会被调用，于是**锁定 + 编辑模式**下
+        #   会把刚被置灰的这些按钮**又设回 normal**（审计称之为"覆盖陷阱"）⇒ 图片/图集/标签输入仍可点。
+        #   现改为：浏览态 **或 锁定态** 一律置灰（覆盖：图片/图集/标签输入与 chip ×、图集项、列表框按钮）。
+        _st = "disabled" if (browsing or self._lock_on) else "normal"
+        for _attr in ("_tag_entry", "_tag_add_btn", "_rec_btn", "_tag_pick_btn",
                       "_pick_img_btn", "_remove_img_btn",
                       "_gallery_add_btn", "_gallery_url_btn"):
             _w = getattr(self, _attr, None)
@@ -5638,6 +7568,9 @@ class MainWindow(ctk.CTk):
     def _cascade_delete_category(self, cat_id: int, cat: dict) -> None:
         """级联删除整棵：分类结构永久删除；其中直挂条目先移入回收站（可恢复），
         输入确认短语 → 再次确认 → 执行。"""
+        # 2026-09-15（批次 6-3b）：统一守卫（唯一调用点 _delete_category 已拦；此处防御性冗余）
+        if not self._assert_unlocked("级联删除分类"):
+            return
         stat = self.db.count_descendants(cat_id)
         phrase = self.db._CASCADE_PHRASE
         got = simpledialog.askstring(
@@ -5830,6 +7763,9 @@ class MainWindow(ctk.CTk):
     # ------------------------------------------------------------------ #
     def _open_migrate_wizard(self) -> None:
         """打开老版本数据迁移向导（未归属根目录 → 项目类别）"""
+        # 2026-09-15（批次 6-3b，用户选定"仅入口拦截"）：统一守卫（本入口原无任何拦截）
+        if not self._assert_unlocked("打开数据迁移向导"):
+            return
         from .migrate_dialog import MigrateDialog
         dlg = MigrateDialog(self, self.db)
         self.wait_window(dlg)
@@ -5859,6 +7795,9 @@ class MainWindow(ctk.CTk):
 
     def _run_change_import(self, path: str, summary: dict) -> None:
         """变更包导入向导主流程：预览→选择范围→确认→自动快照→导入。"""
+        # 2026-09-15（批次 6-3b）：统一守卫（唯一调用点 _import_change_pack 已拦；防御性冗余）
+        if not self._assert_unlocked("导入变更包"):
+            return
         last_sync = self.db.get_meta(config.META_INCR_LAST_SYNC) or ""
         day = summary.get("day") or ""
         behind = bool(last_sync and day and last_sync[:10] < day)
@@ -6089,7 +8028,10 @@ class MainWindow(ctk.CTk):
     def _quick_add(self) -> None:
         if self._lock_on:  # 2026-08-21（第005条）：锁定时禁止快速新建（新增条目）
             return
-        QuickAddWindow(self, self.db)
+        # 2026-09-15（批次 8-A，用户确认）：把主窗口"当前视图分类（无则最近一次分类）"作为
+        #   快速新建窗口的**默认目标分类**，解决"打开窗口直接打字、未悬停分类 ⇒ 推荐不出标签"。
+        QuickAddWindow(self, self.db,
+                       default_cat_id=(self._cur_cat_id or self._last_cat_id))
 
     def toast(self, msg: str, color: str = "#2E8B57") -> None:
         if self._toast_label is not None:
@@ -6110,6 +8052,18 @@ class MainWindow(ctk.CTk):
     def _on_escape(self, _event=None):
         self.withdraw()
         return "break"
+
+    def report_callback_exception(self, exc, val, tb) -> None:
+        """集中打印 Tk 回调里的未捕获异常（2026-09-15 审核 L-7 新增）。
+
+        背景：项目原先未覆盖本钩子 → Tk 回调异常只写 stderr；打包为**无控制台 EXE** 时，
+        用户看到的只是"点了按钮没反应"，排查无从下手。此处只打印（不弹窗、不改变行为）。
+        """
+        try:
+            import traceback
+            print("[回调异常] " + "".join(traceback.format_exception(exc, val, tb))[-1500:])
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------ #
     # 设置（2026-08-18："⚙ 设置"入口；持久化到数据库 meta 表）
@@ -6159,6 +8113,11 @@ class MainWindow(ctk.CTk):
             self._detail_mode = dm
         # 2026-09-13（1-C-4b）：是否在条目处显示标签（默认关）
         self._show_tags_in_list = self.db.get_meta(config.META_SHOW_TAGS_IN_LIST) == "1"
+        # 2026-09-14（阶段 3）：录入时"输入停止后自动推荐标签"（T2，默认关）
+        self._auto_tag_suggest = self.db.get_meta(config.META_AUTO_TAG_SUGGEST) == "1"
+        # 2026-09-15（批次 4）：界面外观（字体/字号/颜色）——载入配置；各渲染点用
+        #   `ui_appearance.font(...)` / `ui_appearance.color(...)` **叠加**（未设置时返回原值）
+        self._ui_appearance = ui_appearance.load(self.db)
         if self._remember_size:
             size = self.db.get_meta(config.META_WINDOW_SIZE)
             if size and "x" in size:
@@ -6186,6 +8145,10 @@ class MainWindow(ctk.CTk):
             （重建会清空用户已录入内容），仅提示"切换条目后生效"；
           - 否则重建当前详情区，使新名称立即生效。
         """
+        # 2026-09-15（批次 6-3，用户选定"仅入口拦截 + toast 提示"）：锁定态拦截
+        #   （本入口原无任何拦截：🔧 按钮不在置灰白名单、也不在详情滚动区内 ⇒ 锁定态仍可点）
+        if not self._assert_unlocked("打开字段管理"):
+            return
         dlg = FieldManagerDialog(self, self.db)
         self.wait_window(dlg)
         if not getattr(dlg, "changed", False):
@@ -6209,6 +8172,11 @@ class MainWindow(ctk.CTk):
                                          config.DETAIL_MODE_COMPACT) else config.DETAIL_MODE_AUTO
         # 2026-09-13（1-C-4b）：是否在条目处显示标签（默认关）
         self._show_tags_in_list = self.db.get_meta(config.META_SHOW_TAGS_IN_LIST) == "1"
+        # 2026-09-14（阶段 3）：录入时"输入停止后自动推荐标签"（T2，默认关）
+        self._auto_tag_suggest = self.db.get_meta(config.META_AUTO_TAG_SUGGEST) == "1"
+        # 2026-09-15（批次 4）：界面外观（字体/字号/颜色）——重新载入；下方 `_restore_view()`
+        #   会重建条目区、`_show_detail()` 会重建详情区 ⇒ 新的外观设置**立即生效**
+        self._ui_appearance = ui_appearance.load(self.db)
         self._restore_view()  # 视图模式重建条目区
         # 2026-09-13（1-B）：切换显示策略后复位"会话覆盖"与折叠归属，使新策略立即生效
         self._detail_show_all = False

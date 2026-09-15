@@ -20,7 +20,8 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 
 from .config import (data_dir, IMAGES_DIR_NAME, PRESET_DOMAINS, PROJECT_PRESETS,
-                     PROJECT_FALLBACK, PROJECT_DOMAIN_MAPPING)
+                     PROJECT_FALLBACK, PROJECT_DOMAIN_MAPPING,
+                     META_HOTWORDS, META_HOTWORD_SOURCES)  # 2026-09-14 11:15（阶段 4）：热点词表 meta 键
 from .models import Entry  # 2026-08-18（P2-5）：Domain/Category 冗余数据类已删除，仅保留 Entry
 
 
@@ -1182,6 +1183,233 @@ class Database:
             params = tuple(ids)
         return [dict(r) for r in self.conn.execute(sql, params).fetchall()]
 
+    def list_tags_for_entries(self, entry_ids) -> dict:
+        """**批量**取多个条目的标签名（2026-09-14，性能优化：消除逐条查询的 N+1）。
+
+        返回 {entry_id: [标签名, ...]}（按标签名排序）；未传/空 → {}。
+        按 IN 分批（每批 500）以避开 SQLite 变量数量限制。
+        用途：条目区渲染时一次性预取标签（实测 100 条可省约 2 秒）。
+        """
+        ids = []
+        for x in (entry_ids or []):
+            try:
+                ids.append(int(x))
+            except (TypeError, ValueError):
+                continue
+        if not ids:
+            return {}
+        out = {}
+        for i in range(0, len(ids), 500):
+            batch = ids[i:i + 500]
+            ph = ",".join("?" * len(batch))
+            rows = self.conn.execute(
+                "SELECT et.entry_id AS eid, t.name AS name FROM entry_tags et"
+                " JOIN tags t ON t.id = et.tag_id"
+                " WHERE et.entry_id IN (" + ph + ")"
+                " ORDER BY et.entry_id, t.name", batch).fetchall()
+            for r in rows:
+                out.setdefault(r["eid"], []).append(r["name"])
+        return out
+
+    def set_entry_tags_bulk(self, assignments, mode: str = "append",
+                            touch_updated: bool = True,
+                            namespace: str = GLOBAL_TAG_NS) -> dict:
+        """批量写入"条目 → 标签名列表"（**单事务、幂等**）（2026-09-14 12:30，阶段 1）。
+
+        assignments: {entry_id: [标签名, ...]} 或 [(entry_id, [标签名, ...]), ...]
+        mode: "append"=并入既有标签（默认） / "replace"=替换该条目的全部标签
+        touch_updated: 是否刷新 entries.updated_at
+            - True（默认）：正常用户操作（改动应进当日变更包，与 P1-D 修复一致）；
+            - **False**：**预置数据初始化**（阶段 1 离线打标）——预置标签随库分发，
+              不应被当成"用户今日修改"而灌进当日变更包。
+        返回：{'entries': 处理条目数, 'links': 新增关联数, 'tags_created': 新建标签数}
+        """
+        items = list(assignments.items()) if isinstance(assignments, dict) \
+            else list(assignments or [])
+        items = [(int(eid), list(names or [])) for eid, names in items]
+        if not items:
+            return {"entries": 0, "links": 0, "tags_created": 0}
+
+        ts = _now()
+        # 1) 规范化 + 汇总全部标签名（跨条目去重、保持出现顺序）
+        norm, all_names, seen = [], [], set()
+        for eid, names in items:
+            cleaned = []
+            for n in names:
+                s = (n or "").strip()
+                if s and s not in cleaned:
+                    cleaned.append(s)
+                    if s not in seen:
+                        seen.add(s)
+                        all_names.append(s)
+            norm.append((eid, cleaned))
+
+        with self.conn:
+            # 2) 确保标签存在（幂等）
+            created, id_of = 0, {}
+            for s in all_names:
+                row = self.conn.execute(
+                    "SELECT id FROM tags WHERE namespace = ? AND name = ?",
+                    (namespace, s)).fetchone()
+                if row:
+                    id_of[s] = row["id"]
+                else:
+                    id_of[s] = self.conn.execute(
+                        "INSERT INTO tags(namespace, name, color, created_at, updated_at)"
+                        " VALUES(?,?,'',?,?)", (namespace, s, ts, ts)).lastrowid
+                    created += 1
+            # 3) 写关联（INSERT OR IGNORE → 重复执行不产生重复行）
+            links = 0
+            for eid, cleaned in norm:
+                if mode == "replace":
+                    self.conn.execute("DELETE FROM entry_tags WHERE entry_id = ?", (eid,))
+                for s in cleaned:
+                    cur = self.conn.execute(
+                        "INSERT OR IGNORE INTO entry_tags(entry_id, tag_id, created_at)"
+                        " VALUES(?,?,?)", (eid, id_of[s], ts))
+                    links += cur.rowcount or 0
+            # 4) 时间戳（预置数据初始化时不动，避免污染当日变更包）
+            if touch_updated:
+                for eid, _c in norm:
+                    self.conn.execute("UPDATE entries SET updated_at = ? WHERE id = ?", (ts, eid))
+        return {"entries": len(norm), "links": links, "tags_created": created}
+
+    # ------------------------------------------------------------------ #
+    # 热点词表（2026-09-14 11:15，阶段 4 之 4-a）
+    #   存于 meta 表（键 META_HOTWORDS / META_HOTWORD_SOURCES），值为 JSON 数组字符串
+    #   （**不新增数据库表、不改 schema 版本**，纯 meta 读写）。
+    #   用途：供"自动打标"的 ⑧ 热点词维度使用（命中即作为标签；每条例目最多取 1 个）。
+    #   与 tags 表无关：tags 是"已被使用过的标签"，热点词是"待匹配的词条库"。
+    # ------------------------------------------------------------------ #
+    HOTWORD_MAX_LEN = 24        # 单个词条最大长度（字符）；超长视为非法（防误导入整段文本）
+    HOTWORD_MAX_COUNT = 2000    # 词条总数上限（防误导入超大文件）
+
+    @staticmethod
+    def normalize_hotword(text) -> str:
+        """规范化单个热点词：去首尾空白 + 压缩内部连续空白；非法（空串/超长）返回 ""。
+
+        说明：**不做大小写统一**（中文无需；英文热点词保留用户原样，避免"Neon"被改成"neon"
+        后与用户预期不符），匹配阶段由引擎自行决定是否忽略大小写。
+        """
+        s = " ".join(str(text or "").split())
+        if not s or len(s) > Database.HOTWORD_MAX_LEN:
+            return ""
+        return s
+
+    @staticmethod
+    def parse_hotwords_text(text) -> List[str]:
+        """把"粘贴 / 导入的多行文本"解析为热点词列表（去重、丢弃非法项）。
+
+        分隔规则：换行 / 逗号（, ，）/ 顿号（、）/ 分号（; ；）/ 竖线（|）/ 制表符。
+        """
+        parts = re.split(r"[\r\n,，、;；|\t]+", str(text or ""))
+        out, seen = [], set()
+        for p in parts:
+            s = Database.normalize_hotword(p)
+            if s and s not in seen:
+                seen.add(s)
+                out.append(s)
+        return out
+
+    def list_hotwords(self) -> List[str]:
+        """读取热点词表（有序、已去重）。读不到 / 非法 JSON 时返回 []（不抛异常）。"""
+        raw = self.get_meta(META_HOTWORDS) or ""
+        if not raw:
+            return []
+        try:
+            data = json.loads(raw)
+        except (ValueError, TypeError):
+            return []
+        if not isinstance(data, list):
+            return []
+        out, seen = [], set()
+        for x in data:
+            s = self.normalize_hotword(x)
+            if s and s not in seen:
+                seen.add(s)
+                out.append(s)
+        return out
+
+    def count_hotwords(self) -> int:
+        """热点词条数（供界面显示）。"""
+        return len(self.list_hotwords())
+
+    def set_hotwords(self, words) -> int:
+        """**整体替换**热点词表（去重、丢弃非法项、截断到上限），返回写入条数。"""
+        return len(self.add_hotwords(words, replace=True)["total_list"])
+
+    def add_hotwords(self, words, replace: bool = False) -> dict:
+        """新增（默认**并集追加**，幂等）/ 整体替换热点词表。
+
+        返回：{'added': [新增词...], 'added_count': int, 'skipped': int（已存在或超上限）,
+               'invalid': int（空/超长被丢弃）, 'total': int（写入后总条数）,
+               'total_list': [写入后的完整词表]}
+        """
+        cur = [] if replace else self.list_hotwords()
+        have = set(cur)
+        added, skipped, invalid = [], 0, 0
+        for x in (words or []):
+            s = self.normalize_hotword(x)
+            if not s:
+                invalid += 1
+                continue
+            if s in have:
+                skipped += 1
+                continue
+            if len(cur) + len(added) >= self.HOTWORD_MAX_COUNT:
+                skipped += 1                     # 超出上限的词条计入"跳过"
+                continue
+            added.append(s)
+            have.add(s)
+        if added or replace:
+            self.set_meta(META_HOTWORDS, json.dumps(cur + added, ensure_ascii=False))
+        total_list = cur + added
+        return {"added": added, "added_count": len(added), "skipped": skipped,
+                "invalid": invalid, "total": len(total_list), "total_list": total_list}
+
+    def remove_hotwords(self, words) -> int:
+        """按名删除热点词（幂等），返回**实际删除条数**（不存在的不计）。"""
+        cur = self.list_hotwords()
+        targets = {self.normalize_hotword(x) for x in (words or [])}
+        targets.discard("")
+        if not targets:
+            return 0
+        keep = [w for w in cur if w not in targets]
+        removed = len(cur) - len(keep)
+        if removed:
+            self.set_meta(META_HOTWORDS, json.dumps(keep, ensure_ascii=False))
+        return removed
+
+    def list_hotword_sources(self) -> List[str]:
+        """读取"热点词来源网址"列表（仅保留 http/https、去重、按填写顺序）。"""
+        raw = self.get_meta(META_HOTWORD_SOURCES) or ""
+        if not raw:
+            return []
+        try:
+            data = json.loads(raw)
+        except (ValueError, TypeError):
+            return []
+        if not isinstance(data, list):
+            return []
+        out, seen = [], set()
+        for x in data:
+            s = str(x or "").strip()
+            if s and s.lower().startswith(("http://", "https://")) and s not in seen:
+                seen.add(s)
+                out.append(s)
+        return out
+
+    def set_hotword_sources(self, urls) -> int:
+        """**整体替换**来源网址列表（仅保留 http/https、去重），返回写入条数。"""
+        out, seen = [], set()
+        for x in (urls or []):
+            s = str(x or "").strip()
+            if s and s.lower().startswith(("http://", "https://")) and s not in seen:
+                seen.add(s)
+                out.append(s)
+        self.set_meta(META_HOTWORD_SOURCES, json.dumps(out, ensure_ascii=False))
+        return len(out)
+
     # ------------------------------------------------------------------ #
     # 条目图集 entry_images（2026-09-13，第 2 期 2-a）
     #   封面＝entries.image_path（既有行为完全不变）；本表只存"附加图"。
@@ -2272,6 +2500,33 @@ class Database:
             "SELECT * FROM entries WHERE is_favorite = 1 ORDER BY updated_at DESC, id"
         ).fetchall()
         return [dict(r) for r in rows]
+
+    # 2026-09-14（用户要求，"无标签条目"入口的数据层）：没有任何标签的条目。
+    #   与 list_uncategorized（无分类）对称；供「🏷 无标签条目」视图、标签页面入口
+    #   与搜索框 `#无标签` 语法共用，便于逐条为其打标签。
+    def list_untagged(self) -> List[dict]:
+        """列出**没有任何标签**的条目（按修改时间倒序）。"""
+        rows = self.conn.execute(
+            "SELECT * FROM entries WHERE id NOT IN "
+            "(SELECT DISTINCT entry_id FROM entry_tags) "
+            "ORDER BY updated_at DESC, id"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def count_untagged(self) -> int:
+        """没有标签的条目数（供入口按钮显示数量）。
+
+        2026-09-15（审核 M-2，用户同意）：失败时**返回 −1 并打印一行日志**，不再静默 `return 0`——
+        原来"异常 → 0"会把"库被锁 / 损坏 / 缺表"伪装成"确实没有无标签条目"，
+        UI 随之显示"（0）"而掩盖故障；UI 侧对 −1 显示"未知"。
+        """
+        try:
+            return self.conn.execute(
+                "SELECT COUNT(*) FROM entries WHERE id NOT IN "
+                "(SELECT DISTINCT entry_id FROM entry_tags)").fetchone()[0]
+        except Exception as exc:                    # 2026-09-15（审核 M-2）：不再吞异常返回 0
+            print(f"[无标签条目] 计数失败（返回 -1 表示未知）：{exc}")
+            return -1
 
     def list_all_entries(self) -> List[dict]:
         rows = self.conn.execute("SELECT * FROM entries ORDER BY id").fetchall()
@@ -3811,7 +4066,166 @@ def _tags_selftest() -> None:
             db.delete_entry(e1, purge_image=False)
             assert db.conn.execute(
                 "SELECT COUNT(1) FROM entry_tags WHERE entry_id = ?", (e1,)).fetchone()[0] == 0
+            # 11. 无标签条目（2026-09-14 新增 list_untagged / count_untagged）
+            _un = db.list_untagged()
+            _un_ids = {x["id"] for x in _un}
+            assert e3 in _un_ids, _un_ids                    # e3 的标签刚被删掉 → 应无标签
+            assert e1 not in _un_ids, _un_ids                # e1 已被删除 → 不在条目表
+            # 定义自洽：列出的每一条都确实没有任何标签
+            assert all(not db.list_entry_tags(x["id"]) for x in _un)
+            assert db.count_untagged() == len(_un), (db.count_untagged(), len(_un))
+            db.set_entry_tags(e3, ["补一个"])
+            assert e3 not in {x["id"] for x in db.list_untagged()}   # 打上标签后应移出列表
+            # 12. 2026-09-15（审核 M-2）：计数失败时返回 **−1**（不再静默返回 0）。
+            #     在**另一个临时库**里删掉 entry_tags 表来模拟"缺表/异常"，避免影响本用例连接。
+            _tmp2 = tempfile.mkdtemp(prefix="promptsprite_untagged_")
+            try:
+                _db2 = Database(os.path.join(_tmp2, "t.db"))
+                _db2.conn.execute("DROP TABLE entry_tags")
+                _db2.conn.commit()
+                assert _db2.count_untagged() == -1, "缺表时应返回 -1（表示未知）"
+                _db2.close()
+            finally:
+                shutil.rmtree(_tmp2, ignore_errors=True)
             print("[标签] 打标签/计数/且或查询/改名/合并/删除/清理/级联/搜索 通过")
+        finally:
+            db.close()
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _bulk_tags_selftest() -> None:
+    """批量写标签（2026-09-14 12:30，阶段 1）自测。
+
+    覆盖：append 并入 / 幂等（重复执行不重复写）/ replace 替换 / touch_updated 开关 /
+    空输入不报错。
+    """
+    import shutil
+    import tempfile
+
+    tmp = tempfile.mkdtemp(prefix="promptsprite_bulktags_")
+    try:
+        db = Database(os.path.join(tmp, "t.db"))
+        try:
+            did = db.add_domain("根")
+            l1 = db.add_category("L1", domain_id=did)
+            e1 = db.add_entry(Entry(name="A", category_id=l1))
+            e2 = db.add_entry(Entry(name="B", category_id=l1))
+            db.set_entry_tags(e1, ["已有"])
+
+            # 1. append：并入既有标签（跨条目共享标签只建一次 → 新1/新2 共 2 个新标签）
+            r = db.set_entry_tags_bulk({e1: ["新1", "新2"], e2: ["新2"]}, mode="append")
+            assert r["entries"] == 2 and r["links"] == 3 and r["tags_created"] == 2, r
+            assert sorted(t["name"] for t in db.list_entry_tags(e1)) == ["已有", "新1", "新2"]
+
+            # 2. 幂等：重复执行不再新增关联 / 不再新建标签
+            r2 = db.set_entry_tags_bulk({e1: ["新1", "新2"]}, mode="append")
+            assert r2["links"] == 0 and r2["tags_created"] == 0, r2
+
+            # 3. replace：替换该条目全部标签
+            r3 = db.set_entry_tags_bulk({e1: ["只此一个"]}, mode="replace")
+            assert r3["links"] == 1 and [t["name"] for t in db.list_entry_tags(e1)] == ["只此一个"], r3
+
+            # 4. touch_updated=False 不动 entries.updated_at（预置数据初始化）
+            db.conn.execute("UPDATE entries SET updated_at = '2000-01-01 00:00:00' WHERE id = ?",
+                            (e2,))
+            db.conn.commit()
+            db.set_entry_tags_bulk({e2: ["额外"]}, touch_updated=False)
+            assert db.get_entry(e2)["updated_at"] == "2000-01-01 00:00:00", "不应刷新时间戳"
+
+            # 5. touch_updated=True 刷新时间戳（默认行为）
+            db.set_entry_tags_bulk({e2: ["再一个"]}, touch_updated=True)
+            assert db.get_entry(e2)["updated_at"] != "2000-01-01 00:00:00", "应刷新时间戳"
+
+            # 6. 空输入不报错
+            assert db.set_entry_tags_bulk([]) == {"entries": 0, "links": 0, "tags_created": 0}
+            assert db.set_entry_tags_bulk({e1: []}, mode="replace")["links"] == 0
+            assert db.list_entry_tags(e1) == []
+
+            print("[批量标签] append/replace/幂等/时间戳控制/空输入 通过")
+        finally:
+            db.close()
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _hotwords_selftest() -> None:
+    """热点词表（2026-09-14，阶段 4 之 4-a）自测。
+
+    覆盖：文本解析（多分隔符/去重/去空）、并集追加的幂等性、整体替换、按名删除、
+    非法项（空/超长）丢弃、超上限截断、来源网址过滤、非法 JSON 容错、与 tags 表隔离。
+    """
+    import shutil
+    import tempfile
+
+    tmp = tempfile.mkdtemp(prefix="promptsprite_hotwords_")
+    try:
+        p = os.path.join(tmp, "hotwords.db")
+        db = Database(p)
+        try:
+            # 1. 初始为空
+            assert db.list_hotwords() == [], db.list_hotwords()
+            assert db.count_hotwords() == 0
+            assert db.list_hotword_sources() == []
+
+            # 2. 文本解析：换行 / 逗号 / 顿号 / 分号 / 竖线 / 制表符 + 去空去重 + 压缩空白
+            parsed = Database.parse_hotwords_text(
+                "多巴胺穿搭\n新中式,  赛博朋克、松弛感;慵懒风|美拉德\t多巴胺穿搭\n\n  \n")
+            assert parsed == ["多巴胺穿搭", "新中式", "赛博朋克", "松弛感", "慵懒风", "美拉德"], parsed
+
+            # 3. 并集追加 + 幂等（重复词不新增，计入 skipped）
+            r1 = db.add_hotwords(parsed)
+            assert r1["added_count"] == 6 and r1["total"] == 6, r1
+            r2 = db.add_hotwords(["多巴胺穿搭", "新中式"])
+            assert r2["added_count"] == 0 and r2["skipped"] == 2 and r2["total"] == 6, r2
+            assert db.list_hotwords() == parsed
+
+            # 4. 非法项（空串 / 超长）被丢弃并计入 invalid
+            long_word = "超" * (Database.HOTWORD_MAX_LEN + 1)
+            r3 = db.add_hotwords(["", "   ", long_word, "莫兰迪"])
+            assert r3["invalid"] == 3 and r3["added_count"] == 1, r3
+            assert db.count_hotwords() == 7
+
+            # 5. 按名删除（幂等：不存在的不计数）
+            assert db.remove_hotwords(["莫兰迪", "不存在的词"]) == 1
+            assert db.remove_hotwords([]) == 0
+            assert db.count_hotwords() == 6
+
+            # 6. 整体替换（replace）：直接给定新表
+            db.set_hotwords(["极简", "极简", "国风"])
+            assert db.list_hotwords() == ["极简", "国风"], db.list_hotwords()
+
+            # 7. 超上限截断（临时把上限改小，避免写 2000 条）
+            _keep_max = Database.HOTWORD_MAX_COUNT
+            try:
+                Database.HOTWORD_MAX_COUNT = 2
+                r4 = db.add_hotwords(["甲", "乙", "丙"])
+                assert r4["added_count"] == 0 and r4["skipped"] == 3, r4
+                db.set_hotwords(["甲", "乙", "丙"])
+                assert db.list_hotwords() == ["甲", "乙"], db.list_hotwords()
+            finally:
+                Database.HOTWORD_MAX_COUNT = _keep_max
+
+            # 8. 来源网址：仅保留 http/https、去重、按顺序
+            n = db.set_hotword_sources(["https://a.com/x", "http://b.com", "  ",
+                                        "ftp://c.com", "https://a.com/x", "b.com"])
+            assert n == 2, n
+            assert db.list_hotword_sources() == ["https://a.com/x", "http://b.com"]
+
+            # 9. 非法 JSON 容错（不抛异常，返回空）
+            db.set_meta(META_HOTWORDS, "{不是数组}")
+            assert db.list_hotwords() == []
+            db.set_meta(META_HOTWORDS, '{"a": 1}')
+            assert db.list_hotwords() == []
+            db.set_meta(META_HOTWORD_SOURCES, "not-json")
+            assert db.list_hotword_sources() == []
+
+            # 10. 与 tags 表隔离：热点词不会产生任何标签 / 条目关联
+            db.set_hotwords(["多巴胺穿搭", "新中式"])
+            assert db.list_tags() == [] and db.list_tags_with_counts() == []
+            assert db.conn.execute("SELECT COUNT(1) FROM entry_tags").fetchone()[0] == 0
+
+            print("[热点词] 文本解析/追加幂等/替换/删除/非法项/超上限/来源网址/容错/与tags隔离 通过")
         finally:
             db.close()
     finally:
@@ -4086,5 +4500,7 @@ if __name__ == "__main__":
     _fields_selftest()
     _field_values_selftest()
     _tags_selftest()
+    _bulk_tags_selftest()  # 2026-09-14 12:30（阶段 1）：批量写标签
+    _hotwords_selftest()   # 2026-09-14（阶段 4 之 4-a）：热点词表读写
     _list_config_selftest()
     _images_selftest()
