@@ -17,6 +17,7 @@ import customtkinter as ctk
 import pyperclip
 
 from tkinter import messagebox
+from .ui_common import C_DANGER as _C_DANGER, C_OK as _C_OK  # 2026-09-17（U-2）：主色常量
 
 
 def _center(win, master) -> None:
@@ -70,14 +71,14 @@ class RecycleBinDialog(ctk.CTkToplevel):
                      text_color="gray", font=("Microsoft YaHei", 11)
                      ).pack(side="left")
         self.clear_btn = ctk.CTkButton(foot, text="🗑 清空回收站", width=130,
-                                       fg_color="#D9534F", hover_color="#b33a35",
+                                       fg_color=_C_DANGER, hover_color="#b33a35",
                                        state="disabled" if self._locked else "normal",
                                        command=self._clear_all)
         self.clear_btn.pack(side="right", padx=4)
         ctk.CTkButton(foot, text="关闭", width=80,
                       command=self.destroy).pack(side="right", padx=4)
 
-        self.status_lbl = ctk.CTkLabel(self, text="", text_color="#2E8B57",
+        self.status_lbl = ctk.CTkLabel(self, text="", text_color=_C_OK,
                                        font=("Microsoft YaHei", 11))
         self.status_lbl.pack(anchor="w", padx=18, pady=(0, 6))
         self._render()
@@ -86,7 +87,7 @@ class RecycleBinDialog(ctk.CTkToplevel):
     # ---- 内部 ----
     def _status(self, msg: str, error: bool = False) -> None:
         self.status_lbl.configure(text=msg,
-                                  text_color=("#D9534F" if error else "#2E8B57"))
+                                  text_color=(_C_DANGER if error else _C_OK))
 
     def _render(self) -> None:
         for w in self.scroll.winfo_children():
@@ -129,11 +130,11 @@ class RecycleBinDialog(ctk.CTkToplevel):
         btns.pack(side="right", padx=8, pady=6)
         if not self._locked:
             ctk.CTkButton(btns, text="↩ 恢复", width=74, height=28,
-                          fg_color="#2E8B57", hover_color="#256e46",
+                          fg_color=_C_OK, hover_color="#256e46",
                           command=lambda tid=it["id"]: self._restore_one(tid)
                           ).pack(side="left", padx=3)
             ctk.CTkButton(btns, text="彻底删除", width=84, height=28,
-                          fg_color="#D9534F", hover_color="#b33a35",
+                          fg_color=_C_DANGER, hover_color="#b33a35",
                           command=lambda tid=it["id"]: self._purge_one(tid)
                           ).pack(side="left", padx=3)
         else:
@@ -236,7 +237,7 @@ class RecentAdditionsDialog(ctk.CTkToplevel):
                      ).pack(side="left")
         ctk.CTkButton(foot, text="关闭", width=80,
                       command=self.destroy).pack(side="right")
-        self.status_lbl = ctk.CTkLabel(self, text="", text_color="#2E8B57",
+        self.status_lbl = ctk.CTkLabel(self, text="", text_color=_C_OK,
                                        font=("Microsoft YaHei", 11))
         self.status_lbl.pack(anchor="w", padx=18, pady=(0, 6))
         self._render()
@@ -244,7 +245,7 @@ class RecentAdditionsDialog(ctk.CTkToplevel):
 
     def _status(self, msg: str, error: bool = False) -> None:
         self.status_lbl.configure(text=msg,
-                                  text_color=("#D9534F" if error else "#2E8B57"))
+                                  text_color=(_C_DANGER if error else _C_OK))
 
     def _since(self) -> str:
         days = self._RANGES[self._range][1]

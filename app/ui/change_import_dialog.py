@@ -22,6 +22,7 @@ from tkinter import messagebox
 import customtkinter as ctk
 
 from .. import config  # noqa: F401
+from .ui_common import C_DANGER as _C_DANGER, C_OK as _C_OK  # 2026-09-17（U-2）：主色常量
 
 
 class ChangeImportDialog(ctk.CTkToplevel):
@@ -81,7 +82,7 @@ class ChangeImportDialog(ctk.CTkToplevel):
         if self.behind:
             ctk.CTkLabel(self, text="⚠ 提示：目标库最后同步时间早于本变更包日期，可能尚未同步"
                                     "来源机的历史删除；如无把握请把删除处理选为“忽略删除”。",
-                         justify="left", text_color="#D9534F",
+                         justify="left", text_color=_C_DANGER,
                          font=("Microsoft YaHei", 12)).grid(
                 row=2, column=0, columnspan=2, padx=pad, pady=(0, 8), sticky="w")
 
@@ -135,7 +136,7 @@ class ChangeImportDialog(ctk.CTkToplevel):
         # 按钮
         btn_row = ctk.CTkFrame(self, fg_color="transparent")
         btn_row.grid(row=8, column=0, columnspan=2, sticky="e", padx=pad, pady=(6, 16))
-        ctk.CTkButton(btn_row, text="开始导入", width=110, fg_color="#2E8B57",
+        ctk.CTkButton(btn_row, text="开始导入", width=110, fg_color=_C_OK,
                       command=self._confirm).pack(side="left", padx=6)
         ctk.CTkButton(btn_row, text="取消", width=90,
                       command=self._cancel).pack(side="left", padx=6)

@@ -8,6 +8,7 @@ tagger.py - 标签词表的存取 / 校验 / 导入导出（阶段 0.5，2026-09
   3. `validate_dict(data)` / `normalize_dict(data)` / `dict_summary(data)` / `count_tags(data)`；
   4. `reset_dict(db)`  恢复出厂词表；
   5. `export_dict(db, path)` / `import_dict(db, path)`  JSON 导出/导入（导入前自动备份当前词表）；
+     2026-09-17（用户需求）新增 `merge_dict(db, path)`：JSON **增量合并**（只增不删，与"整体替换"并存）；
   6. `read_dict_file(path)` / `write_dict_file(path, data)`  纯文件读写（供导入导出复用）。
 
 设计要点（对应《可行性研究报告 v3》§4）：
@@ -24,13 +25,17 @@ from datetime import datetime
 
 from . import config
 from . import tagger_dict
+# 2026-09-17（审核 R-2）：`run_ui_suggest()` 需要调用打标引擎；
+#   tagger_engine 只依赖标准库 re，无循环导入风险。
+from . import tagger_engine
 
 # 校验时最多报告的条数（避免刷屏）
 _MAX_REPORT = 8
 
 
 def _now() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    """2026-09-17（审核 R-4）：统一到 `config.now_str()`。"""
+    return config.now_str()
 
 
 def _backup_dir() -> str:
@@ -235,6 +240,44 @@ def dict_summary(data) -> dict:
 
 
 # ---------------------------------------------------------------------- #
+# 一·补、「标签推荐策略与顺序」的存取（2026-09-16 批次 11-6，用户确认问题 2）
+#   纯数据层：只读写 meta 键 `config.META_TAG_POLICY`；校验/归一化交给
+#   `tagger_engine.normalize_policy`（单一真源），本模块不重复实现规则。
+# ---------------------------------------------------------------------- #
+def load_policy(db) -> dict:
+    """读取「标签推荐策略与顺序」；meta 无值 / JSON 损坏 / 结构非法 ⇒ 返回**默认策略**。
+
+    默认策略：热点词 → 领域+词典 → 取词 → 扩展（用户建议的顺序）；
+    「显式标签」恒最高优先，不在此列表内。
+    """
+    from . import tagger_engine          # 函数内延迟导入：保持"数据层不依赖引擎"的既有边界
+    try:
+        raw = db.get_meta(config.META_TAG_POLICY)
+        data = json.loads(raw) if raw else None
+    except Exception:
+        data = None
+    return tagger_engine.normalize_policy(data)
+
+
+def save_policy(db, data) -> dict:
+    """保存「标签推荐策略与顺序」（先归一化再写 meta）；返回实际写入的规范化结果。"""
+    from . import tagger_engine
+    pol = tagger_engine.normalize_policy(data)
+    db.set_meta(config.META_TAG_POLICY, json.dumps(pol, ensure_ascii=False))
+    return pol
+
+
+def reset_policy(db) -> dict:
+    """清除策略设置（回到默认：meta 键删除 ⇒ 读取时自动落到默认值）。"""
+    from . import tagger_engine
+    try:
+        db.set_meta(config.META_TAG_POLICY, "")
+    except Exception:
+        pass
+    return tagger_engine.normalize_policy(None)
+
+
+# ---------------------------------------------------------------------- #
 # 二、存取（meta 表）
 # ---------------------------------------------------------------------- #
 def _write_backup(text: str, prefix: str):
@@ -367,6 +410,133 @@ def import_dict(db, path: str) -> dict:
 
 
 # ---------------------------------------------------------------------- #
+# 三之 2、**增量合并**导入（2026-09-17，用户需求）
+#   与「整体替换」(`import_dict`) 并存：**只增不删** —— 每次只想加几个词时，
+#   把"只想加的那部分"导进来即可，出厂/现有词表原样保留，不必再手工并整份文件。
+#   两侧输入都已规范化（`read_dict_file` / `load_dict` 都过 `normalize_dict`）：
+#   维度名 / 标签名 / 匹配词均已去首尾空白、英文小写、单层去重 ⇒ 同名视为同一个，
+#   不会因"多打一个空格"而长出重名维度。
+# ---------------------------------------------------------------------- #
+def _merge_layer(cur_layer, new_layer) -> tuple:
+    """并集合并一层（维度 → {标签: [匹配词]}），**只增不删、保序去重**。
+
+    返回 `(合并后的一层, 新增标签数, 新增维度数, 新增匹配词数)`。
+    原有维度/标签的**顺序与位置一字不动**；新维度追加在后，新标签追加在该维度末尾，
+    新匹配词追加在该标签的词表末尾。
+    """
+    out = {d: {t: list(ws) for t, ws in (labels or {}).items()}
+           for d, labels in (cur_layer or {}).items()}
+    add_tags = add_dims = add_words = 0
+    for dim, labels in (new_layer or {}).items():
+        if dim not in out:
+            out[dim] = {}
+            add_dims += 1
+        for tag, words in (labels or {}).items():
+            if tag not in out[dim]:
+                out[dim][tag] = []
+                add_tags += 1
+            have = out[dim][tag]
+            seen = set(have)
+            for w in words:
+                if w not in seen:
+                    seen.add(w)
+                    have.append(w)
+                    add_words += 1
+    return out, add_tags, add_dims, add_words
+
+
+def _merge_data(cur, new) -> tuple:
+    """**纯函数**：把 `new` 增量并入 `cur`（只增不删），返回 `(合并后的词表, 统计)`。
+
+    `merge_dict()`（写库）与 `merge_preview()`（界面预演）**共用本函数** ⇒ 界面看到的
+    "将新增多少"与实际执行的合并口径**永远一致**（不存在两套实现走偏的可能）。
+    """
+    # ① 通用骨架
+    uni, a_tags1, a_dims1, a_words1 = _merge_layer(cur.get("universal"),
+                                                   new.get("universal"))
+    # ② 领域维度包（新领域包 = 直接并入；已存在的 = 逐层并集）
+    merged_domains = {d: v for d, v in (cur.get("domains") or {}).items()}
+    a_tags2 = a_dims2 = a_words2 = a_domains = 0
+    for dom, layer in (new.get("domains") or {}).items():
+        if dom not in merged_domains:
+            a_domains += 1
+        merged_domains[dom], _t, _d, _w = _merge_layer(merged_domains.get(dom), layer)
+        a_tags2 += _t
+        a_dims2 += _d
+        a_words2 += _w
+    # ③ 领域判定表
+    merged_map = {d: list(ws) for d, ws in (cur.get("domain_map") or {}).items()}
+    a_map = 0
+    for dom, words in (new.get("domain_map") or {}).items():
+        have = merged_map.setdefault(dom, [])
+        seen = set(have)
+        for w in words:
+            if w not in seen:
+                seen.add(w)
+                have.append(w)
+                a_map += 1
+
+    merged = {
+        "version": max(int(cur.get("version") or 0), int(new.get("version") or 0))
+                   or tagger_dict.TAG_DICT_VERSION,
+        "updated_at": _now(),
+        "universal": uni,
+        "domains": merged_domains,
+        "domain_map": merged_map,
+    }
+    stat = {"added_labels": a_tags1 + a_tags2, "added_dims": a_dims1 + a_dims2,
+            "added_domains": a_domains, "added_words": a_words1 + a_words2,
+            "added_map_words": a_map,
+            "tags_before": count_tags(cur), "tags_after": count_tags(merged)}
+    return merged, stat
+
+
+def merge_preview(cur, new) -> dict:
+    """**只算命不写库**：返回增量合并的统计（供界面确认框预览）。返回同上统计字段。"""
+    return _merge_data(cur, new)[1]
+
+
+def merge_dict(db, path: str) -> dict:
+    """从 JSON 文件**增量合并**词表（只增不删，现有词表全部保留）。
+
+    与 `import_dict()`（**整体替换**）的分工：
+      - 同名维度 / 同名标签 → 匹配词**并集去重**（原有顺序不变，新词追加在后）；
+      - 新维度 / 新标签 / **新领域包** / 新 `domain_map` 项 → **自动新增**；
+      - 现有条目**一个不删**（本操作绝不会让词表变小）。
+    安全约定：结构校验不通过 → **拒绝、不写入**（返回 errors）；通过 → 写库前先把当前
+    词表备份到 `data/backup/`（`tag_dict_before_merge_*.json`）；写库仍走 `save_dict()`。
+
+    返回 {'ok','added_labels','added_dims','added_domains','added_words','added_map_words',
+          'tags_before','tags_after','backup','errors','error'}。
+    """
+    empty = {"ok": False, "errors": [], "error": None, "added_labels": 0, "added_dims": 0,
+             "added_domains": 0, "added_words": 0, "added_map_words": 0,
+             "tags_before": 0, "tags_after": 0, "backup": None}
+    read = read_dict_file(path)
+    if not read["ok"]:
+        bad = dict(empty)
+        bad["errors"], bad["error"] = read["errors"], read["error"]
+        return bad
+    cur = load_dict(db)
+    merged, stat = _merge_data(cur, read["data"])
+    old_raw = ""
+    try:
+        old_raw = db.get_meta(config.META_TAG_DICT) or ""
+    except Exception:
+        old_raw = ""
+    backup = _write_backup(old_raw, "tag_dict_before_merge") if old_raw.strip() else None
+    res = save_dict(db, merged)          # 校验 + 规范化 + 写库（校验不过则不写）
+    if not res.get("ok"):
+        bad = dict(empty)
+        bad["errors"], bad["tags_before"], bad["backup"] = res.get("errors") or [], stat["tags_before"], backup
+        return bad
+    out = {"ok": True, "errors": [], "error": None, "backup": backup}
+    out.update(stat)
+    out["tags_after"] = res["tags"]
+    return out
+
+
+# ---------------------------------------------------------------------- #
 # 四、条目 → 分类上下文（供"领域判定"用；阶段 1 预置标签 与 阶段 2 批量打标 **共用**）
 #   2026-09-14：由 tag_builtin.py 抽到本模块，避免两处重复实现（预置标签预演时曾因
 #   "只查条目自身分类的根目录归属"导致 63% 条目判不出领域 → 此处已按"沿链回溯"实现）。
@@ -436,6 +606,61 @@ def all_dimension_names(dict_data, with_universal: bool = True) -> list:
                 seen.add(dim)
                 out.append(dim)
     return out
+
+
+# ---------------------------------------------------------------------- #
+# UI「单条推荐」的公共流程（2026-09-17，审核报告 R-2）
+#   背景：主窗口 MainWindow._suggest_tags 与「快速新建」QuickAddWindow._suggest_tags
+#   原先**各自实现**同一套流程（读词表 → 调引擎 → 取词采集 → 来源标注），
+#   仅"守卫条件 / 提示方式 / chip 刷新"不同。抽出本函数后，两处只保留差异部分，
+#   保证"改一次策略两窗口同时生效"，避免日后走偏。
+# ---------------------------------------------------------------------- #
+def run_ui_suggest(db, texts, ctx_names=None, from_auto: bool = False, collect=None) -> dict:
+    """执行一次"UI 单条推荐"的公共流程（**不含任何界面代码**）。
+
+    参数：
+      db          —— Database 实例（读词表 / 策略 / 热点词）
+      texts       —— {字段名: 文本}（name / intro / features / image_desc / prompt_cn / prompt_en）
+      ctx_names   —— 分类上下文名（用于领域判定），可为 None
+      from_auto   —— 是否来自 T2 防抖自动推荐（用于"取词采集范围"判断）
+      collect     —— 可选回调 `(texts, dict_data, from_auto) -> str`：
+                     由调用方实现的"取词采集"提示语（两窗口的 entry_id 语义不同，故外置）
+
+    返回：{"names": [...], "source_note": "（来源：…）", "auto_note": "…", "dict_data": {...}}
+    异常：词表读取 / 引擎调用失败时**抛出**，由调用方决定提示方式（toast / messagebox）。
+
+    说明：**固定**启用 `fallback_global=True`（全词典兜底）与 `field_fallback=True`（字段取词），
+    并传入用户配置的「推荐策略与顺序」与热点词清单——这是"UI 单条推荐"的既定口径，
+    与"批量 / 离线打标"（不启用取词）刻意区分，两者不可混用。
+    """
+    dict_data = load_dict(db)
+    res = tagger_engine.suggest(
+        texts, dict_data, ctx_names,
+        fallback_global=True, field_fallback=True,
+        policy=load_policy(db), hotwords=db.list_hotwords())
+    names = tagger_engine.tag_names(res)
+    # 2026-09-15 19:30（批次 10）：来源标注——取词优先于词典兜底显示
+    # 2026-09-18（取词优化 + 用户第 3 轮"兜底规则"）：取词来源细分三种
+    #   「标题/提示词」（命中词表）／「取词（新词）」／「取词（兜底）」，此处统一提示
+    source_note = ""
+    if names:
+        _sources = {t.get("source") for t in (res.get("tags") or [])}
+        if "取词（兜底）" in _sources:
+            source_note = "（来源：标题/提示词，兜底取词）"
+        elif "取词（新词）" in _sources:
+            source_note = "（来源：标题/提示词，含新词）"
+        elif "标题/提示词" in _sources:
+            source_note = "（来源：标题/提示词）"
+        elif "词典兜底" in _sources:
+            source_note = "（来源：词典兜底）"
+    auto_note = ""
+    if callable(collect):
+        try:
+            auto_note = collect(texts, dict_data, from_auto) or ""
+        except Exception:
+            auto_note = ""       # 取词采集失败绝不影响推荐主流程
+    return {"names": names, "source_note": source_note,
+            "auto_note": auto_note, "dict_data": dict_data}
 
 
 def _selftest() -> None:
@@ -533,8 +758,77 @@ def _selftest() -> None:
             assert _pool9 and len(_pool9) == len(set(_pool9)), "候选池应非空且已去重"
             assert set(_names9) <= set(_pool9), "候选池须包含全部词表标签"
 
+            # 11. 「标签推荐策略与顺序」存取（2026-09-16 批次 11-6）
+            from . import tagger_engine as _te11
+            assert load_policy(db)["order"] == list(_te11.POLICY_SOURCES), \
+                "默认顺序应为 热点词 → 领域+词典 → 取词 → 扩展"
+            _saved11 = save_policy(db, {
+                "order": [_te11.SOURCE_FIELD, _te11.SOURCE_DOMAIN_DICT,
+                          _te11.SOURCE_HOTWORD, _te11.SOURCE_EXT],
+                "enabled": {_te11.SOURCE_FIELD: True, _te11.SOURCE_DOMAIN_DICT: False,
+                            _te11.SOURCE_HOTWORD: True, _te11.SOURCE_EXT: False}})
+            _back11 = load_policy(db)
+            assert _back11 == _saved11, (_back11, _saved11)
+            assert _back11["order"][0] == _te11.SOURCE_FIELD, _back11
+            assert _back11["enabled"][_te11.SOURCE_DOMAIN_DICT] is False, _back11
+            # 非法结构自动回退默认（不抛异常）
+            db.set_meta(config.META_TAG_POLICY, "{坏 JSON")
+            assert load_policy(db)["order"] == list(_te11.POLICY_SOURCES)
+            db.set_meta(config.META_TAG_POLICY, json.dumps({"order": "坏值"}))
+            assert load_policy(db)["order"] == list(_te11.POLICY_SOURCES)
+            reset_policy(db)
+            assert load_policy(db)["order"] == list(_te11.POLICY_SOURCES), "reset 后应回默认"
+
+            # 12. 增量合并（2026-09-17 用户需求）：**只增不删**，与"整体替换"并存
+            _pre12 = load_dict(db)
+            _before12 = count_tags(_pre12)
+            _add12 = {
+                "version": 1,
+                "universal": {"领域": {"视觉": ["计算机视觉测试词"]}},
+                "domains": {
+                    "视觉": {"题材主体": {"人像": ["headshot2"], "新增标签甲": ["新词甲"]},
+                             "新增维度乙": {"新维度标签丙": ["新词丙"]}},
+                    "学术": {"学科": {"计算机科学": ["计算机科学", "cs"]}},
+                },
+                "domain_map": {"视觉": ["图像", "新领域关键词"], "学术": ["学术", "论文"]},
+            }
+            # domain_map 的"新增词数"**取决于当前词表里已有什么** ⇒ 期望值按合并前实测推算
+            #   （2026-09-18：出厂词表换版后此处口径自动跟随，不再是写死的数字）
+            _exp_map12 = sum(1 for _dom, _ws in _add12["domain_map"].items()
+                             for _w in _ws
+                             if _w not in (_pre12.get("domain_map") or {}).get(_dom, []))
+            p12 = os.path.join(tmp, "add_only.json")
+            assert write_dict_file(p12, _add12)["ok"]
+            m12 = merge_dict(db, p12)
+            assert m12["ok"] and m12["backup"], m12
+            _d12 = load_dict(db)
+            # ① 只增不删：标签数增加，且**原词表标签一个不少**
+            assert count_tags(_d12) > _before12, (count_tags(_d12), _before12)
+            assert set(dict_tag_names(seed)) <= set(dict_tag_names(_d12)), "原词表标签不得丢失"
+            # ② 同名标签：匹配词并集（原有在前、新词追加在后）
+            assert _d12["universal"]["领域"]["视觉"][-1] == "计算机视觉测试词"
+            assert _d12["domains"]["视觉"]["题材主体"]["人像"][-1] == "headshot2"
+            # ③ 新标签 / 新维度 / 新领域包 / domain_map 自动新增
+            assert "新增标签甲" in _d12["domains"]["视觉"]["题材主体"]
+            assert "新增维度乙" in _d12["domains"]["视觉"]
+            assert "学术" in _d12["domains"]
+            assert "新领域关键词" in _d12["domain_map"]["视觉"]      # 新的判定关键词已并入
+            assert _d12["domain_map"]["学术"].count("学术") == 1      # 已存在则**不重复追加**
+            assert (m12["added_labels"], m12["added_dims"], m12["added_domains"]) == (3, 2, 1), m12
+            assert m12["added_map_words"] == _exp_map12, (m12, _exp_map12)
+            # ④ 非法文件 → 拒绝，且词表一字不动
+            m12b = merge_dict(db, p3)
+            assert not m12b["ok"] and m12b["errors"], m12b
+            assert count_tags(load_dict(db)) == count_tags(_d12), "非法合并不得改动词表"
+            # ⑤ 幂等：同一份文件再来一次 → 不再新增；且"预演"与"实际"口径一致
+            _prev12 = merge_preview(load_dict(db), _add12)
+            assert (_prev12["added_labels"], _prev12["added_words"],
+                    _prev12["added_map_words"]) == (0, 0, 0), _prev12
+            m12c = merge_dict(db, p12)
+            assert m12c["ok"] and m12c["tags_after"] == m12c["tags_before"], m12c
+
             print("[词表] 种子/初始化/校验拒绝/规范化/存取/导出导入/备份/恢复出厂/损坏自愈"
-                  "/标签名扁平化与候选池 通过；"
+                  "/标签名扁平化与候选池/推荐策略存取/增量合并（只增不删） 通过；"
                   "标签总数=%d" % count_tags(seed))
         finally:
             db.close()

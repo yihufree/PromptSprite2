@@ -14,6 +14,7 @@ import customtkinter as ctk
 from tkinter import messagebox
 
 from ..parser import fetcher
+from .ui_common import C_OK as _C_OK, C_DANGER as _C_DANGER  # 2026-09-17（U-2）：主色常量
 
 
 class GithubBatchDialog(ctk.CTkToplevel):
@@ -71,7 +72,7 @@ class GithubBatchDialog(ctk.CTkToplevel):
         ctk.CTkButton(foot, text="恢复默认（常见文档）", width=170, fg_color="#8a94a6",
                       command=self._reset_default).pack(side="left", padx=(6, 0))
         ctk.CTkButton(foot, text="取消", width=88, command=self.destroy).pack(side="right")
-        ctk.CTkButton(foot, text="确定并抓取", width=112, fg_color="#2E8B57",
+        ctk.CTkButton(foot, text="确定并抓取", width=112, fg_color=_C_OK,
                       command=self._ok).pack(side="right", padx=(0, 8))
         self.sum_lbl = ctk.CTkLabel(foot, text="", font=("Microsoft YaHei", 11), anchor="w")
         self.sum_lbl.pack(side="left", padx=(12, 0))
@@ -116,7 +117,7 @@ class GithubBatchDialog(ctk.CTkToplevel):
                 f"（限 {fetcher.BATCH_MAX_FILES} 个 / 单文件 2MB / 合计 20MB）")
         try:
             self.sum_lbl.configure(text=text,
-                                   text_color=("#D9534F" if not chk["ok"] else "gray"))
+                                   text_color=(_C_DANGER if not chk["ok"] else "gray"))
         except Exception:
             pass
 

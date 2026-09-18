@@ -58,6 +58,10 @@ from .ui_common import rows_to_px as _rows_to_px
 from .ui_common import install_edit_capability as _enable_text_undo  # 2026-09-09：文本框撤销/重做
 from .ui_common import set_boxes_readonly as _set_boxes_readonly  # 2026-09-09：浏览只读（可选中复制）
 from . import ui_common as _ui_common  # 2026-09-14（阶段 3）：标签配色公共实现（quick_add 共用）
+from .ui_common import C_OK as _C_OK, C_TAG as _C_TAG, C_WARN as _C_WARN, C_DANGER as _C_DANGER  # 2026-09-17（U-2）：主色常量
+# 2026-09-17（审核 R-1/R-3/R-6）：共用实现统一收拢到 ui_common —— 屏幕工作区 / 悬停提示 /
+#   文本框自适应高度 / CTk 私有控件访问。本文件一律经这些入口使用，不再各写一份实现。
+work_area = _ui_common.work_area
 
 
 # 详情区字段展示配置：(显示名, 数据库字段键, 文本框高度行数)
@@ -349,14 +353,14 @@ _ENTRY_NAME_FONT_LIST = ("Microsoft YaHei", 12, "bold")   # 列表视图条目�
 _ENTRY_OV_MIN_ROWS = 25        # 2026-09-12（用户要求）：悬停浮层固定最小高度＝可显示 25 行文本
 _ENTRY_OV_MAX_ROWS = 25        # 上限与最小一致 → 浮层恒为 25 行高（条目更多时用右侧滚动条）
 # 2026-09-12（用户要求 3）：详情区左下"🗂 打开/关闭四级目录"按钮两态配色
-_DIR_OPEN_BG = "#2E8B57"       # 目录打开（四列显示）→ 绿色
+_DIR_OPEN_BG = _C_OK       # 目录打开（四列显示）→ 绿色
 _DIR_OPEN_HOVER = "#256e46"
 _DIR_CLOSED_BG = "#E0A800"     # 目录关闭（四列隐藏）→ 黄色
 _DIR_CLOSED_HOVER = "#B98A00"
 # 2026-09-13（1-C-3）：标签页面两态配色（打开＝紫、关闭＝橙）
-_TAG_OPEN_BG = "#7A4FBF"
+_TAG_OPEN_BG = _C_TAG
 _TAG_OPEN_HOVER = "#66409f"
-_TAG_CLOSED_BG = "#E08A00"
+_TAG_CLOSED_BG = _C_WARN
 _TAG_CLOSED_HOVER = "#b87000"
 
 # 2026-09-12（用户要求 2）：详情区"字段内容"浮动提示窗口。
@@ -377,42 +381,20 @@ _TIP_FONT = ("Microsoft YaHei", 14, "normal")   # 浮窗文字字号：固定 14
 
 
 class _FieldTooltip:
-    """字段悬停提示：鼠标移到字段上显示完整内容（不受滚动框裁剪影响）"""
+    """字段悬停提示：鼠标移到字段上显示完整内容（不受滚动框裁剪影响）
+
+    2026-09-17（审核 R-3）：实现已统一到 `ui_common.Tooltip`（屏幕工作区夹紧、避免落进任务栏），
+    此处保留类名与既有调用点不变，仅继承公共实现。
+    """
 
     def __init__(self, widget, text: str):
-        self.widget = widget
-        self.text = text
-        self._tip = None
-        widget.bind("<Enter>", self._show, add="+")
-        widget.bind("<Leave>", self._hide, add="+")
+        self._impl = _ui_common.Tooltip(widget, text, wraplength=460)
 
     def _show(self, _event=None):
-        if self._tip is not None:
-            return
-        self._tip = tk.Toplevel(self.widget)
-        self._tip.wm_overrideredirect(True)
-        tk.Label(self._tip, text=self.text, justify="left", bg="#ffffe0",
-                 relief="solid", borderwidth=1, wraplength=460, padx=8, pady=6,
-                 font=("Microsoft YaHei", 10)).pack()
-        self._tip.update_idletasks()
-        w, h = self._tip.winfo_reqwidth(), self._tip.winfo_reqheight()
-        sw, sh = self.widget.winfo_screenwidth(), self.widget.winfo_screenheight()
-        x = self.widget.winfo_rootx() + 16
-        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
-        # 2026-08-18（P2-2 修复）：屏幕边界校正——右侧越界左移、底部越界上翻，避免提示框出屏
-        if x + w > sw:
-            x = max(sw - w - 8, 0)
-        if y + h > sh:
-            y = max(self.widget.winfo_rooty() - h - 4, 0)
-        self._tip.wm_geometry(f"+{x}+{y}")
+        self._impl._show()
 
     def _hide(self, _event=None):
-        if self._tip is not None:
-            try:
-                self._tip.destroy()
-            except Exception:
-                pass
-            self._tip = None
+        self._impl._hide()
 
 
 def _attach_tooltip(widget, text: str) -> "_FieldTooltip":
@@ -527,7 +509,7 @@ class _ListPickDialog(ctk.CTkToplevel):
 
         btn = ctk.CTkFrame(self, fg_color="transparent")
         btn.pack(padx=18, pady=(4, 14), anchor="e")
-        ctk.CTkButton(btn, text="确定", width=92, fg_color="#2E8B57",
+        ctk.CTkButton(btn, text="确定", width=92, fg_color=_C_OK,
                       command=self._ok).pack(side="left", padx=4)
         ctk.CTkButton(btn, text="取消", width=92, command=self.destroy).pack(side="left", padx=4)
         self._center()
@@ -757,6 +739,9 @@ class MainWindow(ctk.CTk):
         # 2026-09-14（用户要求）：最小高度同样按屏幕可用高度收敛（`_win_min_height()`），
         #   保证"窗口缩到最小时整窗（含底边）可见"。
         self.minsize(_BASE_MIN_WIDTH, self._win_min_height())
+        # 2026-09-17（需求 U-1）：设置**运行期窗口 / 任务栏图标**——原先未设置，
+        #   窗口左上角与任务栏显示的是 Tk 默认图标（EXE 图标本身是正常的）。
+        self._set_window_icon()
 
         # 交互状态
         self._lock_on = False
@@ -770,6 +755,8 @@ class MainWindow(ctk.CTk):
         # 2026-09-14（审核修复 P3）：进入搜索前的浏览视图——清空搜索框时回到它
         self._view_before_search = None
         self._view_mode = "card"   # 卡片/列表
+        # 2026-09-16（批次 11-7，用户要求 3）：条目区排序方式（"updated"/"created"/"name"）
+        self._entry_sort = "updated"
         self._detail_mode = config.DETAIL_MODE_AUTO  # 2026-08-18：详情字段策略（自动/全部/精简）
         self._remember_size = True                   # 2026-08-18：是否记住窗口大小
         self._detail_entry_id = None
@@ -790,6 +777,9 @@ class MainWindow(ctk.CTk):
         # 2026-09-13（1-C-2）：当前条目的标签名列表（有序去重）与 chip 上的"×"按钮引用
         self._tag_names = []
         self._tag_chip_btns = []
+        # 2026-09-16（批次 14）：🏷 标签区块"本次是否已渲染"——标签区块被手动隐藏时不渲染，
+        #   保存标签与"推荐标签"据此跳过，避免清空/串写标签。
+        self._tag_block_rendered = False
         # 2026-09-13（1-C-3）：标签页面是否打开（标签页面与四级目录互斥）
         self._tag_page_on = False
         # 2026-09-13（1-C-3b）：标签页面的选择/逻辑/呈现方式/排序/搜索词
@@ -858,13 +848,13 @@ class MainWindow(ctk.CTk):
         self._add_group_open = False # 新增态 ③-⑦ 折叠组是否展开
         self._add_group_pairs = []   # 折叠组内的 (标签, 文本框) 对（折叠/展开显隐用）
         self._add_prompt_toggles = {}  # 2026-09-11（用户要求 1）：新增表单 ⑧/⑨ 展开/收起按钮引用
-        self._add_entry_btn = None   # 条目区"➕ 新增条目"按钮引用
+        self._add_entry_btn = None   # 条目区"✚ 新增条目"按钮引用
 
-        # 2026-09-09：详情区 ②~⑦ 折叠组（浏览视图）状态
-        self._detail_group_open = False   # 是否已展开（浏览/新增切换条目后复位）
-        self._detail_group_for = None     # 该展开状态所属条目 id（切条目时复位折叠）
-        self._detail_group_toggle = None  # 展开/收起按钮引用
-        self._detail_group_widgets = []   # 组内待显隐的字段块（含 ⑦ 后图片区）
+        # 2026-09-16（批次 13）：原"②~⑦ 折叠组"状态变量已删除——
+        #   ②~⑦ 现拆为独立可折叠块，由 _detail_expand_all 控制全部展开/收起。
+        # 2026-09-16（批次 13）："显示全部字段"按钮切换"全部展开/收起所有可折叠字段"
+        self._detail_expand_all = False
+        self._detail_last_entry_id = None  # 上一次渲染详情的条目 id（切条目时复位会话覆盖）
         self._browse_mode = False         # 浏览/编辑切换：True=只读浏览（可选中复制）
         # 2026-09-09：条目列悬停"全部条目名"浮层状态
         self._entry_ov_names = []
@@ -1138,6 +1128,13 @@ class MainWindow(ctk.CTk):
         # 2026-09-10（用户要求）：输入走防抖（停顿 _SEARCH_DEBOUNCE_MS 才查询）；回车立即查询。
         self.search_entry.bind("<KeyRelease>", self._on_search_typing)
         self.search_entry.bind("<Return>", self._on_search_key)
+        # 2026-09-17（用户要求 1）：输入框右侧新增"✕"**一键清除**按钮——原先只能逐字退格删除。
+        #   宽度取 20（≈2 个汉字的一半）：既一眼可点，又尽量少占"搜索框列"的宽度。
+        self.search_clear_btn = ctk.CTkButton(
+            self.search_box, text="✕", width=20, height=28, corner_radius=5,
+            fg_color="#e8ecf1", hover_color="#d5dce5", text_color="#1f2937",
+            font=("Microsoft YaHei", 12), command=self._on_search_clear)
+        self.search_clear_btn.pack(side="left", padx=(2, 0))
         # 2026-09-15（用户要求）：🔍 宽度 1 → **45**（固定宽度；约为原来 27px 的 2 倍）
         self.search_btn = ctk.CTkButton(self.search_box, text="🔍", width=45, height=28,
                                         corner_radius=5,
@@ -1268,7 +1265,7 @@ class MainWindow(ctk.CTk):
         # 2026-09-14 20:35（用户要求，本轮）："复制全部/复制中文/复制英文"改用**统一固定宽度**
         #   `_DETAIL6_BTN_W`（与第一行"移动到/关联到/复制到"同宽、上下对齐）。
         self.copy_all_btn = ctk.CTkButton(row2, text="📋 复制全部", width=_DETAIL6_BTN_W,
-                                          corner_radius=5, fg_color="#2E8B57")
+                                          corner_radius=5, fg_color=_C_OK)
         self.copy_all_btn.pack(side="left", padx=2)
         self.copy_cn_btn = ctk.CTkButton(row2, text="复制中文", width=_DETAIL6_BTN_W,
                                          corner_radius=5)
@@ -1290,7 +1287,7 @@ class MainWindow(ctk.CTk):
         # 2026-09-14 21:05（用户选方案 A，右侧对齐）：为与第一行「✏️ 编辑」（72px）**同列同宽**，
         #   重置宽度改为 `_DETAIL_RCOL_A_W`（源码 60 → 72px）——用户已知悉并同意。
         self.save_btn = ctk.CTkButton(row2, text="💾 保存", width=_DETAIL_RCOL_B_W,
-                                      corner_radius=5, fg_color="#2E8B57")
+                                      corner_radius=5, fg_color=_C_OK)
         self.save_btn.pack(side="right", padx=2)
         self.reset_btn = ctk.CTkButton(row2, text="重置", width=_DETAIL_RCOL_A_W, corner_radius=5)
         self.reset_btn.pack(side="right", padx=2)
@@ -1336,7 +1333,7 @@ class MainWindow(ctk.CTk):
         self.detail_foot = ctk.CTkFrame(self.detail_root, fg_color="#e9eef5")
         self.detail_foot.grid(row=2, column=0, sticky="ew", padx=4, pady=(0, 4))
         self.del_btn = ctk.CTkButton(self.detail_foot, text="🗑 删除当前条目",
-                                     width=110, height=32, fg_color="#D9534F")
+                                     width=110, height=32, fg_color=_C_DANGER)
         # 2026-09-10（用户要求 二）："删除当前条目"左侧新增小图标快捷按钮（无文字标签），
         # 一键"全部隐藏/全部显示"各分类区域（与工具栏"目录隐藏/目录显示"按钮等价，见 _toggle_all_dirs）。
         self.dir_toggle_btn = ctk.CTkButton(
@@ -1598,9 +1595,9 @@ class MainWindow(ctk.CTk):
     def _attach_nav_tooltip(btn, name: str, budget: int) -> None:
         """长名称悬停提示：名称长度超过列宽预算时附加 tooltip（2026-08-29 UI 优化）。
         budget：该列可显示的大致汉字数（项目/根目录≈8，一级/二级/条目≈12）。
+        2026-09-17（审核 R-3）：改用 `ui_common.maybe_tooltip`（与快速新建窗口同一实现）。
         """
-        if len(name) > budget:
-            _FieldTooltip(btn, name)
+        _ui_common.maybe_tooltip(btn, name, budget)
 
     # ------------------------------------------------------------------ #
     # 分类列"上移/下移"（2026-09-11 08:52 用户要求 2）
@@ -1645,7 +1642,7 @@ class MainWindow(ctk.CTk):
         table = "projects" if kind == "project" else ("domains" if kind == "domain"
                                                      else "categories")
         if not self.db.swap_order(table, self._column_ids(kind), item_id, delta):
-            self.toast("已在最" + ("上" if delta < 0 else "下") + "端", color="#D9534F")
+            self.toast("已在最" + ("上" if delta < 0 else "下") + "端", color=_C_DANGER)
             return
         if kind == "project":
             self._refresh_projects()
@@ -1664,7 +1661,7 @@ class MainWindow(ctk.CTk):
         """渲染项目类别列（含"新增"按钮、"未分配"虚拟项）"""
         self._clear_frame(self.project_frame)
         self._clear_nav_btns("p")
-        ctk.CTkButton(self.project_frame, text="➕ 新增项目类别", height=30, **_ADD_BTN,
+        ctk.CTkButton(self.project_frame, text="✚ 新增项目类别", height=30, **_ADD_BTN,
                       state="disabled" if self._lock_on else "normal",
                       command=self._add_project).pack(fill="x", padx=6, pady=3)
         for p in self.db.list_projects():
@@ -2021,6 +2018,9 @@ class MainWindow(ctk.CTk):
         ctk.CTkLabel(tf, text=(_title or "🏷 标签页面"), text_color=_TAG_OPEN_BG,
                      font=("Microsoft YaHei", 15, "bold"), anchor="w"
                      ).pack(fill="x", padx=14, pady=(12, 4))
+        # 2026-09-18（用户要求）：**移除词表"规模预警"提示**（原 FR-96，阈值 500）。
+        #   用户的新出厂词表为 809 个标签且还会继续扩充，该提示属"提醒而非限制"、无实际作用，
+        #   按用户要求整体去除（`tagger.dict_size_hint` / `DICT_WARN_TAGS` 一并删除）。
 
         # ---- 顶部：搜索（词表档不显示）/ 四档切换 / ＋新建（仅标签档）----
         top = ctk.CTkFrame(tf, fg_color="transparent")
@@ -2035,6 +2035,13 @@ class MainWindow(ctk.CTk):
             self._tag_search_entry.bind(
                 "<KeyRelease>",
                 self._on_hotword_search_typed if is_hot else self._on_tag_search_typed)
+            # 2026-09-17（用户要求 2）：与主界面搜索框一致，右侧新增"✕"**一键清除**按钮
+            #   （标签档 / 热点词档共用同一控件；点击只清关键词并重建主区，不重建本输入框）。
+            self._tag_search_clear_btn = ctk.CTkButton(
+                top, text="✕", width=20, height=28, corner_radius=5,
+                fg_color="#e8ecf1", hover_color="#d5dce5", text_color="#1f2937",
+                font=("Microsoft YaHei", 12), command=self._on_tag_search_clear)
+            self._tag_search_clear_btn.pack(side="left", padx=(2, 0))
         seg_v = ctk.CTkSegmentedButton(top, values=["标签云", "列表", "热点词", "词表"], width=252,
                                        command=self._on_tag_view_change)
         seg_v.set({"cloud": "标签云", "list": "列表", "hot": "热点词", "dict": "词表"}
@@ -2133,15 +2140,21 @@ class MainWindow(ctk.CTk):
             # 2026-09-14（0.5）：词表档的底部按钮（导出 / 导入 / 恢复出厂）
             # 2026-09-15（批次 6-2 补充，用户选定"一并置灰"）：其中"⬇ 导入词表…/↺ 恢复出厂词表"
             #   是**写操作** ⇒ 纳入 `_tag_gov_btns` 置灰；"⬆ 导出词表…"是只读 ⇒ **保持可用**。
-            for _txt, _cmd, _write in (("⬆ 导出词表…", self._on_dict_export, False),
-                                       ("⬇ 导入词表…", self._on_dict_import, True),
-                                       ("↺ 恢复出厂词表", self._on_dict_reset, True)):
-                _b = ctk.CTkButton(mgr, text=_txt, width=110, height=26, fg_color="#8a94a6",
+            # 2026-09-17（用户需求）：**新增第 4 个入口「➕ 增量导入…」**（只增不删）——与
+            #   「⬇ 导入（替换）…」**并存**；两个入口文案各自写明口径，避免误用（确认框再写明一次）。
+            #   为在 ≈560 宽的面板里放下 4 个按钮：按钮宽度与右侧说明文字一并收窄
+            #   （仅改宽度与说明文字的简写，**功能与口径一字未变**）。
+            for _txt, _w, _cmd, _write in (
+                    ("⬆ 导出词表…", 96, self._on_dict_export, False),
+                    ("⬇ 导入（替换）…", 126, self._on_dict_import, True),
+                    ("➕ 增量导入…", 108, self._on_dict_merge, True),
+                    ("↺ 恢复出厂…", 104, self._on_dict_reset, True)):
+                _b = ctk.CTkButton(mgr, text=_txt, width=_w, height=26, fg_color="#8a94a6",
                                    font=("Microsoft YaHei", 11), command=_cmd)
                 _b.pack(side="left", padx=(0, 5))
                 if _write:
                     self._tag_gov_btns.append(_b)
-            ctk.CTkLabel(mgr, text="权威数据存于数据库（可编辑）", font=("Microsoft YaHei", 10),
+            ctk.CTkLabel(mgr, text="词表存于数据库", font=("Microsoft YaHei", 10),
                          text_color="#9aa4b1").pack(side="right")
         else:
             # 2026-09-15（批次 6-2，用户选定"禁用（可见但置灰）"）：标签页治理按钮
@@ -2155,7 +2168,7 @@ class MainWindow(ctk.CTk):
                 _b.pack(side="left", padx=(0, 5))
                 self._tag_gov_btns.append(_b)
             # 2026-09-14（阶段 2）：批量智能自动打标入口（另一入口在"⚙ 设置 → 标签与词表"）
-            _bb = ctk.CTkButton(mgr, text="🤖 批量打标…", width=104, height=26, fg_color="#7A4FBF",
+            _bb = ctk.CTkButton(mgr, text="🤖 批量打标…", width=104, height=26, fg_color=_C_TAG,
                                 font=("Microsoft YaHei", 11), command=self._open_batch_tag)
             _bb.pack(side="left", padx=(0, 5))
             self._tag_gov_btns.append(_bb)
@@ -2214,7 +2227,8 @@ class MainWindow(ctk.CTk):
             self._tag_limit_om.pack(side="left")
 
         # 2026-09-15（批次 6-2，用户在"同类漏网"议题上选定"一并置灰"）：三档的**写操作按钮**
-        #   统一按锁定态置灰——标签档 5 个（治理按钮）/ 热点词档 3 个 / 词表档 2 个；
+        #   统一按锁定态置灰——标签档 5 个（治理按钮）/ 热点词档 3 个 /
+        #   词表档 3 个（2026-09-17 用户需求：新增「➕ 增量导入…」后由 2 → 3）；
         #   "⬆ 导出词表…"为只读，**不**纳入置灰。此处统一调用，保证"页面重建后不漏置灰"。
         self._apply_tag_gov_lock()
 
@@ -2471,6 +2485,33 @@ class MainWindow(ctk.CTk):
         self._tag_page_no = 1
         self._render_tag_main()
 
+    def _on_tag_search_clear(self) -> None:
+        """点击标签页面搜索框右侧"✕"：**一次清空**关键词（2026-09-17 用户要求 2）。
+
+        标签档 / 热点词档共用本按钮：
+          · 只清关键词 + 立即重建**主区**（取消待执行的防抖、页码复位到第 1 页）；
+          · **不重建顶部输入框本身** ⇒ 与"逐字删空"一样，输入框不失焦、光标即回；
+          · 词表档不显示搜索框（也就没有本按钮）。
+        """
+        ent = getattr(self, "_tag_search_entry", None)
+        if ent is not None and ent.winfo_exists():
+            try:
+                ent.delete(0, "end")
+            except Exception:
+                pass
+        self._cancel_tag_search_timer()
+        if self._tag_page_view == "hot":
+            self._hotword_search = ""
+        else:
+            self._tag_page_search = ""
+        self._tag_page_no = 1
+        self._render_tag_main()
+        try:
+            if ent is not None and ent.winfo_exists():
+                ent.focus_set()
+        except Exception:
+            pass
+
     def _on_tag_view_change(self, value: str) -> None:
         # 2026-09-14（阶段 4 4-b 新增「热点词」；阶段 0.5 新增「词表」）
         old = self._tag_page_view
@@ -2713,7 +2754,7 @@ class MainWindow(ctk.CTk):
             ctk.CTkLabel(row, text=w, anchor="w", font=("Microsoft YaHei", 12),
                          text_color="#1b2733").pack(side="left", fill="x", expand=True)
             ctk.CTkButton(row, text="×", width=24, height=22, fg_color="#c9d3df",
-                          hover_color="#D9534F", text_color="#1b2733",
+                          hover_color=_C_DANGER, text_color="#1b2733",
                           font=("Microsoft YaHei", 11),
                           command=lambda s=w: self._on_hotword_delete(s)).pack(side="right")
 
@@ -2741,6 +2782,27 @@ class MainWindow(ctk.CTk):
             msg += f"（忽略 {res['invalid']} 个非法项）"
         self.toast(msg + f"，现有 {res['total']} 个")
         self._render_tag_main()
+        self._focus_hotword_entry()
+
+    def _focus_hotword_entry(self) -> None:
+        """把输入焦点交回热点词输入框（2026-09-17 用户要求 3）。
+
+        添加成功后 `_render_tag_main()` 会**重建整块主区**（输入行随之新建）⇒ 焦点丢失，
+        原先必须再用鼠标点一下才能继续输入。这里延后 10ms（等新控件完成创建/布局）把焦点放回，
+        便于"连续添加多个热点词"（回车或点「＋ 添加」均可直接接着输入）。
+        """
+        def _do():
+            ent = getattr(self, "_hotword_entry", None)
+            if ent is None or not ent.winfo_exists():
+                return
+            try:
+                ent.focus_set()
+            except Exception:
+                pass
+        try:
+            self.after(10, _do)
+        except Exception:
+            pass
 
     def _on_hotword_delete(self, name: str) -> None:
         """删除单个热点词（即时生效，无需确认：可随时再加回）。"""
@@ -2801,7 +2863,7 @@ class MainWindow(ctk.CTk):
                 return
             status.configure(
                 text=f"解析到 {len(words)} 个词条；其中新增 {len(new)} 个、已存在 {len(words) - len(new)} 个。",
-                text_color=("#2E8B57" if new else "#5b6b7c"))
+                text_color=(_C_OK if new else "#5b6b7c"))
 
         def _set_text(text: str) -> None:
             box.delete("1.0", "end")
@@ -2841,7 +2903,7 @@ class MainWindow(ctk.CTk):
             except Exception:
                 txt = ""
             if not txt.strip():
-                status.configure(text="剪贴板为空或无法读取。", text_color="#D9534F")
+                status.configure(text="剪贴板为空或无法读取。", text_color=_C_DANGER)
                 return
             cur = box.get("1.0", "end").strip()
             _set_text((cur + "\n" + txt) if cur else txt)
@@ -2849,7 +2911,7 @@ class MainWindow(ctk.CTk):
         def _apply() -> None:
             words = _parsed()
             if not words:
-                status.configure(text="没有可导入的词条。", text_color="#D9534F")
+                status.configure(text="没有可导入的词条。", text_color=_C_DANGER)
                 return
             res = self.db.add_hotwords(words)
             self.toast(f"✅ 已导入 {res['added_count']} 个热点词（跳过 {res['skipped']} 个），"
@@ -2860,7 +2922,7 @@ class MainWindow(ctk.CTk):
         def _replace() -> None:
             words = _parsed()
             if not words:
-                status.configure(text="没有可替换的词条。", text_color="#D9534F")
+                status.configure(text="没有可替换的词条。", text_color=_C_DANGER)
                 return
             if not messagebox.askyesno(
                     "替换词表",
@@ -2880,9 +2942,9 @@ class MainWindow(ctk.CTk):
                       command=_paste).pack(side="left", padx=(0, 6))
         ctk.CTkButton(btns, text="清空输入框", width=96, fg_color="#8a94a6",
                       command=lambda: _set_text("")).pack(side="left")
-        ctk.CTkButton(btns, text="替换词表", width=92, fg_color="#E08A00",
+        ctk.CTkButton(btns, text="替换词表", width=92, fg_color=_C_WARN,
                       command=_replace).pack(side="right")
-        ctk.CTkButton(btns, text="添加到词表", width=104, fg_color="#2E8B57",
+        ctk.CTkButton(btns, text="添加到词表", width=104, fg_color=_C_OK,
                       command=_apply).pack(side="right", padx=(0, 6))
         ctk.CTkButton(btns, text="取消", width=76,
                       command=win.destroy).pack(side="right", padx=(0, 6))
@@ -2949,7 +3011,7 @@ class MainWindow(ctk.CTk):
         def _do_fetch() -> None:
             urls = _read_urls()
             if not urls:
-                status.configure(text="请先填写至少一个 http/https 来源网址。", text_color="#D9534F")
+                status.configure(text="请先填写至少一个 http/https 来源网址。", text_color=_C_DANGER)
                 return
             self.db.set_hotword_sources(urls)      # 顺手记住来源，下次自动带出
             fetch_btn.configure(state="disabled", text="抓取中…")
@@ -2990,12 +3052,12 @@ class MainWindow(ctk.CTk):
             result_box.delete("1.0", "end")
             result_box.insert("1.0", "\n".join(lines) + tail)
             status.configure(text=f"抓取完成：候选 {len(uniq)} 个，可新增 {len(new)} 个。",
-                             text_color=("#2E8B57" if new else "#5b6b7c"))
+                             text_color=(_C_OK if new else "#5b6b7c"))
 
         def _apply() -> None:
             new = state.get("new") or []
             if not new:
-                status.configure(text="没有可并入的词条（请先抓取）。", text_color="#D9534F")
+                status.configure(text="没有可并入的词条（请先抓取）。", text_color=_C_DANGER)
                 return
             res = self.db.add_hotwords(new)
             self.toast(f"✅ 已并入 {res['added_count']} 个热点词（跳过 {res['skipped']} 个），"
@@ -3013,7 +3075,7 @@ class MainWindow(ctk.CTk):
                       command=lambda: self.toast(
                           f"✅ 已保存 {self.db.set_hotword_sources(_read_urls())} 个来源网址")
                       ).pack(side="left", padx=(6, 0))
-        ctk.CTkButton(btns, text="并入词表", width=96, fg_color="#2E8B57",
+        ctk.CTkButton(btns, text="并入词表", width=96, fg_color=_C_OK,
                       command=_apply).pack(side="right")
         ctk.CTkButton(btns, text="关闭", width=76,
                       command=win.destroy).pack(side="right", padx=(0, 6))
@@ -3056,12 +3118,15 @@ class MainWindow(ctk.CTk):
             data = tagger.load_dict(self.db)
             s = tagger.dict_summary(data)
         except Exception as exc:
-            ctk.CTkLabel(box, text=f"（词表读取失败：{exc}）", text_color="#D9534F",
+            ctk.CTkLabel(box, text=f"（词表读取失败：{exc}）", text_color=_C_DANGER,
                          font=("Microsoft YaHei", 11)).pack(anchor="w", padx=10, pady=10)
             return
 
         def _row(text, color="#1b2733", size=12, bold=False):
+            # 2026-09-18：出厂词表升到 19 个领域包后，单行标签清单会超出面板宽度被裁掉
+            #   ⇒ 加 `wraplength` 自动换行（面板本身可滚动，换行只增加高度、不裁切）。
             ctk.CTkLabel(box, text=text, text_color=color, justify="left", anchor="w",
+                         wraplength=max(sum(_NAV_COL_WIDTHS) - 40, 320),
                          font=("Microsoft YaHei", size, "bold" if bold else "normal")
                          ).pack(fill="x", padx=10, pady=(6, 0))
 
@@ -3080,7 +3145,8 @@ class MainWindow(ctk.CTk):
 
         _row("说明：以数据库中的词表为准（可编辑）。要新增一个大类（例如「学术」）："
              "点「⬆ 导出词表…」导出 JSON → 在 domains 里加一个「学术」块"
-             "（并在 universal.领域 与 domain_map 各加一项）→ 点「⬇ 导入词表…」导入即可。",
+             "（并在 universal.领域 与 domain_map 各加一项）→ 点「➕ 增量导入…」并入即可"
+             "（只增不删，现有标签全部保留）；要「整份照文件来」则用「⬇ 导入（替换）…」。",
              color="#9aa4b1", size=11)
 
     def _on_dict_export(self) -> None:
@@ -3128,6 +3194,63 @@ class MainWindow(ctk.CTk):
         self.toast(f"✅ 词表已导入（{res['before_tags']} → {res['tags']} 个标签），原词表已备份")
         self._render_tag_main()
 
+    def _on_dict_merge(self) -> None:
+        """**增量导入**词表（只增不删；2026-09-17 用户需求）。
+
+        与「⬇ 导入（替换）…」的分工（`tagger.merge_dict` 的口径）：
+          · 同名维度 / 同名标签 → 匹配词**并集去重**（原有在前、新词追加在后）；
+          · 新标签 / 新维度 / **新领域包** / 新判定关键词 → 自动新增；
+          · **现有内容一个不删**（本操作绝不会让词表变小），因此不必再"导出→手工并整份→导入"。
+        安全口径与"导入"完全一致：**先只读校验**（不合法直接拒绝、不写库）→ 预览将新增多少 →
+        二次确认 → 写库前自动备份当前词表。
+        """
+        if not self._assert_unlocked("增量导入词表"):
+            return
+        path = filedialog.askopenfilename(
+            title="增量导入词表（只增不删）", parent=self,
+            filetypes=[("JSON 文件", "*.json"), ("全部文件", "*.*")])
+        if not path:
+            return
+        read = tagger.read_dict_file(path)      # 先只读校验，避免"确认了才发现格式错"
+        if not read.get("ok"):
+            detail = "\n".join(read.get("errors") or []) or str(read.get("error"))
+            messagebox.showwarning("词表文件不合法",
+                                   f"{detail}\n\n未做任何修改。", parent=self)
+            return
+        try:
+            pre = tagger.merge_preview(tagger.load_dict(self.db), read["data"])
+        except Exception as exc:
+            messagebox.showwarning("无法合并", str(exc), parent=self)
+            return
+        add_n = pre["added_labels"] + pre["added_words"] + pre["added_map_words"]
+        if add_n <= 0:
+            # 该文件没有任何"当前词表里没有"的内容 → 明确告知并停止（不写库、不产生备份）
+            messagebox.showinfo(
+                "无可新增内容",
+                f"该文件的内容，当前词表里都已经有了（现有 {pre['tags_before']} 个标签）。\n\n"
+                "未做任何修改。", parent=self)
+            return
+        if not messagebox.askyesno(
+                "增量导入词表（只增不删）",
+                f"将把该文件「并入」当前词表 —— 只增不删：\n\n"
+                f"· 现有标签：{pre['tags_before']} 个（全部保留）\n"
+                f"· 将新增标签：{pre['added_labels']} 个\n"
+                f"· 将新增维度：{pre['added_dims']} 个 ｜ 新增领域包：{pre['added_domains']} 个\n"
+                f"· 将新增匹配词：{pre['added_words']} 个"
+                f"（另有领域判定关键词 {pre['added_map_words']} 个）\n"
+                f"· 合并后标签总数：{pre['tags_after']} 个\n\n"
+                f"写库前会自动备份当前词表。确定吗？", parent=self):
+            return
+        res = tagger.merge_dict(self.db, path)
+        if not res.get("ok"):
+            detail = "\n".join(res.get("errors") or []) or str(res.get("error"))
+            messagebox.showwarning("增量导入失败", detail, parent=self)
+            return
+        self.toast(f"✅ 已增量并入（{res['tags_before']} → {res['tags_after']} 个标签；"
+                   f"新增标签 {res['added_labels']} 个、匹配词 {res['added_words']} 个），"
+                   f"原词表已备份")
+        self._render_tag_main()
+
     def _on_dict_reset(self) -> None:
         """恢复出厂词表（出厂种子见 app/tagger_dict.py；恢复前自动备份当前词表）。"""
         # 2026-09-15（批次 6-3b）：统一守卫（本入口原先仅靠按钮置灰，方法内无判断）
@@ -3160,6 +3283,68 @@ class MainWindow(ctk.CTk):
             self._open_tag_page()
         else:
             self._refresh_tag_page()
+
+    def _open_auto_words_manager(self) -> None:
+        """「🧠 自动取词词库…」入口（2026-09-16 批次 12-3，供设置对话框调用）。
+
+        打开独立的「智能自动取词词库」管理对话框（查看 / 审核 / 提升 / 清理）。
+        本对话框位于主窗口之上，故先释放设置窗口的模态抓取。
+        """
+        from .auto_words_dialog import AutoWordsDialog
+        try:
+            _dlg = AutoWordsDialog(self, self.db)
+        except Exception as exc:
+            self.toast("⚠ 打开自动取词词库失败：%s" % exc)
+            return
+        return _dlg
+
+    def _open_tag_cleanup(self) -> None:
+        """「🧹 清理垃圾标签…」入口（2026-09-17 新增，供设置对话框调用）。
+
+        打开「清理垃圾标签」对话框：先**只读扫描**并列出清单（A 类将删除 / B 类将重命名），
+        由用户确认后执行；执行前自动整库备份（见 app/tag_cleanup.py）。
+        与仓库根目录 CLI 工具 `clean_junk_tags.py` 共用同一数据层，判定口径唯一。
+        """
+        from .tag_cleanup_dialog import TagCleanupDialog
+        try:
+            _dlg = TagCleanupDialog(self, self.db)
+        except Exception as exc:
+            self.toast("⚠ 打开清理垃圾标签失败：%s" % exc)
+            return
+        return _dlg
+
+    def _set_window_icon(self) -> None:
+        """设置运行期窗口 / 任务栏图标（2026-09-17，需求 U-1）。
+
+        路径与托盘图标一致（`config.resource_dir()/Icons/PSicon.png`）：打包态从 PyInstaller
+        解压目录读、开发态从项目 `Icons/` 读。用 `iconphoto`（PNG，跨平台安全）并**保持引用**
+        （避免被 GC 回收导致图标消失）。**任何失败都静默忽略**——纯外观，不影响功能。
+        """
+        try:
+            _p = os.path.join(config.resource_dir(), "Icons", "PSicon.png")
+            if not os.path.isfile(_p):
+                return
+            from PIL import Image, ImageTk
+            _img = Image.open(_p)
+            _img.thumbnail((64, 64))
+            self._icon_photo = ImageTk.PhotoImage(_img)   # 保持引用，勿删
+            self.iconphoto(True, self._icon_photo)
+        except Exception:
+            pass
+
+    def apply_hotkey_combo(self, combo: str) -> bool:
+        """按新的热键组合**立即重新注册**全局热键（2026-09-17，需求 S-2）。返回是否成功。
+
+        供「设置 → 数据与备份 → 全局热键」在保存时调用：先释放旧热键，再按新组合注册。
+        注册失败（被占用 / 无权限 / 杀软拦截）返回 False，由调用方提示；**不影响其它功能**。
+        """
+        from .. import hotkey
+        try:
+            hotkey.unregister_all()
+        except Exception:
+            pass
+        return hotkey.register_global_hotkey(
+            lambda: self.after(0, self.show_and_focus_search), combo)
 
     def _open_batch_tag(self) -> None:
         """打开「🤖 批量智能自动打标」对话框（2026-09-14，阶段 2）。
@@ -3352,7 +3537,7 @@ class MainWindow(ctk.CTk):
         2026-08-29：抽取到公共模块 project_chooser 复用（冗余优化）。
         """
         if not self.db.list_projects():
-            self.toast("暂无项目类别", color="#D9534F")
+            self.toast("暂无项目类别", color=_C_DANGER)
             return None
         from .project_chooser import choose_project
         return choose_project(self, self.db, title, message, include_unassigned)
@@ -3380,7 +3565,7 @@ class MainWindow(ctk.CTk):
         """
         self._clear_frame(self.l0_frame)
         self._clear_nav_btns("l0")
-        ctk.CTkButton(self.l0_frame, text="➕ 新增根目录", height=30, **_ADD_BTN,
+        ctk.CTkButton(self.l0_frame, text="✚ 新增根目录", height=30, **_ADD_BTN,
                       state=("disabled" if (self._lock_on
                                             or (self._view is None and self._cur_project_id is None))
                              else "normal"),
@@ -3456,7 +3641,7 @@ class MainWindow(ctk.CTk):
         if self._lock_on:  # 2026-08-21（第005条）：锁定时禁止新增
             return
         if self._cur_domain_id is None:
-            self.toast("请先选择根目录", color="#D9534F")
+            self.toast("请先选择根目录", color=_C_DANGER)
             return
         name = simpledialog.askstring("新增一级分类", "请输入一级分类名称：", parent=self)
         if name and name.strip():
@@ -3471,7 +3656,7 @@ class MainWindow(ctk.CTk):
         """
         self._clear_frame(self.l1_frame)
         self._clear_nav_btns("l1")
-        ctk.CTkButton(self.l1_frame, text="➕ 新增一级分类", height=28, **_ADD_BTN,
+        ctk.CTkButton(self.l1_frame, text="✚ 新增一级分类", height=28, **_ADD_BTN,
                       state="disabled" if (self._lock_on or self._cur_domain_id is None) else "normal",
                       # 2026-08-21（第005条）：锁定时禁用新增；2026-09-07：未选根目录时灰显但保留可见
                       command=self._add_l1).pack(fill="x", padx=6, pady=2)
@@ -3507,7 +3692,7 @@ class MainWindow(ctk.CTk):
         if self._lock_on:  # 2026-08-21（第005条）：锁定时禁止新增
             return
         if self._cur_cat_id is None:
-            self.toast("请先在左侧选中分类", color="#D9534F")
+            self.toast("请先在左侧选中分类", color=_C_DANGER)
             return
         name = simpledialog.askstring("新增二级分类", "请输入二级分类名称：", parent=self)
         if name and name.strip():
@@ -3518,7 +3703,7 @@ class MainWindow(ctk.CTk):
         self._clear_frame(self.l2_frame)
         self._clear_nav_btns("l2")
         parent_id = self._l2_parent_id()
-        ctk.CTkButton(self.l2_frame, text="➕ 新增二级分类", height=28, **_ADD_BTN,
+        ctk.CTkButton(self.l2_frame, text="✚ 新增二级分类", height=28, **_ADD_BTN,
                       state="disabled" if (self._lock_on or self._cur_cat_id is None) else "normal",
                       # 2026-08-21（第005条）：锁定时禁用新增；2026-09-07：未选分类时灰显但保留可见
                       command=self._add_l2).pack(fill="x", padx=6, pady=2)
@@ -3562,7 +3747,8 @@ class MainWindow(ctk.CTk):
         if self.db.category_has_children(cat_id):
             self._refresh_l2()          # 有子级：重建二级列展示子分类
             self._view = ("cat", cat_id)
-            self._render_entries(self.db.list_entries(cat_id), "条目")
+            self._render_entries(
+                self.db.list_entries(cat_id, order_by=self._entry_sort), "条目")
             self._apply_nav_highlight()
         else:
             cat = self.db.get_category(cat_id)
@@ -3571,7 +3757,8 @@ class MainWindow(ctk.CTk):
                 # 否则从其他一级分类移入时，上一分类的二级按钮不会消失、造成误认。
                 self._refresh_l2()
             self._view = ("cat", cat_id)
-            self._render_entries(self.db.list_entries(cat_id), "条目")
+            self._render_entries(
+                self.db.list_entries(cat_id, order_by=self._entry_sort), "条目")
             self._apply_nav_highlight()  # 原地更新高亮，不重建按钮，杜绝闪烁
 
     # ------------------------------------------------------------------ #
@@ -3700,6 +3887,26 @@ class MainWindow(ctk.CTk):
         except Exception:
             pass
 
+    def _on_search_clear(self) -> None:
+        """点击搜索框右侧"✕"：**一次清空**全部输入（2026-09-17 用户要求 1）。
+
+        原先清空只能逐字退格删除，长关键词很费事。此处与"逐字删空"走同一条通路
+        （`_on_search_key()`：清空后自动回到**搜索前的浏览视图**），并保持输入焦点，
+        便于立刻输入新的关键词。空框时点击无副作用。
+        """
+        ent = getattr(self, "search_entry", None)
+        if ent is not None and ent.winfo_exists():
+            try:
+                ent.delete(0, "end")
+            except Exception:
+                pass
+        self._on_search_key()      # 内部已取消待执行的防抖定时器
+        try:
+            if ent is not None and ent.winfo_exists():
+                ent.focus_set()
+        except Exception:
+            pass
+
     def _restore_view(self) -> None:
         """重新渲染当前浏览视图（搜索清空/切换视图/保存后刷新）"""
         if self._view is None:
@@ -3715,7 +3922,8 @@ class MainWindow(ctk.CTk):
             self._refresh_l1()
             self._render_entries([], "条目")
         elif kind == "cat":
-            self._render_entries(self.db.list_entries(ref), "条目")
+            self._render_entries(
+                self.db.list_entries(ref, order_by=self._entry_sort), "条目")
         elif kind == "uncat":
             self._render_entries(self.db.list_uncategorized(), "📂 未分类")
         elif kind == "fav":
@@ -3820,7 +4028,7 @@ class MainWindow(ctk.CTk):
         # 2026-09-07：条目区"新增条目"主按钮——绿色白字加高加粗，突出"要新增就点这里"
         self._add_entry_btn = ctk.CTkButton(
             self.entry_frame, text="＋ 新增条目", height=36,
-            fg_color="#2E8B57", hover_color="#256e46", text_color="white",
+            fg_color=_C_OK, hover_color="#256e46", text_color="white",
             font=("Microsoft YaHei", 15, "bold"),
             state="normal" if self._add_available() else "disabled",
             command=self._start_new_entry)
@@ -3992,7 +4200,7 @@ class MainWindow(ctk.CTk):
         # 2026-09-13（1-C-4b）：可选显示标签（默认关）
         _short, _full = self._entry_tags_display(e["id"])
         if _short:
-            _tl = ctk.CTkLabel(card, text="🏷 " + _short, text_color="#7A4FBF",
+            _tl = ctk.CTkLabel(card, text="🏷 " + _short, text_color=_C_TAG,
                                font=("Microsoft YaHei", 10), anchor="w")
             _tl.pack(fill="x", padx=8, pady=(1, 0))
             _FieldTooltip(_tl, "标签：" + _full)
@@ -4014,7 +4222,7 @@ class MainWindow(ctk.CTk):
                          font=ui_appearance.font("entry_rows", _ENTRY_NAME_FONT_LIST,
                                                  self._ui_appearance),
                          anchor="w").pack(anchor="w")
-            _tl = ctk.CTkLabel(_left, text="🏷 " + _short, text_color="#7A4FBF",
+            _tl = ctk.CTkLabel(_left, text="🏷 " + _short, text_color=_C_TAG,
                                font=("Microsoft YaHei", 10), anchor="w")
             _tl.pack(anchor="w")
             _FieldTooltip(_tl, "标签：" + _full)
@@ -4250,7 +4458,15 @@ class MainWindow(ctk.CTk):
         max_len = max((len(n) for n in names), default=4)
         width = max(min(max_len + 4, 60), 24)
         # 2026-09-12（用户要求）：最小高度固定为可显示 25 行文本（恒为 25 行高，条目更多时滚动）
-        rows = min(max(len(names), _ENTRY_OV_MIN_ROWS), _ENTRY_OV_MAX_ROWS)
+        # 2026-09-16（批次 11-1，用户反馈 4）：再受"屏幕工作区可容纳行数"封顶——
+        #   小屏（如 768 高）上原恒 25 行会过高，导致浮层下边被任务栏/屏幕下边遮挡。
+        _wl, _wt, _wr, _wb = work_area(popup)
+        try:
+            _line_px = tkfont.Font(root=popup, font=name_font).metrics("linespace") or 22
+        except Exception:
+            _line_px = 22
+        _fit_rows = max(6, (_wb - _wt - 80) // max(int(_line_px), 1))   # 80 ≈ 标题栏 + 上下边距
+        rows = min(max(len(names), _ENTRY_OV_MIN_ROWS), _ENTRY_OV_MAX_ROWS, _fit_rows)
         lb = tk.Listbox(body, font=name_font, activestyle="none",
                         width=width, height=rows,
                         bg=_ov_bg, fg=_ov_fg,   # 2026-09-11 09:27（用户要求 3）：显式配色
@@ -4270,16 +4486,20 @@ class MainWindow(ctk.CTk):
         # 通过显式指定宽度实现：宽度增加后，下方 x 定位仍以"条目列左侧 - w - 4"计算，
         # 故浮层右边与条目列的相对位置不变，增加的部分全部向左扩展。
         w += _ENTRY_OV_EXTRA_W
-        sw, sh = popup.winfo_screenwidth(), popup.winfo_screenheight()
+        # 2026-09-16（批次 11-1，用户反馈 4）：夹紧改用"屏幕工作区"（已扣任务栏），
+        #   原先用整屏高度 ⇒ 浮窗底边落进任务栏被遮挡。
+        _wl, _wt, _wr, _wb = work_area(popup)
         # 定位：条目列【左侧】（右侧是详情区，浮层不应盖住它）；超出屏幕左侧则改放右侧
         x = self.entry_frame.winfo_rootx() - w - 4
-        if x < 8:
+        if x < _wl + 8:
             x = self.entry_frame.winfo_rootx() + self.entry_frame.winfo_width() + 4
-        if x + w > sw:
-            x = max(sw - w - 8, 0)
+        if x + w > _wr:
+            x = max(_wr - w - 8, _wl + 8)
         y = self._entry_ov_y or self.entry_frame.winfo_rooty()
-        if y + h > sh:
-            y = max(sh - h - 8, 0)
+        if y + h > _wb - 8:
+            y = max(_wb - h - 8, _wt + 8)
+        if y < _wt + 8:
+            y = _wt + 8
         popup.wm_geometry(f"{w}x{h}+{x}+{y}")  # 2026-09-11 08:52（用户要求 1）：显式宽度以落实加宽
         self._entry_ov_popup = popup
         self._entry_ov_listbox = lb   # 2026-09-10（用户要求 4-一）：滚动同步对象
@@ -4427,8 +4647,10 @@ class MainWindow(ctk.CTk):
             line_px = tkfont.Font(root=popup, font=tip_font).metrics("linespace") or 20
         except Exception:
             line_px = 22
-        sh = popup.winfo_screenheight()
-        fit_lines = max(6, (sh - 100) // max(line_px, 1))   # 小屏保护：不超过屏幕可容纳行数
+        # 2026-09-16（批次 11-1，用户反馈 4）：改用"屏幕工作区"（已扣任务栏）计算可容纳行数，
+        #   原先按整屏算 ⇒ 浮窗过高时底边会落进任务栏被遮挡。
+        _wl, _wt, _wr, _wb = work_area(popup)
+        fit_lines = max(6, (_wb - _wt - 100) // max(line_px, 1))   # 小屏保护：不超过工作区可容纳行数
         lines = (text or "").count("\n") + 1
         show_lines = min(max(lines, _TIP_MIN_LINES), _TIP_MAX_LINES, fit_lines)
         tip = tk.Text(bd, font=tip_font, wrap="word", height=show_lines,
@@ -4453,13 +4675,16 @@ class MainWindow(ctk.CTk):
             right = self.detail_root.winfo_rootx() - _TIP_GAP
         except Exception:
             right = widget.winfo_rootx() - _TIP_GAP
-        w = max(min(right - _TIP_MARGIN, _TIP_MAX_W), 120)
-        x = max(right - w, _TIP_MARGIN)
+        # 2026-09-16（批次 11-1，用户反馈 4）：夹紧改用"屏幕工作区"（已扣任务栏）——
+        #   原先用整屏高度，浮窗底边最多停到"整屏高 - 8"，正好落进任务栏被遮挡约 40px。
+        _avail = max(right - _wl - _TIP_MARGIN, 120)
+        w = max(min(_avail, _TIP_MAX_W), 120)
+        x = max(right - w, _wl + _TIP_MARGIN)
         y = widget.winfo_rooty()          # 顶部与被悬停字段顶部对齐（便于逐行对照）
-        if y + h > sh - _TIP_MARGIN:
-            y = max(sh - h - _TIP_MARGIN, _TIP_MARGIN)
-        if y < _TIP_MARGIN:
-            y = _TIP_MARGIN
+        if y + h > _wb - _TIP_MARGIN:
+            y = max(_wb - h - _TIP_MARGIN, _wt + _TIP_MARGIN)
+        if y < _wt + _TIP_MARGIN:
+            y = _wt + _TIP_MARGIN
         popup.wm_geometry(f"{w}x{h}+{x}+{y}")
         self._tip_popup = popup
         self._tip_text = tip
@@ -4578,6 +4803,30 @@ class MainWindow(ctk.CTk):
         except Exception:
             return {}
 
+    # 2026-09-16（批次 13）：详情区区块按 sort_order 排序后的列表。
+    #   返回 [(field_key, display_name, field_type), ...]，排除 ① name（固定在最前）。
+    #   读库异常时返回内置默认顺序（_FIELDS + 虚拟区块），保证界面可渲染。
+    def _ordered_detail_blocks(self) -> list:
+        try:
+            defs = self.db.list_field_defs()
+        except Exception:
+            defs = []
+        if not defs:
+            # 兜底：按内置默认顺序
+            fallback = [("_location", "🧭 位置", "virtual"),
+                        ("_time", "🕒 时间", "virtual"),
+                        ("_tags", "🏷 标签", "virtual")]
+            fallback += [(k, l, t) for l, k, t in
+                         [("② 介绍", "intro", "textarea"), ("③ 溯源", "origin", "textarea"),
+                          ("④ 核心特征", "features", "textarea"), ("⑤ 应用场景", "scenes", "textarea"),
+                          ("⑥ 代表作", "works", "textarea"), ("⑦ 代表高清配图", "image_desc", "textarea"),
+                          ("⑧ 中文版提示词", "prompt_cn", "textarea"),
+                          ("⑨ 英文版提示词", "prompt_en", "textarea"),
+                          ("⑩ 图像获取方案", "image_plan", "link")]]
+            return fallback
+        return [(d["field_key"], d["display_name"], d.get("field_type") or "text")
+                for d in defs if d["field_key"] != "name"]
+
     # ---- 自定义字段渲染与保存（2026-09-13，1-A-5 第 2 步）-------------- #
     def _custom_field_defs(self) -> list:
         """自定义字段定义列表（is_builtin=0），按 field_defs 顺序；读库异常返回空列表。"""
@@ -4589,53 +4838,54 @@ class MainWindow(ctk.CTk):
     def _add_custom_field_blocks(self, values: Optional[dict] = None) -> None:
         """在详情滚动区**末尾**渲染全部自定义字段块（置于 10 个内置区块之后）。
 
-        渲染方式（2026-09-14 审核补充 P6：按 **字段类型** 分发）：
-          - `text`（1 行）/ `textarea`（6 行）/ `link`（文本框 + "打开"）：沿用 `CTkTextbox`，
-            与内置 ②~⑩ 相同卡片样式与读写方式（保存 / 浏览只读 / 撤销重做 / 悬停浮窗 / 滚轮分流自动复用）；
-          - `list`：专用选择器（见 `_build_list_field_block`）；
-          - `number / date / bool / tag / file / audio / image`：专用控件（见 `_build_typed_field_block`），
-            取值经 `_extra_field_getters` 统一回读；`number`/`date` 保存时校验格式。
-        values：{field_key: 文本}；None/缺省视为空（新增态）。
+        2026-09-16（批次 13）：详情区已改为"按 sort_order 统一渲染"，本方法仅用于
+        「新增条目」态（`_build_new_entry_editor`）等仍需批量渲染自定义字段的场景。
+        详情态由 `_show_detail` 循环调用 `_render_custom_field` 逐个渲染。
         """
         values = values or {}
         for d in self._custom_field_defs():
-            key = d["field_key"]
-            label = d["display_name"]
-            ftype = d.get("field_type") or "text"
-            val = values.get(key, "") or ""
-            block, label_c, box_bg, box_border = self._begin_field_block(key)
-            ctk.CTkLabel(block, text=label, text_color=label_c,
-                         font=("Microsoft YaHei", 12, "bold"), anchor="w"
-                         ).pack(fill="x", padx=12, pady=(8, 2))
-            if ftype == "list":
-                # 2026-09-13（第 3 期 3-a-2）：列表框改用**专用控件**（候选值选择器），
-                # 不再当普通文本框；候选值来自字段"数据源配置"。
-                self._build_list_field_block(block, key, val)
-                continue
-            if ftype in ("text", "textarea", "link"):
-                rows = 1 if ftype == "text" else (6 if ftype == "textarea" else 3)
-                if ftype == "link":
-                    row = ctk.CTkFrame(block, fg_color="transparent")
-                    row.pack(fill="x", padx=6, pady=(0, 6))
-                    box = ctk.CTkTextbox(row, height=_rows_to_px(rows), fg_color=box_bg,
-                                         border_width=1, border_color=box_border, corner_radius=6)
-                    box.pack(side="left", fill="x", expand=True)
-                    if val.strip().startswith(("http://", "https://")):
-                        ctk.CTkButton(row, text="打开", width=52, height=28,
-                                      command=lambda b=box: self._open_image_plan(b)
-                                      ).pack(side="right", padx=(6, 0))
-                else:
-                    box = ctk.CTkTextbox(block, height=_rows_to_px(rows), fg_color=box_bg,
-                                         border_width=1, border_color=box_border,
-                                         corner_radius=6)
-                    box.pack(fill="x", padx=6, pady=(0, 6))
-                box.insert("1.0", val)
-                box.bind("<KeyRelease>", self._mark_dirty)
-                self._detail_boxes[key] = box
-                self._attach_field_tip(box, val or "（无内容）", box._textbox, label)
-                continue
-            # 其余类型：专用控件（P6）
-            self._build_typed_field_block(block, key, ftype, val)
+            self._render_custom_field(d["field_key"], d["display_name"],
+                                      d.get("field_type") or "text",
+                                      values.get(d["field_key"], "") or "")
+
+    # 2026-09-16（批次 13）：渲染**单个**自定义字段（从 _add_custom_field_blocks 抽取出）。
+    #   渲染方式（2026-09-14 审核补充 P6：按 **字段类型** 分发）：
+    #     - text/textarea/link：CTkTextbox；
+    #     - list：专用选择器；
+    #     - number/date/bool/tag/file/audio/image：专用控件。
+    def _render_custom_field(self, key: str, label: str, ftype: str, val: str) -> None:
+        block, label_c, box_bg, box_border = self._begin_field_block(key)
+        ctk.CTkLabel(block, text=label, text_color=label_c,
+                     font=("Microsoft YaHei", 12, "bold"), anchor="w"
+                     ).pack(fill="x", padx=12, pady=(8, 2))
+        if ftype == "list":
+            # 2026-09-13（第 3 期 3-a-2）：列表框改用**专用控件**（候选值选择器）
+            self._build_list_field_block(block, key, val)
+            return
+        if ftype in ("text", "textarea", "link"):
+            rows = 1 if ftype == "text" else (6 if ftype == "textarea" else 3)
+            if ftype == "link":
+                row = ctk.CTkFrame(block, fg_color="transparent")
+                row.pack(fill="x", padx=6, pady=(0, 6))
+                box = ctk.CTkTextbox(row, height=_rows_to_px(rows), fg_color=box_bg,
+                                     border_width=1, border_color=box_border, corner_radius=6)
+                box.pack(side="left", fill="x", expand=True)
+                if val.strip().startswith(("http://", "https://")):
+                    ctk.CTkButton(row, text="打开", width=52, height=28,
+                                  command=lambda b=box: self._open_image_plan(b)
+                                  ).pack(side="right", padx=(6, 0))
+            else:
+                box = ctk.CTkTextbox(block, height=_rows_to_px(rows), fg_color=box_bg,
+                                     border_width=1, border_color=box_border,
+                                     corner_radius=6)
+                box.pack(fill="x", padx=6, pady=(0, 6))
+            box.insert("1.0", val)
+            box.bind("<KeyRelease>", self._mark_dirty)
+            self._detail_boxes[key] = box
+            self._attach_field_tip(box, val or "（无内容）", _ui_common.textbox_internal(box), label)
+            return
+        # 其余类型：专用控件（P6）
+        self._build_typed_field_block(block, key, ftype, val)
 
     # ---- 专用类型字段（P6：number/date/bool/tag/file/audio/image）-------- #
     _EXTRA_TYPE_HINTS = {
@@ -5068,47 +5318,64 @@ class MainWindow(ctk.CTk):
                 names.append(n)
         self._tag_names = names
         self._tag_chip_btns = []
+        # 2026-09-16（批次 14）：标记"本次详情/新增表单确实渲染过标签区块"，
+        #   供 _save_entry_tags() 判断是否可以安全写库（被隐藏时不渲染 ⇒ 不写库）。
+        self._tag_block_rendered = True
 
         block = ctk.CTkFrame(self.detail_scroll, fg_color="#f7f1fe",
                              corner_radius=10, border_width=1, border_color="#e0d0f2")
         block.pack(fill="x", padx=10, pady=(10, 2))
-        ctk.CTkLabel(block, text="🏷 标签", text_color="#7A4FBF",
+        ctk.CTkLabel(block, text="🏷 标签", text_color=_C_TAG,
                      font=("Microsoft YaHei", 12, "bold"), anchor="w"
                      ).pack(fill="x", padx=12, pady=(8, 2))
-        # 2026-09-14（阶段 3）：自动推荐标签（结果**并入**已选标签＝默认全选；点 × 去掉不要的）
+        # 2026-09-16（批次 16，用户要求 1）：按「新建对话框」的布局把 4 个控件合并到**同一行**——
+        #   「✨ 推荐标签」+ 标签输入框 + 「＋ 添加」+ 「📋 选择…」（原来"推荐+说明"一行、
+        #   "输入框+添加+选择"另起一行 ⇒ 现省去空出的那一行，本区块高度随之减少）；
+        #   原"推荐标签"右侧的文字说明改为**按钮浮动提示**（悬停「✨ 推荐标签」即显示）。
         rec = ctk.CTkFrame(block, fg_color="transparent")
-        rec.pack(fill="x", padx=10, pady=(0, 4))
+        rec.pack(fill="x", padx=10, pady=(0, 3))
         self._rec_btn = ctk.CTkButton(rec, text="✨ 推荐标签", width=104, height=24,
-                                      fg_color="#7A4FBF", font=("Microsoft YaHei", 11),
+                                      fg_color=_C_TAG, font=("Microsoft YaHei", 11),
                                       command=self._suggest_tags)
         self._rec_btn.pack(side="left")
-        ctk.CTkLabel(rec, text="按名称/提示词自动推荐，结果直接加入下方标签（点 × 可去掉）",
-                     text_color="#9aa4b1", font=("Microsoft YaHei", 10)
-                     ).pack(side="left", padx=(6, 0))
-        # 已选 chip 行
-        self._tag_chips_row = ctk.CTkFrame(block, fg_color="transparent")
-        self._tag_chips_row.pack(fill="x", padx=10, pady=(0, 4))
-        # 输入行
-        row = ctk.CTkFrame(block, fg_color="transparent")
-        row.pack(fill="x", padx=10, pady=(0, 4))
-        self._tag_entry = ctk.CTkEntry(row, placeholder_text="输入标签，回车新建（自动补全）")
-        self._tag_entry.pack(side="left", fill="x", expand=True)
+        self._attach_tag_hint_tip()   # 说明文字 → 浮动提示（原为按钮右侧的一行长文字）
+        self._tag_entry = ctk.CTkEntry(rec, placeholder_text="输入标签，回车新建（自动补全）")
+        self._tag_entry.pack(side="left", fill="x", expand=True, padx=(6, 0))
         self._tag_entry.bind("<Return>", lambda _e=None: self._add_tag_from_entry())
         self._tag_entry.bind("<KeyRelease>", lambda _e=None: self._refresh_tag_suggest())
-        self._tag_add_btn = ctk.CTkButton(row, text="＋ 添加", width=76,
+        self._tag_add_btn = ctk.CTkButton(rec, text="＋ 添加", width=76, height=24,
                                           command=self._add_tag_from_entry)
         self._tag_add_btn.pack(side="left", padx=(6, 0))
         # 2026-09-15 18:30（批次 9，用户确认 C18 路线①）：新增「📋 选择…」——从
         #   "库中已用标签 ∪ 词表 ∪ 热点词"候选池中**多选/新建**后并入已选（复用 _ListPickDialog）。
-        self._tag_pick_btn = ctk.CTkButton(row, text="📋 选择…", width=84, height=28,
+        self._tag_pick_btn = ctk.CTkButton(rec, text="📋 选择…", width=84, height=24,
                                            fg_color="#5B7CC7",
                                            command=self._pick_tags_dialog)
         self._tag_pick_btn.pack(side="left", padx=(6, 0))
+        # 已选 chip 行（2026-09-16 批次 16：下边距 4 → 2，配合整块高度压缩）
+        self._tag_chips_row = ctk.CTkFrame(block, fg_color="transparent")
+        self._tag_chips_row.pack(fill="x", padx=10, pady=(0, 2))
         # 自动补全建议行（2026-09-13 用户要求：**按内容自动大小**——无匹配时整行不占位，
         # 避免输入框下方留出一大片无作用空白；有匹配时才 pack 出来）
         self._tag_sugg_row = ctk.CTkFrame(block, fg_color="transparent", height=1)
 
         self._refresh_tag_chips()
+
+    def _attach_tag_hint_tip(self) -> None:
+        """给「✨ 推荐标签」按钮挂浮动提示（2026-09-16 批次 16，用户要求 1）。
+
+        原为按钮右侧一行长文字（"按名称/提示词自动推荐，结果直接加入下方标签（点 × 可去掉）"），
+        为给"输入框 + 添加 + 选择"腾出同一行而改为悬停提示；**文案不变**，信息不丢失。
+        与 🔧 字段管理按钮同一做法：用 `_attach_tooltip` 覆盖按钮全部可命中区域。
+        """
+        btn = getattr(self, "_rec_btn", None)
+        if btn is None:
+            return
+        try:
+            _attach_tooltip(btn, "按名称 / 提示词自动推荐标签；"
+                                 "推荐结果直接加入下方标签（点 × 可去掉）")
+        except Exception:                                    # noqa: BLE001
+            pass       # 提示失败不影响主流程（推荐按钮本身照常可用）
 
     def _refresh_tag_chips(self) -> None:
         """重绘已选标签 chip 行（浏览态下"×"按钮置灰不可点）"""
@@ -5238,6 +5505,10 @@ class MainWindow(ctk.CTk):
             return
         if entry_id is None:
             return
+        # 2026-09-16（批次 14，安全修复）：🏷 标签区块本次未渲染（被手动隐藏）时**不写库**，
+        #   保留条目的原有标签；否则会用上一次渲染残留的 _tag_names 覆盖（清空或串写）。
+        if not getattr(self, "_tag_block_rendered", False):
+            return
         self.db.set_entry_tags(entry_id, self._tag_names)
 
     # ------------------------------------------------------------------ #
@@ -5267,16 +5538,20 @@ class MainWindow(ctk.CTk):
         except Exception:
             return []
 
-    def _suggest_tags(self) -> None:
-        """✨ 自动推荐标签：按当前表单内容推荐 1~3 个标签并**并入**已选标签。"""
+    def _suggest_tags(self, from_auto: bool = False) -> None:
+        """✨ 自动推荐标签：按当前表单内容推荐 1~3 个标签并**并入**已选标签。
+
+        from_auto（2026-09-16 批次 12-3）：是否来自 T2 防抖自动推荐——用于「智能自动取词词库」
+        的采集范围判断（默认只采集"用户主动点按钮"路径，设置里可放开 T2）。
+        """
         if (self._browse_mode and not self._adding_new
                 and self._detail_entry_id is not None):
             self.toast("ℹ 浏览态为只读，请点「✎ 编辑」后再推荐标签")
             return
-        try:
-            dict_data = tagger.load_dict(self.db)
-        except Exception:
-            self.toast("⚠ 词表读取失败，无法推荐标签")
+        # 2026-09-16（批次 14）：🏷 标签区块被隐藏时不推荐——结果无处显示、也不会被保存，
+        #   给出明确提示，避免"提示已推荐但看不到任何变化"的困惑。
+        if not getattr(self, "_tag_block_rendered", False):
+            self.toast("ℹ 🏷 标签区块已隐藏；请在「字段管理」中改回「显示」后再推荐标签")
             return
         texts = {k: self._box_text(k) for k in
                  ("name", "intro", "features", "image_desc", "prompt_cn", "prompt_en")}
@@ -5289,25 +5564,22 @@ class MainWindow(ctk.CTk):
         if not any((texts.get(k) or "").strip() for k in texts):
             self.toast("⚠ 请先填写名称或提示词，再点「✨ 推荐标签」")
             return
+        # 2026-09-17（审核 R-2）：把"读词表 → 调引擎 → 取词采集 → 来源标注"统一交给
+        #   `tagger.run_ui_suggest`（与「快速新建」窗口**共用同一实现**，改一次两处生效）。
+        #   此处只保留本窗口特有的东西：守卫、toast 提示、chip 刷新与"置脏"。
+        #   口径不变：UI 单条推荐仍启用"全词典兜底 + 字段取词"，并读取用户配置的
+        #   推荐策略顺序与热点词清单（详见 tagger.run_ui_suggest 的说明）。
         try:
-            # 2026-09-15 18:15（批次 8-B，用户确认）：**UI 单条推荐**启用"全词典兜底"
-            #   （判不出领域时对全部领域包打分）；批量打标/离线打标不传该参数 ⇒ 行为不变。
-            res = tagger_engine.suggest(texts, dict_data, self._suggest_ctx_names(),
-                                        fallback_global=True)
+            _r = tagger.run_ui_suggest(self.db, texts, self._suggest_ctx_names(),
+                                       from_auto=from_auto,
+                                       collect=self._collect_auto_words)
         except Exception as exc:
             self.toast(f"⚠ 推荐失败：{exc}")
             return
-        names = tagger_engine.tag_names(res)
-        _note = ""
-        if names:
-            # 2026-09-15 19:30（批次 10）：来源标注——取词优先于词典兜底显示
-            _sources = {t.get("source") for t in res.get("tags") or []}
-            if "标题/提示词" in _sources:
-                _note = "（来源：标题/提示词）"
-            elif "词典兜底" in _sources:
-                _note = "（来源：词典兜底）"
+        names = _r["names"]
+        _auto_note, _note = _r["auto_note"], _r["source_note"]
         if not names:
-            self.toast("⚠ 未推荐出标签（可补充名称/提示词后再试）")
+            self.toast("⚠ 未推荐出标签（可补充名称/提示词后再试）%s" % _auto_note)
             return
         added = []
         for n in names:
@@ -5317,9 +5589,39 @@ class MainWindow(ctk.CTk):
         if added:
             self._mark_dirty()
         self._refresh_tag_chips()
-        self.toast("✨ 已推荐 %d 个标签%s%s" % (
+        self.toast("✨ 已推荐 %d 个标签%s%s%s" % (
             len(names), _note,
-            ("（新增 %d 个）" % len(added)) if added else "（均已存在）"))
+            ("（新增 %d 个）" % len(added)) if added else "（均已存在）", _auto_note))
+
+    def _collect_auto_words(self, texts, dict_data, from_auto: bool = False) -> str:
+        """把"未命中词表/热点词"的取词候选记入「智能自动取词词库」（2026-09-16 批次 12-3）。
+
+        返回**追加到提示语末尾**的一句话（无采集/无变化时返回空串），便于与推荐结果一起提示。
+        采集范围：设置里 `enabled` 为真；`from_auto=True`（T2 自动推荐）时还需 `include_t2` 为真。
+        设计：**任何异常都不得影响推荐主流程** ⇒ 整体 try/except 兜底。
+        """
+        try:
+            from .. import auto_words
+            cfg = auto_words.load_cfg(self.db)
+            if not cfg.get("enabled") or (from_auto and not cfg.get("include_t2")):
+                return ""
+            _hot = self.db.list_hotwords()
+            _cands = tagger_engine.field_candidates(
+                texts, ("name", "prompt_cn", "prompt_en"), 24,
+                tagger_engine.build_vocab(dict_data), _hot)
+            if not _cands:
+                return ""
+            _res = auto_words.record(
+                self.db, [(c["word"], c["field"]) for c in _cands],
+                entry_id=self._detail_entry_id)
+            if _res.get("hot"):
+                return "；🧠 自动取词：%d 个词已达阈值，已加入热点词表（%s）" % (
+                    len(_res["hot"]), "、".join(_res["hot"][:3]))
+            if _res.get("ready_tag"):
+                return "；🧠 自动取词：%d 个词已达词表阈值，待你在设置里审核" % len(_res["ready_tag"])
+            return ""
+        except Exception:
+            return ""
 
     def _on_name_committed(self, _event=None) -> None:
         """①名称框回车/失焦 → 自动推荐一次（T1；同名不重复推荐，避免反复打扰）。"""
@@ -5347,7 +5649,8 @@ class MainWindow(ctk.CTk):
 
     def _suggest_tags_debounced(self) -> None:
         self._suggest_timer = None
-        self._suggest_tags()
+        # 2026-09-16（批次 12-3）：标记为"来自 T2 自动推荐"，供自动取词词库的采集范围判断
+        self._suggest_tags(from_auto=True)
 
     def _bind_auto_suggest_triggers(self) -> None:
         """把 T2 防抖触发挂到 ⑧中文 / ⑨英文 文本框（详情区每次重建后调用一次）。"""
@@ -5403,6 +5706,18 @@ class MainWindow(ctk.CTk):
             return set()
         return set(config.DETAIL_HIDDEN_KEYS)
 
+    def _manual_hidden_keys(self) -> set:
+        """详情区"手动隐藏"的字段键集合（字段管理里的「隐藏」开关，存 meta）。
+
+        2026-09-16（批次 14）：**硬隐藏**——不随"详情字段显示策略"或会话覆盖而解除；
+        读库异常时返回空集合（宁可不隐藏，也不误隐藏）。① 名称不会出现在此集合中
+        （数据库读取时已强制剔除）。
+        """
+        try:
+            return set(self.db.get_hidden_field_keys())
+        except Exception:                                   # noqa: BLE001
+            return set()
+
     def _show_detail(self, e: Optional[dict]) -> None:
         """展示/刷新详情：固定头部更新 + 滚动内容区重建
 
@@ -5430,6 +5745,12 @@ class MainWindow(ctk.CTk):
         self._typed_img_holders = {}     # 图像字段预览容器（重建时清空）
         self._typed_img_refs = {}
         self._detail_dirty = False
+        # 2026-09-16（批次 14，安全修复）：🏷 标签区块可能因"手动隐藏"而**不被渲染**。
+        #   此处先清空已选标签并标记"未渲染"，由 _build_tag_block() 渲染时置 True；
+        #   _save_entry_tags() 仅在"本次确实渲染过"时才写库——否则隐藏标签后
+        #   会读到上一次渲染残留的 _tag_names，造成**标签串写或清空**。
+        self._tag_names = []
+        self._tag_block_rendered = False
         if e is None:
             self._detail_entry_id = None
             self._detail_hidden = set()  # 2026-08-18：无条目时无隐藏字段
@@ -5480,87 +5801,23 @@ class MainWindow(ctk.CTk):
         self.reset_btn.configure(command=self._reset_detail)
         # 2026-09-07：① 条目名称（风格名称）作为详情区第一个字段（醒目大输入框）
         self._build_name_field(initial=e["name"])
-        # 2026-09-07（阶段3）：多位置提示行（主/关联位置 + 关联位置"解除"按钮）
-        # 先构建再 _apply_lock_state，使锁定态能一并禁用位置解除按钮
-        self._build_detail_location_hint(e["id"])
-        # 2026-09-13（1-C-2）：🏷 标签区块（① 名称之后、②~⑦ 折叠组之前）
-        self._build_tag_block(self.db.list_entry_tags(e["id"]))
-        self._apply_lock_state()
-
-        # 2026-09-09：②~⑦（介绍…代表高清配图）默认折叠为一组（仅 1 行标题），
-        # 点"展开"才显示全部字段；⑧/⑨ 提示词与 ⑩ 图像获取方案保持平铺。
-        # 2026-09-09（修正）：折叠组始终包含全部六项——不再受"精简模式按根目录隐藏 ③-⑦"
-        # 影响；折叠本身即是精简，点"展开"后 ②~⑦ 无论哪个根目录都全部显示。
-        self._detail_group_toggle = None
-        # 2026-09-13（1-A-3 元数据驱动·只读等价）：显示名取自 field_defs（使"前 10 项改名"生效），
-        # 顺序/高度/分组仍沿用内置布局 _FIELDS；取不到名字时回退内置默认名。
-        labels = self._field_labels_map()
-        specs = [(labels.get(k, l), k, h) for l, k, h in _FIELDS]
-        # 2026-09-13（1-B 详情显示模式修复）：切到别的条目时复位"会话覆盖"，
-        # 并按显示模式决定默认展开与否（全部显示→默认展开；精简→默认折叠）。
-        if self._detail_group_for != e["id"]:
+        # 2026-09-13（1-C-2）：🏷 标签区块所需数据（在遍历前准备，避免循环中重复查库）
+        _entry_tags = self.db.list_entry_tags(e["id"])
+        # 2026-09-13（1-B）：切到别的条目时复位"会话覆盖"
+        if self._detail_last_entry_id != e["id"]:
             self._detail_show_all = False
-            self._detail_group_open = bool(self._detail_mode_full(e))
-            self._detail_group_for = e["id"]
+            self._detail_last_entry_id = e["id"]
         # 真正驱动 _detail_hidden（修复前该变量从未被赋值 → 设置形同无效）
-        self._detail_hidden = self._detail_hidden_keys(e)
-        info_items = [(label, key, height) for label, key, height in specs
-                      if key in _INFO_GROUP_KEYS and key not in self._detail_hidden]
-        _hidden_in_group = [k for k in _INFO_GROUP_KEYS if k in self._detail_hidden]
-        if info_items:
-            self._build_detail_info_group(e, info_items,
-                                          default_open=self._detail_group_open,
-                                          hidden_count=len(_hidden_in_group))
+        # 2026-09-16（批次 14）：并入手动隐藏（字段管理里的「隐藏」开关）——硬隐藏：
+        #   无论"详情字段显示策略"是精简/自动/全部，被隐藏项都不渲染；
+        #   不渲染 ⇒ 该项不占高度、下方内容自然整体上移（无需额外布局处理）。
+        self._detail_hidden = self._detail_hidden_keys(e) | self._manual_hidden_keys()
 
-        # ⑧/⑨ 提示词（可折叠）+ ⑩ 图像获取方案
-        group_trailing = None
-        for label, key, height in specs:
-            if key in _INFO_GROUP_KEYS or key in self._detail_hidden:
-                continue
-            if key in _COLLAPSIBLE_KEYS:  # 有内容默认 6 行可见、可展开；无内容 1 行
-                block = self._build_collapsible_field(e, label, key)
-                group_trailing = group_trailing or block
-                continue
-            # 2026-09-07（第5条改进）：每字段成"淡彩圆角卡片块"，标签主题色文字 + 白底同色细边文本框
-            block, label_c, box_bg, box_border = self._begin_field_block(key)
-            group_trailing = group_trailing or block
-            lbl = ctk.CTkLabel(block, text=label, text_color=label_c,
-                               font=("Microsoft YaHei", 12, "bold"), anchor="w")
-            lbl.pack(fill="x", padx=12, pady=(8, 2))
-            # 2026-08-18（第015条）：⑩图像获取方案 若为链接 → 文本框右侧加"打开"按钮，既能复制网址（左）、又能打开网址（右）
-            if key == "image_plan":
-                row = ctk.CTkFrame(block, fg_color="transparent")
-                row.pack(fill="x", padx=6, pady=(0, 6))
-                box = ctk.CTkTextbox(row, height=height, fg_color=box_bg,
-                                     border_width=1, border_color=box_border,
-                                     corner_radius=6)
-                box.pack(side="left", fill="x", expand=True)
-                url = (e[key] or "").strip()
-                if url.startswith(("http://", "https://")):
-                    open_btn = ctk.CTkButton(
-                        row, text="打开", width=52, height=28,
-                        command=lambda b=box: self._open_image_plan(b))
-                    open_btn.pack(side="right", padx=(6, 0))
-            else:
-                box = ctk.CTkTextbox(block, height=_rows_to_px(height), fg_color=box_bg,
-                                     border_width=1, border_color=box_border,
-                                     corner_radius=6)
-                box.pack(fill="x", padx=6, pady=(0, 6))
-            box.insert("1.0", e[key] or "")
-            box.bind("<KeyRelease>", self._mark_dirty)
-            self._detail_boxes[key] = box
-            full = e[key] or "（无内容）"
-            # 2026-09-12（用户要求 2）：改用新的浮动提示（左移不遮正文、可滚动、同步滚动、光标行加深）
-            self._attach_field_tip(box, full, box._textbox, label)
-
-        # ②~⑦ 折叠组展开时把卡片插回标题条与这个锚点（第一个 ⑧⑨⑩ 字段块）之间
-        if group_trailing is not None:
-            self._detail_group_anchor = group_trailing
-
-        # 2026-09-13（1-A-5 第 2 步）：自定义字段渲染在 10 个内置区块**之后**。
-        # 注意必须放在 _detail_group_anchor 赋值之后——自定义块不参与 ②~⑦ 折叠锚点。
-        # 2026-09-13（3-b）：列表框字段优先取 value_json（层级型＝令牌+快照名，精确还原），
-        # 其余类型仍用 value_text。
+        # 2026-09-16（批次 13）：详情区区块按 field_defs.sort_order 统一排序渲染。
+        #   ① 名称固定在最前；其余（🏷标签 / 🧭位置 / 🕒时间 / ②~⑩ / 自定义字段）
+        #   全部按 sort_order 顺序渲染，用户可在「字段管理」中自由调整顺序（含跨组）。
+        blocks = self._ordered_detail_blocks()
+        # 自定义字段取值（列表型取 value_json，其余取 value_text）
         try:
             _list_keys = {d["field_key"] for d in self._custom_field_defs()
                           if (d.get("field_type") or "") == "list"}
@@ -5571,7 +5828,26 @@ class MainWindow(ctk.CTk):
                                    else (r.get("value_text") or ""))
         except Exception:
             _custom_vals = {}
-        self._add_custom_field_blocks(_custom_vals)
+
+        for key, label, ftype in blocks:
+            if key in self._detail_hidden:
+                continue   # 显示模式隐藏的字段跳过
+            if key == "_tags":
+                self._build_tag_block(_entry_tags)
+            elif key == "_location":
+                self._build_detail_location_hint(e["id"])
+            elif key == "_time":
+                self._build_detail_time_line(e)
+            elif key in _INFO_GROUP_KEYS:   # ②~⑦：独立可折叠，默认折叠
+                self._build_collapsible_field(e, label, key, default_collapsed=True)
+            elif key in _COLLAPSIBLE_KEYS:  # ⑧⑨：可折叠，默认显示 6 行
+                self._build_collapsible_field(e, label, key, default_collapsed=False)
+            elif key == "image_plan":        # ⑩：链接型，默认显示 + 打开按钮
+                self._build_collapsible_field(e, label, key, default_collapsed=False)
+            else:                            # 自定义字段
+                self._render_custom_field(key, label, ftype, _custom_vals.get(key, ""))
+
+        self._apply_lock_state()   # 2026-09-07：锁定态统一禁用编辑控件（含位置解除按钮等）
 
         # 2026-09-10（用户要求）：详情区文本框内的滚轮统一转给详情区滚动
         self._install_detail_wheel(self.detail_scroll)
@@ -5617,7 +5893,8 @@ class MainWindow(ctk.CTk):
         if canvas is None:
             return
         for w in self._walk_widgets(root_widget):
-            inner = getattr(w, "_textbox", None)          # 仅 CTkTextbox 有内部 Text
+            # 2026-09-17（R-6）：`_textbox` 私有属性统一经 ui_common 访问（仅多行文本框）
+            inner = _ui_common.textbox_internal(w)
             if inner is None or getattr(inner, "_ps_wheel_ok", False):
                 continue
             inner._ps_wheel_ok = True
@@ -5669,107 +5946,30 @@ class MainWindow(ctk.CTk):
             pass
         return "break"
 
-    def _build_detail_info_group(self, e, info_items, default_open: bool = False,
-                                 hidden_count: int = 0) -> None:
-        """详情区 ②~⑦ 折叠组（2026-09-09 二次修订，采用"兄弟卡片 + 锚点插入"）。
-
-        此前用“外层容器包卡片、运行时再向容器内 pack 子项”的做法存在几何/裁切不稳，
-        实测会出现展开后字段显示不全。现改为：标题条与各字段卡片都是详情滚动区的
-        兄弟控件——折叠时只创建不 pack（仅标题 1 行可见）；展开时用
-        pack(before=锚点) 把卡片按顺序插回“标题条 与 ⑧⑨⑩”之间，与页面其它内容
-        一样正常参与滚动布局，不会再出现标题下方空白或只显示部分字段的问题。
-        info_items：本根目录/策略下实际可见的 (标签, 字段键, 高度行数)。
-        hidden_count：因"显示模式/会话覆盖"被隐藏的项数（2026-09-13 1-B，用于提示）。
-        """
-        shown = len(info_items)
-        bar = ctk.CTkFrame(self.detail_scroll, fg_color="#eef2f7",
-                           corner_radius=10, border_width=1, border_color="#cfd9e5")
-        bar.pack(fill="x", padx=10, pady=(8, 0))
-        cap_text = "②~⑦ 详情信息" if shown > 1 else "② 介绍"
-        ctk.CTkLabel(bar, text=f"📋 {cap_text}",
-                     font=("Microsoft YaHei", 12, "bold"),
-                     text_color="#3b5a78", anchor="w").pack(side="left", padx=(12, 4), pady=5)
-        have = sum(1 for _l, _k, _h in info_items if (e.get(_k) or "").strip())
-        if have:
-            status = ctk.CTkLabel(bar, text=f"● {have}/{shown} 项有内容",
-                                  font=("Microsoft YaHei", 10), text_color="#2E8B57")
-        else:
-            status = ctk.CTkLabel(bar, text="（暂无内容）",
-                                  font=("Microsoft YaHei", 10), text_color="#9aa4b1")
-        status.pack(side="left", padx=(2, 6))
-        # 2026-09-13（1-B）：有字段因"显示模式/会话覆盖"被隐藏时给出提示，避免误以为数据丢失
-        if hidden_count:
-            ctk.CTkLabel(bar, text=f"（另有 {hidden_count} 项已隐藏，可点右侧查看）",
-                         font=("Microsoft YaHei", 10), text_color="#9aa4b1"
-                         ).pack(side="left", padx=(4, 0))
-        toggle = ctk.CTkButton(bar, text="展开", width=56, height=24, **_ADD_BTN,
-                               command=self._toggle_detail_info_group)
-        toggle.pack(side="right", padx=(6, 8), pady=3)
-        self._detail_group_toggle = toggle
-        self._detail_group_anchor = None  # ②~⑦ 之后的下一个控件，展开时作 pack 锚点
-
-        widgets = []
-        for label, key, height in info_items:
-            label_c, block_bg, box_bg, box_border = _field_style(key)
-            blk = ctk.CTkFrame(self.detail_scroll, fg_color=block_bg,
-                               corner_radius=10, border_width=1, border_color=box_border)
-            lbl = ctk.CTkLabel(blk, text=label, text_color=label_c,
-                               font=("Microsoft YaHei", 12, "bold"), anchor="w")
-            lbl.pack(fill="x", padx=12, pady=(8, 2))
-            box = ctk.CTkTextbox(blk, height=_rows_to_px(height), fg_color=box_bg,
-                                 border_width=1, border_color=box_border, corner_radius=6)
-            box.pack(fill="x", padx=6, pady=(0, 6))
-            box.insert("1.0", e[key] or "")
-            box.bind("<KeyRelease>", self._mark_dirty)
-            self._detail_boxes[key] = box
-            full = e[key] or "（无内容）"
-            # 2026-09-12（用户要求 2）：改用新的浮动提示（左移不遮正文、可滚动、同步滚动、光标行加深）
-            self._attach_field_tip(box, full, box._textbox, label)
-            widgets.append(blk)
-            if key == "image_desc":  # ⑦ 下方紧跟图片预览区，一并随组显隐
-                widgets.append(self._build_image_area(parent=self.detail_scroll,
-                                                      pack_now=False))
-        self._detail_group_widgets = widgets
-        if default_open:
-            self._detail_group_open = True
-            toggle.configure(text="收起")
-            self._expand_detail_group_widgets()
-
-    def _expand_detail_group_widgets(self) -> None:
-        """把 ②~⑦ 折叠组各字段卡片插入标题条与后续字段之间（标题条始终保留）。"""
-        anchor = getattr(self, "_detail_group_anchor", None)
-        if anchor is not None and anchor.winfo_exists():
-            for w in self._detail_group_widgets:
-                w.pack(fill="x", pady=(4, 0), before=anchor)
-        else:  # 初始展开（后续字段尚未创建时）直接依次 pack 到末尾即可
-            for w in self._detail_group_widgets:
-                w.pack(fill="x", pady=(4, 0))
-
-    def _toggle_detail_info_group(self) -> None:
-        """展开/收起 ②~⑦ 详情折叠组（内容保留，仅切换整组显隐）。"""
-        if not self._detail_group_widgets:
-            return
-        if not self._detail_group_open:
-            self._expand_detail_group_widgets()
-            self._detail_group_open = True
-        else:
-            for w in reversed(self._detail_group_widgets):
-                w.pack_forget()
-            self._detail_group_open = False
-        if self._detail_group_toggle is not None:
-            self._detail_group_toggle.configure(
-                text="收起" if self._detail_group_open else "展开")
-        self._refresh_detail_header()
-
-    def _build_collapsible_field(self, e, label: str, key: str) -> None:
+    # 2026-09-16（批次 13）：原「②~⑦ 折叠组」方法已删除——
+    #   ②~⑦ 现拆为独立可折叠块，由 _build_collapsible_field(default_collapsed=True) 渲染。
+    def _build_collapsible_field(self, e, label: str, key: str,
+                                 default_collapsed: bool = False) -> None:
         """可折叠字段：标签行 + 展开/收起按钮 + 文本框（height 单位为像素）。
 
         2026-08-18：有内容默认 _COLLAPSED_H=120px（6 行文字完整可见）；点击"展开"时
         高度自适应为内容实际显示行数（_content_fit_height，有多少行显示多少行）；
         无内容时只显示 _EMPTY_H=24px（1 行空行），且不显示"展开"按钮。
+
+        2026-09-16（批次 13）：
+          - 新增 `default_collapsed` 参数：True 时**默认折叠**（只显示标题行，内容区不 pack），
+            用于 ②~⑦ 短文本字段——取代原"②~⑦ 整组折叠"，每个字段独立可折叠；
+          - ⑩ image_plan 为链接型：文本框右侧加「打开」按钮；
+          - ⑦ image_desc：文本框下方追加图片预览区（封面 + 图集），随字段一同显隐；
+          - 文本框 + 图片区统一放在 content_frame 内，折叠时整区 pack_forget。
         """
         has_content = bool((e[key] or "").strip())
-        base_h = _COLLAPSED_H if has_content else _EMPTY_H
+        # 2026-09-16：全部展开模式下，②~⑦ 也默认展开（显示 6 行）
+        _collapsed = default_collapsed and not getattr(self, "_detail_expand_all", False)
+        if _collapsed:
+            base_h = 0          # 默认折叠：不显示内容区
+        else:
+            base_h = _COLLAPSED_H if has_content else _EMPTY_H
 
         # 2026-09-07（第5条改进）：可折叠字段同样用"淡彩卡片块"——标签主题色 + 内容状态小标签
         block, label_c, box_bg, box_border = self._begin_field_block(key)
@@ -5782,32 +5982,65 @@ class MainWindow(ctk.CTk):
             head,
             text=("● 有内容" if has_content else "（无内容）"),
             font=("Microsoft YaHei", 10),
-            text_color=("#2E8B57" if has_content else "#9aa4b1"))
+            text_color=(_C_OK if has_content else "#9aa4b1"))
         status.pack(side="left", padx=(6, 0))
         toggle = None
-        if has_content:
+        # 2026-09-16：default_collapsed 时即使无内容也显示"展开"按钮（保持交互一致）
+        if has_content or default_collapsed:
             toggle = ctk.CTkButton(head, text="展开", width=52, height=22, **_ADD_BTN)
             toggle.pack(side="right")
 
-        box = ctk.CTkTextbox(block, height=base_h, fg_color=box_bg,
-                             border_width=1, border_color=box_border, corner_radius=6,
-                             **self._look_kwargs(key))   # 2026-09-15（批次 4）：⑧/⑨ 字体/文字色可叠加
-        box.pack(fill="x", padx=6, pady=(0, 8))
+        # 内容区：文本框（+ image_plan 的「打开」按钮）+ image_desc 的图片预览区
+        content = ctk.CTkFrame(block, fg_color="transparent")
+        # 文本框行（⑩ image_plan 含「打开」按钮）
+        if key == "image_plan":
+            box_row = ctk.CTkFrame(content, fg_color="transparent")
+            box = ctk.CTkTextbox(box_row, height=max(base_h, _EMPTY_H), fg_color=box_bg,
+                                 border_width=1, border_color=box_border, corner_radius=6)
+            box.pack(side="left", fill="x", expand=True)
+            url = (e[key] or "").strip()
+            if url.startswith(("http://", "https://")):
+                open_btn = ctk.CTkButton(box_row, text="打开", width=52, height=28,
+                                         command=lambda b=box: self._open_image_plan(b))
+                open_btn.pack(side="right", padx=(6, 0))
+                self._extra_field_widgets.append(open_btn)   # 浏览态一并置灰
+            box_row.pack(fill="x", padx=6, pady=(0, 6))
+        else:
+            box = ctk.CTkTextbox(content, height=max(base_h, 1), fg_color=box_bg,
+                                 border_width=1, border_color=box_border, corner_radius=6,
+                                 **self._look_kwargs(key))
+            box.pack(fill="x", padx=6, pady=(0, 6))
         box.insert("1.0", e[key] or "")
         box.bind("<KeyRelease>", self._mark_dirty)
         self._detail_boxes[key] = box
         full = e[key] or "（无内容）"
         # 2026-09-12（用户要求 2）：改用新的浮动提示（左移不遮正文、可滚动、同步滚动、光标行加深）
-        self._attach_field_tip(box, full, box._textbox, label)
+        self._attach_field_tip(box, full, _ui_common.textbox_internal(box), label)
+
+        # ⑦ image_desc：文本框下方追加图片预览区（封面 + 图集）
+        if key == "image_desc":
+            self._build_image_area(parent=content, pack_now=True)
+
+        # 默认折叠：不 pack 内容区
+        if not _collapsed:
+            content.pack(fill="x", padx=0, pady=(0, 2))
 
         if toggle is not None:
-            def _toggle():
+            def _toggle(_c=_collapsed):
                 expanded = toggle.cget("text") == "展开"
-                # 2026-08-18：展开时高度自适应为内容实际显示行数（有多少行显示多少行，避免空白行）
-                box.configure(height=self._content_fit_height(box) if expanded else base_h)
-                toggle.configure(text="收起" if expanded else "展开")
-                status.configure(text=("⏶ 已展开" if expanded else "● 有内容"),
-                                 text_color=("#25639c" if expanded else "#2E8B57"))
+                if expanded:
+                    content.pack(fill="x", padx=0, pady=(0, 2))
+                    box.configure(height=self._content_fit_height(box))
+                    toggle.configure(text="收起")
+                    status.configure(text="⏶ 已展开", text_color="#25639c")
+                else:
+                    if _c:
+                        content.pack_forget()
+                    else:
+                        box.configure(height=base_h)
+                    toggle.configure(text="展开")
+                    status.configure(text=("● 有内容" if has_content else "（无内容）"),
+                                     text_color=(_C_OK if has_content else "#9aa4b1"))
 
             toggle.configure(command=_toggle)
         return block
@@ -5816,29 +6049,10 @@ class MainWindow(ctk.CTk):
     def _content_fit_height(box) -> int:
         """文本框恰好显示全部内容的像素高度（含自动换行；最少 1 行）。
 
-        2026-08-18 新增：展开提示词时按"有多少行就显示多少行"自适应高度，
-        避免内容不多时出现大量空白行。用字体测量估算 wrap 后的实际显示行数，
-        不依赖控件布局时机（displaylines 在未布局时不可靠）。
+        2026-08-18 新增；2026-09-17（审核 R-1）：实现统一到 `ui_common.content_fit_height`
+        （与「快速新建」窗口共用同一份），此处仅保留方法名以兼容既有调用点。
         """
-        try:
-            import tkinter.font as tkfont
-            font = tkfont.Font(root=box._textbox, font=box._textbox.cget("font"))
-            line_h = font.metrics("linespace") or 20
-            text = box._textbox.get("1.0", "end-1c")
-            # 文本可用宽度：控件宽扣除内边距/边框/右侧滚动条余量（取偏小值→行数略多，保证不遮挡）
-            avail = max(box._textbox.winfo_width() - 14, 80)
-            lines = 0
-            for para in text.split("\n"):
-                w = font.measure(para)
-                lines += max(1, -(-w // avail))  # 向上取整：该段落自动换行后的显示行数
-            n = max(int(lines), 1)
-        except Exception:
-            try:  # 兜底：按逻辑行数估算
-                n = max(box._textbox.get("1.0", "end-1c").count("\n") + 1, 1)
-            except Exception:
-                n = 6
-            line_h = 20
-        return n * line_h + 8  # 8px 余量：上下内边距与边框，确保最后一行完整可见
+        return _ui_common.content_fit_height(box)
 
     def _build_image_area(self, parent=None, pack_now: bool = True) -> ctk.CTkFrame:
         """⑦ 代表高清配图 下的"**封面 + 图集**"区（返回容器，随折叠组显隐）。
@@ -5977,7 +6191,7 @@ class MainWindow(ctk.CTk):
                          font=("Microsoft YaHei", 10)).pack(side="left", padx=(0, 6),
                                                              fill="x", expand=True)
             btns = []
-            btns.append(ctk.CTkButton(row, text="移除", width=52, height=24, fg_color="#D9534F",
+            btns.append(ctk.CTkButton(row, text="移除", width=52, height=24, fg_color=_C_DANGER,
                                       command=lambda i=idx: self._remove_gallery_item(i)))
             btns.append(ctk.CTkButton(row, text="↓", width=28, height=24, fg_color="#8a94a6",
                                       command=lambda i=idx: self._move_gallery_item(i, 1)))
@@ -5989,7 +6203,7 @@ class MainWindow(ctk.CTk):
                                           command=lambda u=it.get("source_url"): self._open_url(u)))
                 if self._detail_entry_id is not None:
                     btns.append(ctk.CTkButton(
-                        row, text="下载到本地", width=96, height=24, fg_color="#2E8B57",
+                        row, text="下载到本地", width=96, height=24, fg_color=_C_OK,
                         command=lambda i=idx: self._download_gallery_item(i)))
             for b in btns:
                 b.configure(state=("disabled" if browsing else "normal"))
@@ -6005,7 +6219,7 @@ class MainWindow(ctk.CTk):
             import webbrowser
             webbrowser.open(u)
         except Exception as exc:
-            self.toast(f"打开链接失败：{exc}", color="#D9534F")
+            self.toast(f"打开链接失败：{exc}", color=_C_DANGER)
 
     def _add_gallery_local(self) -> None:
         """图集：添加本地图片（已存条目立即复制落库；新建态仅暂存源路径＝做法 B）"""
@@ -6032,7 +6246,7 @@ class MainWindow(ctk.CTk):
                 self.db.add_entry_image(self._detail_entry_id, "local", path=rel)
                 self.toast("✅ 已加入图集")
             except Exception as exc:
-                self.toast(f"加入图集失败：{exc}", color="#D9534F")
+                self.toast(f"加入图集失败：{exc}", color=_C_DANGER)
                 return
         self._render_gallery()
 
@@ -6122,7 +6336,7 @@ class MainWindow(ctk.CTk):
             self.db.set_entry_image_local(it["id"], rel, source_url=url)
             self.toast("✅ 已下载到本地（原链接已保留）")
         except Exception as exc:
-            self.toast(f"下载失败（网络或链接不可用）：{exc}", color="#D9534F")
+            self.toast(f"下载失败（网络或链接不可用）：{exc}", color=_C_DANGER)
         self._render_gallery()
 
     def _materialize_staged_images(self, entry_id: int) -> None:
@@ -6156,7 +6370,7 @@ class MainWindow(ctk.CTk):
                 shutil.copyfile(src, dest)
                 self.db.add_entry_image(entry_id, "local", path=rel)
         except Exception as exc:
-            self.toast(f"图片保存失败：{exc}", color="#D9534F")
+            self.toast(f"图片保存失败：{exc}", color=_C_DANGER)
         finally:
             self._staged_cover = None
             self._staged_gallery = []
@@ -6176,7 +6390,7 @@ class MainWindow(ctk.CTk):
         if m:
             webbrowser.open(m.group(0))
         else:
-            self.toast("未找到链接（请输入 http:// 或 https:// 开头网址）", color="#D9534F")
+            self.toast("未找到链接（请输入 http:// 或 https:// 开头网址）", color=_C_DANGER)
 
     def _box_text(self, key) -> str:
         if key in self._list_field_values:   # 2026-09-13（3-a-2/3-b/3-c）：列表框字段
@@ -6210,22 +6424,39 @@ class MainWindow(ctk.CTk):
             return
         if self._detail_show_all:                    # 1) 取消覆盖 → 回模式默认
             self._detail_show_all = False
-            self._detail_group_open = bool(self._detail_mode_full(e))
+            self._detail_expand_all = False
             self._show_detail(e)
             return
         if self._detail_hidden_keys(e):              # 2) 有隐藏项 → 一键显示全部
             self._detail_show_all = True
-            self._detail_group_open = True
+            self._detail_expand_all = True
             self._show_detail(e)
             return
-        self._toggle_detail_info_group()             # 3) 无隐藏项 → 展开/收起
-        self._refresh_detail_header()
+        # 3) 无隐藏项 → 切换"全部展开/收起所有可折叠字段"（2026-09-16 批次 13）
+        self._detail_expand_all = not self._detail_expand_all
+        self._show_detail(e)
+
+    def _manual_hidden_note(self) -> str:
+        """固定头部用的"手动隐藏项"提示片段（无手动隐藏项时返回空串）。
+
+        2026-09-16（批次 14）：手动隐藏是**硬隐藏**——"⏵ 显示全部字段"按钮不会恢复它，
+        因此当存在手动隐藏项时在状态行明确提示，避免用户误以为"字段丢了"。
+        """
+        try:
+            n = len(self.db.get_hidden_field_keys())
+        except Exception:                                   # noqa: BLE001
+            return ""
+        if not n:
+            return ""
+        return f"（另有 {n} 项已隐藏，可在「字段管理」中恢复）"
 
     def _refresh_detail_header(self) -> None:
         """同步固定头部状态行：左侧状态标题、右侧开关文案与可用性（与折叠组状态联动）。
 
         2026-09-13（1-B）：并入"显示模式/会话覆盖"状态——
         精简且有隐藏项时按钮为"⏵ 显示全部字段"；覆盖中则显示"（临时）"并提供"回到精简显示"。
+        2026-09-16（批次 14）：手动隐藏项（字段管理里的「隐藏」开关）为**硬隐藏**，
+        按钮文案/行为**不**受其影响（按钮只作用于"显示模式隐藏项"），仅在状态行追加提示。
         """
         lbl = getattr(self, "detail_state_lbl", None)
         btn = getattr(self, "show_all_btn", None)
@@ -6238,19 +6469,22 @@ class MainWindow(ctk.CTk):
             btn.configure(text="⏸ 精简显示" if opened else "⏵ 显示全部字段",
                           state="normal" if enabled else "disabled")
             return
-        enabled = bool(self._detail_entry_id is not None and self._detail_group_widgets)
+        # 2026-09-16（批次 13）：②~⑦ 已拆为独立可折叠块，按钮可用性只要有当前条目即可
+        enabled = bool(self._detail_entry_id is not None)
         state = "normal" if enabled else "disabled"
         e = self.db.get_entry(self._detail_entry_id) if self._detail_entry_id else None
+        note = self._manual_hidden_note()   # 2026-09-16（批次 14）
         if self._detail_show_all:
-            lbl.configure(text="详情 · 已显示全部字段（临时）")
+            lbl.configure(text="详情 · 已显示全部字段（临时）" + note)
             btn.configure(text="⏸ 回到精简显示", state=state)
             return
         if e is not None and self._detail_hidden_keys(e):
-            lbl.configure(text="详情 · 精简模式")
+            lbl.configure(text="详情 · 精简模式" + note)
             btn.configure(text="⏵ 显示全部字段", state=state)
             return
-        opened = bool(self._detail_group_open)
-        lbl.configure(text="详情 · 已展开全部字段" if opened else "详情 · 精简模式")
+        # 2026-09-16：用 _detail_expand_all 替代 _detail_group_open
+        opened = bool(self._detail_expand_all)
+        lbl.configure(text=("详情 · 已展开全部字段" if opened else "详情 · 精简模式") + note)
         btn.configure(text="⏸ 精简显示" if opened else "⏵ 显示全部字段", state=state)
 
     def _save_detail(self) -> None:
@@ -6266,16 +6500,22 @@ class MainWindow(ctk.CTk):
         def _field(key: str) -> str:
             # 2026-09-09：②~⑦ 折叠组内字段始终构建；仅当某字段确实未构建时
             # （理论兜底）才保留数据库原值，避免误清空。
+            # 2026-09-16（批次 14）：本兜底同时是"字段被手动隐藏/被显示模式隐藏"时的
+            # 数据保护——未渲染 ⇒ 不在 _detail_boxes ⇒ 保存时保留库中原值，绝不清空。
             return self._box_text(key) if key in self._detail_boxes else cur[key]
 
+        # 2026-09-16（批次 14，安全修复）：此前 `intro`/`prompt_cn`/`prompt_en`/`image_plan`
+        #   直接调用 `_box_text()`（未渲染时返回 ""），一旦这些区块被隐藏，
+        #   保存就会把它们**清空**。现统一改为 `_field()`：
+        #   已渲染时行为与原来完全一致；未渲染时保留数据库原值。
         e = Entry(id=self._detail_entry_id, category_id=cur["category_id"],
                   name=self._name_entry.get().strip() or cur["name"],
-                  intro=self._box_text("intro"),
+                  intro=_field("intro"),
                   origin=_field("origin"), features=_field("features"),
                   scenes=_field("scenes"), works=_field("works"),
                   image_desc=_field("image_desc"),
-                  prompt_cn=self._box_text("prompt_cn"), prompt_en=self._box_text("prompt_en"),
-                  image_plan=self._box_text("image_plan"),
+                  prompt_cn=_field("prompt_cn"), prompt_en=_field("prompt_en"),
+                  image_plan=_field("image_plan"),
                   image_path=cur["image_path"], is_favorite=cur["is_favorite"])
         # 2026-09-07：保存前同内容一致性轻提示（排除自身）
         dup = self.db.find_content_duplicates(self.db.content_key(e),
@@ -6472,6 +6712,25 @@ class MainWindow(ctk.CTk):
                          text_color="#8aa0b5", font=("Microsoft YaHei", 10)
                          ).pack(side="left", padx=(2, 0))
 
+    def _build_detail_time_line(self, e: dict) -> None:
+        """详情区「🕒 新增于 … · 修改于 …」只读时间行（2026-09-16 批次 11-7，用户要求 3）。
+
+        数据来源：`entries.created_at / updated_at`（插入时即写入，格式 `YYYY-MM-DD HH:MM:SS`）。
+        **纯展示**：不写库、不改任何字段；时间缺失时整行不渲染（老库/异常数据不显示空壳）。
+        位置：紧跟在「🧭 位置」面包屑之后，所有条目（含"未分类"）都会显示。
+        """
+        _ca = str((e or {}).get("created_at") or "").strip()
+        _ua = str((e or {}).get("updated_at") or "").strip()
+        if not (_ca or _ua):
+            return
+        _txt = ""
+        if _ca:
+            _txt = "🕒 新增于 %s" % _ca
+        if _ua:
+            _txt += ("　·　修改于 %s" % _ua) if _txt else ("🕒 修改于 %s" % _ua)
+        ctk.CTkLabel(self.detail_scroll, text=_txt, text_color="#8aa0b5", anchor="w",
+                     font=("Microsoft YaHei", 10)).pack(fill="x", padx=14, pady=(2, 0))
+
     def _remove_detail_location(self, entry_id: int, cat_id: int) -> None:
         """详情位置行"×"：解除该条目在某关联分类的位置"""
         if self._lock_on or self._browse_mode:  # 2026-09-09：浏览态禁止改动
@@ -6484,7 +6743,7 @@ class MainWindow(ctk.CTk):
         self.toast("✅ 已解除该位置关联")
 
     def _start_new_entry(self) -> None:
-        """条目区"➕ 新增条目"：详情区切入空白新增态（连续录入用）。
+        """条目区"✚ 新增条目"：详情区切入空白新增态（连续录入用）。
 
         目标分类取自当前视图：叶子分类视图 → 该分类；未分类视图 → 未分类。
         其他视图按钮已置灰，不会进入本方法。
@@ -6500,7 +6759,7 @@ class MainWindow(ctk.CTk):
             target = None
         else:
             # 连续录入时视图可能已切走（如搜索中）：退出新增态并清空详情，避免残留空表单
-            self.toast("请先在分类树/未分类中定位再新增条目", color="#D9534F")
+            self.toast("请先在分类树/未分类中定位再新增条目", color=_C_DANGER)
             self._show_detail(None)
             return
         self._adding_new = True
@@ -6548,7 +6807,7 @@ class MainWindow(ctk.CTk):
         self.detail_scroll.configure(label_text="")  # 2026-09-09：固定头部状态行承担顶部状态
         cap = ctk.CTkLabel(self.detail_scroll, text=f"＋ 将新增到：「{loc}」",
                            font=("Microsoft YaHei", 12, "bold"),
-                           text_color="#2E8B57", anchor="w")
+                           text_color=_C_OK, anchor="w")
         cap.pack(fill="x", padx=8, pady=(8, 0))
 
         # 顶部命令按钮：收藏/删除/复制对新条目无意义 → 禁用（名称框随表单置入详情区）
@@ -6621,7 +6880,8 @@ class MainWindow(ctk.CTk):
             def _toggle_prompt(b=box, t=toggle):
                 expanded = t.cget("text") == "展开"
                 # 无内容时展开仍保持 120px（避免输入框缩成 1 行无法录入）
-                if expanded and b._textbox.get("1.0", "end-1c").strip():
+                # 2026-09-17（R-6）：内容读取统一经 ui_common.text_of（私有属性不落在外层）
+                if expanded and _ui_common.text_of(b).strip():
                     b.configure(height=self._content_fit_height(b))
                 else:
                     b.configure(height=_COLLAPSED_H)
@@ -6888,7 +7148,7 @@ class MainWindow(ctk.CTk):
             self._render_image_preview()
             self.toast("✅ 图片已关联")
         except Exception as exc:
-            self.toast(f"图片关联失败：{exc}", color="#D9534F")
+            self.toast(f"图片关联失败：{exc}", color=_C_DANGER)
 
     def _remove_image(self) -> None:
         """移除封面图片（新建态只清除暂存；已存条目删除文件并清空 image_path）"""
@@ -6934,7 +7194,7 @@ class MainWindow(ctk.CTk):
             pyperclip.copy(text)
             self.toast("✅ 已复制")
         except Exception:
-            self.toast("复制失败，请检查剪贴板", color="#D9534F")
+            self.toast("复制失败，请检查剪贴板", color=_C_DANGER)
 
     def _toggle_favorite(self, entry_id: int) -> None:
         if self._lock_on:  # 2026-08-21（第005条）：锁定时禁止修改收藏状态
@@ -6997,7 +7257,7 @@ class MainWindow(ctk.CTk):
         before = set(self.db.list_entry_locations(entry_id))
         fresh = [c for c in targets if c not in before]
         if not fresh:
-            self.toast("所选分类均为该条目已有位置，无需重复关联", color="#D9534F")
+            self.toast("所选分类均为该条目已有位置，无需重复关联", color=_C_DANGER)
             return
         self.db.set_entry_locations(entry_id, add=fresh)
         self._restore_view()
@@ -7115,7 +7375,7 @@ class MainWindow(ctk.CTk):
         if not self._lock_on:
             return True
         self.toast(f"⚠ 已锁定，无法{action}" if action else "⚠ 已锁定，此操作已阻止",
-                   color="#D9534F")
+                   color=_C_DANGER)
         return False
 
     def _toggle_lock(self) -> None:
@@ -7123,7 +7383,7 @@ class MainWindow(ctk.CTk):
         # 2026-08-22（第007条）：解锁时恢复记录的默认配色（customtkinter 6.0.0
         # 不接受 fg_color=None，会抛 ValueError 中断本方法导致按钮显示卡死）
         if self._lock_on:
-            self.lock_btn.configure(text="🔓 已锁定", fg_color="#D9534F")
+            self.lock_btn.configure(text="🔓 已锁定", fg_color=_C_DANGER)
         else:
             self.lock_btn.configure(
                 text="🔒 锁定",
@@ -7147,7 +7407,8 @@ class MainWindow(ctk.CTk):
         纳入范围（全部为写操作）：
           · 标签档 5 个：重命名 / 合并… / 删除 / 清理未使用 / 🤖 批量打标…
           · 热点词档 3 个：📋 文本导入… / 🔄 热点词更新… / 🗑 清空全部
-          · 词表档 2 个：⬇ 导入词表… / ↺ 恢复出厂词表
+          · 词表档 3 个：⬇ 导入（替换）… / ➕ 增量导入… / ↺ 恢复出厂…
+            （2026-09-17 用户需求新增「➕ 增量导入…」，由 2 个 → 3 个）
         **不**纳入："⬆ 导出词表…"（只读）。
         用户选定"禁用（可见但置灰）"⇒ 锁定态 `state="disabled"`，解锁态 `"normal"`。
         幂等：页面重建后与锁定开关切换时均可重复调用；控件可能已销毁（页面重建），故全部容错。
@@ -7708,12 +7969,17 @@ class MainWindow(ctk.CTk):
         2026-08-29（增量备份增强）：新增删除同步统计。
         """
         msg = f"✅ 导入完成：新增 {result.get('entries', 0)} 条"
+        # 2026-09-17（FR-93，v6）：按稳定 ID 命中、**更新同一条目**的条数（不再重复新增）
+        if result.get("updated"):
+            msg += f"，更新同一条目 {result['updated']} 条"
         if result.get("skipped"):
             msg += f"，跳过重复 {result['skipped']} 条"
         rec = result.get("recovered", 0)
         if result.get("mode") == "reverse":
             msg = (f"✅ 逆向恢复完成：恢复已删除 {rec} 条"
                    f"（另新增/修改 {result.get('entries', 0)} 条）")
+            if result.get("updated"):
+                msg += f"，更新同一条目 {result['updated']} 条"
             if result.get("skipped"):
                 msg += f"，跳过重复 {result['skipped']} 条"
         elif rec:
@@ -7810,14 +8076,14 @@ class MainWindow(ctk.CTk):
         # 2026-09-09（审核 P1-5）：正常应用删除且含分类删除时，先披露目标端子树实际影响
         if del_mode == "apply" and summary.get("del_categories"):
             if not self._disclose_sync_delete_impact(path):
-                self.toast("已取消导入", color="#D9534F")
+                self.toast("已取消导入", color=_C_DANGER)
                 return
 
         # 2026-09-14（审核修复 P1-C）：变更包现已随包携带 field_defs，
         # 与"导入 JSON 备份"一致地先做**字段定义差异逐项确认**（无差异则不打扰）。
         proceed, resolver = confirm_field_defs_file(self, self.db, path)
         if not proceed:
-            self.toast("已取消导入（字段定义差异未确认）", color="#D9534F")
+            self.toast("已取消导入（字段定义差异未确认）", color=_C_DANGER)
             return
 
         # 导入前自动快照（可回滚；独立前缀 prompts_preimport_*，不参与自动清理）
@@ -7974,7 +8240,7 @@ class MainWindow(ctk.CTk):
     def _export_json(self, current_only: bool = False) -> None:
         cat = self._current_subtree_cat_id() if current_only else None
         if current_only and cat is None:
-            self.toast("请先在左侧选中分类", color="#D9534F")
+            self.toast("请先在左侧选中分类", color=_C_DANGER)
             return
         path = filedialog.asksaveasfilename(title="导出 JSON", parent=self,
                                             defaultextension=".json",
@@ -7991,7 +8257,7 @@ class MainWindow(ctk.CTk):
     def _export_excel(self, current_only: bool = False) -> None:
         cat = self._current_subtree_cat_id() if current_only else None
         if current_only and cat is None:
-            self.toast("请先在左侧选中分类", color="#D9534F")
+            self.toast("请先在左侧选中分类", color=_C_DANGER)
             return
         path = filedialog.asksaveasfilename(title="导出 Excel", parent=self,
                                             defaultextension=".xlsx",
@@ -8008,7 +8274,7 @@ class MainWindow(ctk.CTk):
     def _export_html(self, current_only: bool = False) -> None:
         cat = self._current_subtree_cat_id() if current_only else None
         if current_only and cat is None:
-            self.toast("请先在左侧选中分类", color="#D9534F")
+            self.toast("请先在左侧选中分类", color=_C_DANGER)
             return
         path = filedialog.asksaveasfilename(title="导出 HTML", parent=self,
                                             defaultextension=".html",
@@ -8033,7 +8299,7 @@ class MainWindow(ctk.CTk):
         QuickAddWindow(self, self.db,
                        default_cat_id=(self._cur_cat_id or self._last_cat_id))
 
-    def toast(self, msg: str, color: str = "#2E8B57") -> None:
+    def toast(self, msg: str, color: str = _C_OK) -> None:
         if self._toast_label is not None:
             self._hide_toast(self._toast_label)
         lbl = ctk.CTkLabel(self, text=msg, fg_color=color, text_color="white",
@@ -8118,6 +8384,10 @@ class MainWindow(ctk.CTk):
         # 2026-09-15（批次 4）：界面外观（字体/字号/颜色）——载入配置；各渲染点用
         #   `ui_appearance.font(...)` / `ui_appearance.color(...)` **叠加**（未设置时返回原值）
         self._ui_appearance = ui_appearance.load(self.db)
+        # 2026-09-16（批次 11-7，用户要求 3）：条目区排序方式（分类视图生效）
+        _es = self.db.get_meta(config.META_ENTRY_SORT)
+        if _es in ("updated", "created", "name"):
+            self._entry_sort = _es
         if self._remember_size:
             size = self.db.get_meta(config.META_WINDOW_SIZE)
             if size and "x" in size:
@@ -8177,10 +8447,13 @@ class MainWindow(ctk.CTk):
         # 2026-09-15（批次 4）：界面外观（字体/字号/颜色）——重新载入；下方 `_restore_view()`
         #   会重建条目区、`_show_detail()` 会重建详情区 ⇒ 新的外观设置**立即生效**
         self._ui_appearance = ui_appearance.load(self.db)
+        # 2026-09-16（批次 11-7，用户要求 3）：条目区排序方式（保存后立即生效）
+        _es2 = self.db.get_meta(config.META_ENTRY_SORT)
+        self._entry_sort = _es2 if _es2 in ("updated", "created", "name") else "updated"
         self._restore_view()  # 视图模式重建条目区
         # 2026-09-13（1-B）：切换显示策略后复位"会话覆盖"与折叠归属，使新策略立即生效
         self._detail_show_all = False
-        self._detail_group_for = None
+        self._detail_last_entry_id = None  # 2026-09-16：原 _detail_group_for
         if self._detail_entry_id is not None:
             self._show_detail(self.db.get_entry(self._detail_entry_id))  # 详情策略重建
         self.toast("✅ 设置已保存")

@@ -29,6 +29,11 @@ _GALLERY_HEADER = "图集"
 # 2026-09-13（追加列收尾）：项目类别列（Excel 原只有 领域/一级/二级，缺最高层；
 #   本列让 Excel 往返也能恢复"项目类别"归属；旧表无此列时按原逻辑处理，完全兼容）
 _PROJECT_HEADER = "项目类别"
+# 2026-09-17（FR-93）：条目**稳定 ID** 列（表头固定写 "uuid"，追加在最后，不改既有列序）。
+#   - 导出：写入该条目的 uuid；
+#   - 导入：该列有值且目标库已存在同 uuid ⇒ 走"更新同一条目"（不再新增副本）；
+#     该列缺失/为空（老文件或以人为主的表格）⇒ 完全按原"内容键"逻辑处理（行为不变）。
+_UUID_HEADER = "uuid"
 
 
 def _entry_project_name(db, entry) -> str:
@@ -172,7 +177,7 @@ def export_excel(db, path, category_id=None) -> int:
     # 2026-09-13（1-A-5 收尾 / 1-C-4）：既有 14 列不变，自定义字段列与"标签"列追加在最后
     custom_defs = [d for d in db.list_field_defs() if not d.get("is_builtin")]
     ws.append(_HEADERS + [f"{_CUSTOM_PREFIX}{d['display_name']}" for d in custom_defs]
-              + [_TAG_HEADER, _GALLERY_HEADER, _PROJECT_HEADER])
+              + [_TAG_HEADER, _GALLERY_HEADER, _PROJECT_HEADER, _UUID_HEADER])
     for e in entries:
         chain = _chain_names(db, e["category_id"]) if e["category_id"] else []
         ws.append([
@@ -185,6 +190,7 @@ def export_excel(db, path, category_id=None) -> int:
             _tags_text(db, e["id"]),
             _gallery_text(db, e["id"]),
             _entry_project_name(db, e),
+            str(e.get("uuid") or ""),      # 2026-09-17（FR-93）：稳定 ID（供导入按同一条目更新）
         ])
     wb.save(path)
     return len(entries)
@@ -209,7 +215,7 @@ def export_payload_excel(payload, path, meta=None) -> int:
     ws.title = "提示词"
     ws.append(_HEADERS + [f"{_CUSTOM_PREFIX}{d.get('display_name') or d['field_key']}"
                           for d in defs]
-              + [_TAG_HEADER, _GALLERY_HEADER, _PROJECT_HEADER])
+              + [_TAG_HEADER, _GALLERY_HEADER, _PROJECT_HEADER, _UUID_HEADER])
     for i, ep in enumerate(ents):
         proj, dom = "", ""
         if i < len(meta) and meta[i]:
@@ -230,6 +236,7 @@ def export_payload_excel(payload, path, meta=None) -> int:
             "、".join(ep.get("tags") or []),
             "",
             proj,
+            str(ep.get("uuid") or ""),     # 2026-09-17（FR-93）：稳定 ID（向导载荷若有则带上）
         ])
     wb.save(path)
     return len(ents)
@@ -277,10 +284,12 @@ def import_excel(db, path, progress_cb=None) -> dict:
         gallery_col = header.index(_GALLERY_HEADER) if _GALLERY_HEADER in header else None
         # 2026-09-13（追加列收尾）：项目类别列（表头"项目类别"；缺失时按原逻辑处理）
         project_col = header.index(_PROJECT_HEADER) if _PROJECT_HEADER in header else None
+        # 2026-09-17（FR-93）：稳定 ID 列（表头"uuid"；老表/人改表无此列 ⇒ 按原逻辑处理）
+        uuid_col = header.index(_UUID_HEADER) if _UUID_HEADER in header else None
 
         rows = list(ws.iter_rows(min_row=2, values_only=True))
         total = max(len(rows), 1)
-        done, skipped, processed = 0, 0, 0
+        done, skipped, processed, updated = 0, 0, 0, 0
         pending = []
         pending_cf = []   # 与 pending 一一对应的自定义字段取值（批量插入后写回）
         pending_tags = []  # 与 pending 一一对应的标签名列表（批量插入后写回）
@@ -307,6 +316,44 @@ def import_excel(db, path, progress_cb=None) -> dict:
                       prompt_cn=_cell(r, col, "提示词中文"), prompt_en=_cell(r, col, "提示词英文"),
                       image_plan=_cell(r, col, "图像获取方案"),
                       is_favorite=_to_int(_cell(r, col, "收藏")))
+            # 2026-09-17（FR-93）：Excel 的 "uuid" 列——命中同 uuid ⇒ **更新该条目**（不新增副本）。
+            #   口径（用户确认）：**① ~ ⑩ 内容字段与收藏整体更新**；标签 / 自定义字段 / 图集
+            #   按"有值则写、不删除既有"处理（Excel 是给人看/改的表格，不承担"整体替换"语义）。
+            _u = ""
+            if uuid_col is not None and uuid_col < len(r) and r[uuid_col] is not None:
+                _u = str(r[uuid_col]).strip()
+            _hit = db.get_entry_by_uuid(_u) if _u else None
+            if _hit is not None:
+                e.id = _hit["id"]
+                # 分类解析失败（路径缺失）时保留原分类，避免把条目打成"未分类"
+                e.category_id = cid if cid is not None else _hit.get("category_id")
+                db.update_entry(e)
+                for _fk, _idx in custom_cols:
+                    if _idx < len(r) and r[_idx] is not None and str(r[_idx]).strip():
+                        try:
+                            db.set_entry_field_value(_hit["id"], _fk, str(r[_idx]).strip())
+                        except Exception:
+                            pass
+                if tag_col is not None and tag_col < len(r):
+                    for _t in _split_tags(str(r[tag_col] or "")):
+                        try:
+                            db.add_entry_tag(_hit["id"], _t)
+                        except Exception:
+                            pass
+                if gallery_col is not None and gallery_col < len(r):
+                    for _g in _split_gallery(str(r[gallery_col] or "")):
+                        try:
+                            db.add_entry_image(_hit["id"], _g["kind"], _g["path"],
+                                               _g["source_url"], _g["caption"])
+                        except Exception:
+                            pass
+                updated += 1
+                processed += 1
+                if progress_cb:
+                    progress_cb(processed, total, f"{name}（更新）")
+                continue
+            if _u:
+                e.uuid = _u      # 新条目**沿用表内稳定 ID**（无则 add_entries_batch 自动分配）
             # 2026-08-18（P1-1）：详情内容去重——仅当内容完全相同才跳过，名称相同但内容不同仍新增
             keys = seen_by_cat.setdefault(cid, set())
             if not keys:
@@ -348,7 +395,7 @@ def import_excel(db, path, progress_cb=None) -> dict:
             _restore_pending_custom_fields(db, _max_id_before, pending_cf)
             _restore_pending_tags(db, _max_id_before, pending_tags)   # 2026-09-13（1-C-4）
             _restore_pending_images(db, _max_id_before, pending_img)  # 2026-09-13（2-d）
-        return {"entries": done, "skipped": skipped}
+        return {"entries": done, "skipped": skipped, "updated": updated}
     finally:
         wb.close()
 
@@ -406,9 +453,12 @@ def _excel_selftest() -> None:
             ws = wb.active
             header = [str(c.value).strip() if c.value else "" for c in ws[1]]
             assert _PROJECT_HEADER in header, "导出应含『项目类别』列"
-            assert header.index(_PROJECT_HEADER) == len(header) - 1, "应为最后一列（追加列）"
+            # 2026-09-17（FR-93）：末尾新增 "uuid" 列 ⇒ 『项目类别』变为倒数第二列
+            assert header.index(_PROJECT_HEADER) == len(header) - 2, "应为倒数第二列"
+            assert header.index(_UUID_HEADER) == len(header) - 1, "uuid 应为最后一列（追加列）"
             row = [c.value for c in ws[2]]
             assert str(row[header.index(_PROJECT_HEADER)] or "").strip() == "我的项目"
+            assert len(str(row[header.index(_UUID_HEADER)] or "").strip()) == 32, "应导出稳定 ID"
             assert str(row[header.index("领域")] or "").strip() == "根A"
         finally:
             wb.close()
@@ -447,16 +497,20 @@ def _excel_selftest() -> None:
             db3.close()
 
         # ---------- D. 重复导入判重 ---------- #
+        #   2026-09-17（FR-93）：导出表已带 uuid 列 ⇒ 重复导入按 uuid 命中，表现为
+        #   **幂等更新**（不新增、不跳过）；条目总数不变。
         db4 = Database(_os.path.join(tmp, "d.db"))
         try:
-            import_excel(db4, xlsx)
+            _r1 = import_excel(db4, xlsx)
             res4 = import_excel(db4, xlsx)
-            assert res4["entries"] == 0 and res4["skipped"] == 1
+            assert _r1["entries"] == 1 and _r1["updated"] == 0
+            assert res4["entries"] == 0 and res4["updated"] == 1 and res4["skipped"] == 0
+            assert db4.conn.execute("SELECT COUNT(*) FROM entries").fetchone()[0] == 1
         finally:
             db4.close()
 
         print("[Excel] 追加『项目类别』列（导出取值正确·导入恢复归属）/旧模板兼容/"
-              "判重幂等 通过")
+              "按 uuid 幂等更新（重复导入不新增） 通过")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

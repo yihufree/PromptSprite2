@@ -30,6 +30,7 @@ from ..parser import json_io
 from .field_defs_diff_dialog import confirm_field_defs_file  # 2026-09-13：字段定义差异逐项确认
 from .github_batch_dialog import GithubBatchDialog          # 2026-09-14：5-c 批量多选
 from .progress_dialog import ProgressDialog
+from .ui_common import C_OK as _C_OK, C_DANGER as _C_DANGER  # 2026-09-17（U-2）：主色常量
 
 _IGNORE = himp.IGNORE_TARGET
 _NO_MAP = "（不映射）"
@@ -80,7 +81,7 @@ class _NewFieldDialog(ctk.CTkToplevel):
 
         btn = ctk.CTkFrame(self, fg_color="transparent")
         btn.grid(row=4, column=0, columnspan=2, sticky="e", padx=pad, pady=(8, 14))
-        ctk.CTkButton(btn, text="创建", width=92, fg_color="#2E8B57",
+        ctk.CTkButton(btn, text="创建", width=92, fg_color=_C_OK,
                       command=self._ok).pack(side="left", padx=4)
         ctk.CTkButton(btn, text="取消", width=92, command=self.destroy).pack(side="left", padx=4)
         self.name_entry.bind("<Return>", lambda _e=None: self._ok())
@@ -140,7 +141,7 @@ class _L2RulesDialog(ctk.CTkToplevel):
         ctk.CTkButton(foot, text="检查规则", width=96, fg_color="#8a94a6",
                       command=self._check).pack(side="left")
         ctk.CTkButton(foot, text="取消", width=88, command=self.destroy).pack(side="right")
-        ctk.CTkButton(foot, text="确定", width=88, fg_color="#2E8B57",
+        ctk.CTkButton(foot, text="确定", width=88, fg_color=_C_OK,
                       command=self._ok).pack(side="right", padx=(0, 8))
         ctk.CTkButton(foot, text="清空", width=72, fg_color="#8a94a6",
                       command=lambda: self.box.delete("1.0", "end")).pack(side="left",
@@ -154,13 +155,13 @@ class _L2RulesDialog(ctk.CTkToplevel):
     def _check(self) -> bool:
         rules, errors = self._rules()
         if errors:
-            self.msg_lbl.configure(text_color="#D9534F",
+            self.msg_lbl.configure(text_color=_C_DANGER,
                                    text="发现 %d 处问题：%s" % (len(errors), "；".join(errors[:3])))
             return False
         if not rules:
             self.msg_lbl.configure(text_color="#D08A00", text="还没有任何有效规则。")
             return False
-        self.msg_lbl.configure(text_color="#2E8B57",
+        self.msg_lbl.configure(text_color=_C_OK,
                                text=f"✔ 共 {len(rules)} 条规则，语法正确。")
         return True
 
@@ -250,7 +251,7 @@ class ImportWizardDialog(ctk.CTkToplevel):
         self.next_btn.pack(side="right", padx=(0, 8))
         # 2026-09-14（用户要求：结构化后**先保存成数据文件、再导入**）
         self.import_btn = ctk.CTkButton(foot, text="② 导入该文件", width=124,
-                                        fg_color="#2E8B57", state="disabled",
+                                        fg_color=_C_OK, state="disabled",
                                         command=self._import_saved)
         self.save_btn = ctk.CTkButton(foot, text="① 保存数据文件…", width=138,
                                       command=self._save_file)
@@ -477,14 +478,14 @@ class ImportWizardDialog(ctk.CTkToplevel):
             else:
                 r = fetcher.fetch_url(url, headers=hdrs, timeout=timeout, max_bytes=max_bytes)
         except Exception as exc:                     # noqa: BLE001
-            self.fetch_lbl.configure(text=f"❌ 抓取失败：{exc}", text_color="#D9534F")
+            self.fetch_lbl.configure(text=f"❌ 抓取失败：{exc}", text_color=_C_DANGER)
             return
         if not r.get("ok"):
             tip = ("　建议：① 检查网址与网络；② 换用「粘贴文本」；"
                    "③ 若为反爬站点，展开「高级」填写 Referer / Cookie 后重试。")
             self.fetch_lbl.configure(
                 text=f"❌ 抓取失败（{r.get('error_kind') or 'unknown'}）：{r.get('error')}{tip}",
-                text_color="#D9534F")
+                text_color=_C_DANGER)
             return
         note = f"通道={r.get('channel') or 'direct'}"
         # 2026-09-14（审核补充 P4）：降级抓取时把"通道链"显示出来（方案 4.2-2 要求）
@@ -505,7 +506,7 @@ class ImportWizardDialog(ctk.CTkToplevel):
         if not (owner and repo):
             self.fetch_lbl.configure(text="❌ 无法解析该 GitHub 链接（应形如 "
                                           "https://github.com/<用户>/<仓库>/tree/<分支>/<目录>）。",
-                                     text_color="#D9534F")
+                                     text_color=_C_DANGER)
             return
         ref = ref or "main"
         self.fetch_lbl.configure(text="⏳ 正在列举目录…", text_color="#2f6fb0")
@@ -527,7 +528,7 @@ class ImportWizardDialog(ctk.CTkToplevel):
                     return
             self.fetch_lbl.configure(
                 text=f"❌ {exc}　建议：① 检查链接/网络；② 该地址若为文件请用 raw 链接；"
-                     "③ 或改用「粘贴文本」。", text_color="#D9534F")
+                     "③ 或改用「粘贴文本」。", text_color=_C_DANGER)
             return
         if not fetcher.github_dir_files(items):
             self.fetch_lbl.configure(text="⚠ 该目录下没有文件（只有子目录）。"
@@ -573,7 +574,7 @@ class ImportWizardDialog(ctk.CTkToplevel):
         if not parts:
             self.fetch_lbl.configure(
                 text="❌ 所选文件全部抓取失败：" + "；".join(f"{n}：{e}" for n, e in failed[:3]),
-                text_color="#D9534F")
+                text_color=_C_DANGER)
             return
         merged = himp.merge_batch_parts(parts)
         self.batch_warnings = list(merged.get("warnings") or [])
@@ -598,7 +599,7 @@ class ImportWizardDialog(ctk.CTkToplevel):
             self._fill_preview(t["rows"])
             self._autofill_mapping()
             self.fetch_lbl.configure(
-                text=f"✅ 批量抓取完成：{note}\n　　{base}", text_color="#2E8B57")
+                text=f"✅ 批量抓取完成：{note}\n　　{base}", text_color=_C_OK)
             return
         self._source_from_text(merged.get("text") or "", base, "text/markdown", note=note)
 
@@ -650,7 +651,7 @@ class ImportWizardDialog(ctk.CTkToplevel):
                      if len(self._tables) > 1 else "")
             self.fetch_lbl.configure(
                 text=f"✅ 抓取成功：{base_url}\n　　{stat} · {note}{extra}",
-                text_color="#2E8B57")
+                text_color=_C_OK)
             return True
         # csv / text：按分隔符直接解析
         src = himp.split_delimited(text, None)
@@ -667,7 +668,7 @@ class ImportWizardDialog(ctk.CTkToplevel):
         self._fill_preview(src["rows"])
         self._autofill_mapping()
         self.fetch_lbl.configure(
-            text=f"✅ 抓取成功：{base_url}\n　　{stat} · {note}", text_color="#2E8B57")
+            text=f"✅ 抓取成功：{base_url}\n　　{stat} · {note}", text_color=_C_OK)
         return True
 
     def _fill_table_menu(self) -> int:
@@ -995,7 +996,7 @@ class ImportWizardDialog(ctk.CTkToplevel):
         if rules:
             self.l2_rule_var.set("1")
             self.l2_rule_lbl.configure(text=f"已启用 {len(rules)} 条规则（未命中归『其他』）",
-                                       text_color="#2E8B57")
+                                       text_color=_C_OK)
         else:
             self.l2_rule_var.set("0")
             self.l2_rule_lbl.configure(text="（未设置规则）", text_color="gray")
@@ -1032,7 +1033,7 @@ class ImportWizardDialog(ctk.CTkToplevel):
         f.grid_rowconfigure(7, weight=2)
         self.stat_lbl = ctk.CTkLabel(f, text="", justify="left", anchor="w",
                                      font=("Microsoft YaHei", 12, "bold"),
-                                     text_color="#2E8B57")
+                                     text_color=_C_OK)
         self.stat_lbl.grid(row=0, column=0, sticky="ew", pady=(2, 6))
         ctk.CTkLabel(f, text="层级树预览", font=("Microsoft YaHei", 11),
                      text_color="gray", anchor="w").grid(row=1, column=0, sticky="ew")

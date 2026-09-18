@@ -16,6 +16,7 @@ from tkinter import messagebox
 import customtkinter as ctk
 
 from .. import config
+from .ui_common import C_OK as _C_OK  # 2026-09-17（U-2）：主色常量
 
 
 class MigrateDialog(ctk.CTkToplevel):
@@ -86,7 +87,7 @@ class MigrateDialog(ctk.CTkToplevel):
         # 按钮
         btn = ctk.CTkFrame(self, fg_color="transparent")
         btn.pack(fill="x", padx=pad, pady=(6, 14))
-        ctk.CTkButton(btn, text="执行迁移", width=120, fg_color="#2E8B57",
+        ctk.CTkButton(btn, text="执行迁移", width=120, fg_color=_C_OK,
                       command=self._do_migrate).pack(side="right", padx=4)
         ctk.CTkButton(btn, text="取消", width=96,
                       command=self._close).pack(side="right", padx=4)

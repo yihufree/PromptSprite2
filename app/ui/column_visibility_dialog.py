@@ -19,6 +19,7 @@ column_visibility_dialog.py - 「目录隐藏 / 目录显示」对话框
 即 nav_hidden=0（左侧同步）；部分隐藏时两项都不选中。快捷可选项同样需点"确定"后生效。
 """
 import customtkinter as ctk
+from .ui_common import C_OK as _C_OK  # 2026-09-17（U-2）：主色常量
 
 # 分类列名称（顺序 = 主窗口从左到右的列顺序）
 NAV_COL_NAMES = ("项目类别", "根目录", "一级分类", "二级分类")
@@ -98,7 +99,7 @@ class ColumnVisibilityDialog(ctk.CTkToplevel):
 
         btn_row = ctk.CTkFrame(self, fg_color="transparent")
         btn_row.grid(row=3, column=0, columnspan=2, sticky="e", padx=pad, pady=(4, 16))
-        ctk.CTkButton(btn_row, text="确定", width=96, fg_color="#2E8B57",
+        ctk.CTkButton(btn_row, text="确定", width=96, fg_color=_C_OK,
                       command=self._apply).pack(side="left", padx=4)
         ctk.CTkButton(btn_row, text="取消", width=96,
                       command=self.destroy).pack(side="left", padx=4)

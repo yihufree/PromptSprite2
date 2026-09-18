@@ -21,13 +21,17 @@ from typing import List, Optional
 
 from .config import (data_dir, IMAGES_DIR_NAME, PRESET_DOMAINS, PROJECT_PRESETS,
                      PROJECT_FALLBACK, PROJECT_DOMAIN_MAPPING,
-                     META_HOTWORDS, META_HOTWORD_SOURCES)  # 2026-09-14 11:15（阶段 4）：热点词表 meta 键
-from .models import Entry  # 2026-08-18（P2-5）：Domain/Category 冗余数据类已删除，仅保留 Entry
+                     META_HOTWORDS, META_HOTWORD_SOURCES,
+                     META_DETAIL_HIDDEN_FIELDS)  # 2026-09-16（批次 14）：详情区手动隐藏字段 meta 键
+from .config import now_str as _cfg_now_str  # 2026-09-17（审核 R-4）：公共时间工具
+from .models import Entry, new_entry_uuid  # 2026-09-17（FR-93）：条目稳定 ID 生成器
 
 
 def _now() -> str:
-    """当前时间字符串（用于 created_at / updated_at）"""
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    """当前时间字符串（用于 created_at / updated_at）
+    2026-09-17（审核 R-4）：实现统一到 `config.now_str()`，本函数保留为薄封装。
+    """
+    return _cfg_now_str()
 
 
 # 建表 SQL（schema v3，2026-08-29 四级分类施工）：
@@ -91,8 +95,16 @@ CREATE TABLE IF NOT EXISTS entries (
     image_path  TEXT DEFAULT '',
     is_favorite INTEGER DEFAULT 0,
     created_at  TEXT,
-    updated_at  TEXT
+    updated_at  TEXT,
+    -- 2026-09-17（FR-93，schema v5）：条目**稳定身份**（uuid4 hex，跨机器一致）。
+    --   空串 = 尚未分配（正常不会为空：新增自动生成、老库迁移回填）。
+    --   放在最后，与老库 ALTER TABLE ADD COLUMN 的追加位置保持一致（顺序语义不敏感，仅便于核对）。
+    uuid        TEXT DEFAULT ''
 );
+
+-- 2026-09-17（FR-93，schema v5）：uuid 的**部分唯一索引**——空串（未分配）不参与唯一性约束。
+-- 注意：本语句**不能**放进旧库的建表脚本早期执行（旧表尚无 uuid 列）⇒
+--   实际由 `_migrate_v4_to_v5()` 在"补列完成之后"执行（本处仅对新库生效）。
 
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
@@ -209,8 +221,15 @@ SCHEMA_VERSION = "4"
 
 # schema v4：内置字段定义（field_key, 显示名, 类型, is_builtin, sort_order）
 # 说明：① 条目名称 也在其中（与界面 10 个区块一一对应）；⑩ 图像获取方案 为链接型。
+# 2026-09-16（批次 13，用户要求"详情区区块自由排序"）：新增 3 个**虚拟区块**
+#   （_tags 标签 / _location 位置 / _time 时间），它们不是 entries 表的真实字段，
+#   仅用于"详情区区块排序"——渲染时按 sort_order 决定位置，不存在对应的列。
+#   sort_order 用负数，确保排在内置 ②~⑩ 之前（与原有渲染顺序一致）。
 _PRESET_FIELDS = (
     ("name", "① 条目名称", "text", 1, 0),
+    ("_location", "🧭 位置", "virtual", 1, -3),
+    ("_time", "🕒 时间", "virtual", 1, -2),
+    ("_tags", "🏷 标签", "virtual", 1, -1),
     ("intro", "② 介绍", "textarea", 1, 1),
     ("origin", "③ 溯源", "textarea", 1, 2),
     ("features", "④ 核心特征", "textarea", 1, 3),
@@ -299,6 +318,8 @@ class Database:
           避免首次增量误把存量分类当"今日新增"）、新建 deletion_log 删除日志表。
         - v3→v4（2026-09-13，第 1 期地基）：新增 field_defs/entry_field_values/entry_ref_links/
           tags/entry_tags 五表（建表由 _SCHEMA_SQL 完成）＋ 预置内置 10 个字段定义；不搬动既有数据。
+        - v4→v5（2026-09-17，FR-93）：`entries` 补 `uuid` 列（条目**稳定身份**）＋ 回填 ＋
+          部分唯一索引；**不搬动既有数据**，不动 entry_links（多位置关系不变）。
         注：v2→v3 仅做"结构"升级（建表/加列/预置），不移动任何数据；
         根目录→项目类别的"归属分配"由 assign_domains_to_projects() 执行（迁移向导/自动迁移）。
         """
@@ -306,6 +327,46 @@ class Database:
         self._migrate_v2_to_v3()
         self._ensure_v3_enhancements()
         self._migrate_v3_to_v4()
+        # 2026-09-16（批次 13）：补齐详情区虚拟区块定义（_tags/_location/_time），
+        # 无论新库旧库都执行（幂等），确保老库也能使用"区块自由排序"功能。
+        self.ensure_virtual_blocks()
+        # 2026-09-17（FR-93，schema v5）：条目稳定 ID（uuid）——加列 + 回填 + 部分唯一索引。
+        self._migrate_v4_to_v5()
+
+    def _migrate_v4_to_v5(self) -> None:
+        """v4 → v5（2026-09-17，FR-93：条目**稳定 ID**）——**幂等**。
+
+        做什么：
+          1. 为 `entries` 补 `uuid` 列（**仅**老库需要；新库建表时已带该列）；
+          2. 为 `uuid` 为空/为 NULL 的条目**逐个回填** `new_entry_uuid()`（uuid4 hex）；
+          3. 建立**部分唯一索引** `idx_entries_uuid`（空串不参与唯一性）；
+          4. 写 `schema_version = "5"`。
+
+        **不搬动任何既有数据**：不动条目的任何字段，也不动 `entry_links`
+        （多位置关系仍按 `entries.id` 记录，uuid 只解决"跨机器认人"）。
+
+        重要（步骤顺序）：索引**必须**在补列之后建立——若把 `CREATE UNIQUE INDEX ... (uuid)`
+        放进 `_SCHEMA_SQL` 并在旧库上提前执行，会因"旧表没有 uuid 列"而报错。
+        故本方法在**版本已为 5 时也会**补建索引（防止极端情况下索引缺失）。
+        """
+        if self.get_meta("schema_version") != "5":
+            if not self._has_column("entries", "uuid"):
+                self.conn.execute("ALTER TABLE entries ADD COLUMN uuid TEXT DEFAULT ''")
+                self.conn.commit()
+            # 回填：只为"缺失"的条目生成（可重复执行，已分配的不动 ⇒ 幂等）
+            _ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM entries WHERE uuid IS NULL OR uuid = ''").fetchall()]
+            for _eid in _ids:
+                self.conn.execute("UPDATE entries SET uuid = ? WHERE id = ?",
+                                  (new_entry_uuid(), _eid))
+            self.conn.commit()
+            self.set_meta("schema_version", "5")
+        # 索引：无论何时都确保存在（幂等；空串不参与唯一性）
+        if self._has_column("entries", "uuid"):
+            self.conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_entries_uuid"
+                " ON entries(uuid) WHERE uuid <> ''")
+            self.conn.commit()
 
     def _ensure_v3_enhancements(self) -> None:
         """v3 增量备份增强（幂等）：categories 时间戳列 + deletion_log 表 + entry_links 表。
@@ -437,6 +498,23 @@ class Database:
                 " sort_order, config_json, archived, created_at, updated_at)"
                 " VALUES(?,?,?,?,?,'',0,?,?)",
                 (field_key, display_name, field_type, is_builtin, order, now, now))
+        self.conn.commit()
+
+    # 2026-09-16（批次 13）：为已有数据库补齐"虚拟区块"定义（_tags/_location/_time）。
+    #   这三个区块不是 entries 表的真实列，仅用于详情区排序；老库在 schema v4 迁移时
+    #   只有 10 个内置字段，需要在此补齐。幂等：已存在则跳过。
+    def ensure_virtual_blocks(self) -> None:
+        """补齐虚拟区块定义（_tags / _location / _time），幂等。"""
+        now = _now()
+        existing = {r["field_key"] for r in self.conn.execute(
+            "SELECT field_key FROM field_defs").fetchall()}
+        for field_key, display_name, field_type, is_builtin, order in _PRESET_FIELDS:
+            if field_key.startswith("_") and field_key not in existing:
+                self.conn.execute(
+                    "INSERT INTO field_defs(field_key, display_name, field_type, is_builtin,"
+                    " sort_order, config_json, archived, created_at, updated_at)"
+                    " VALUES(?,?,?,?,?,'',0,?,?)",
+                    (field_key, display_name, field_type, is_builtin, order, now, now))
         self.conn.commit()
 
     def list_field_defs(self, include_archived: bool = False) -> List[dict]:
@@ -661,11 +739,17 @@ class Database:
         toks = [str(t).strip() for t in (tokens or []) if _parse_ref_token(t)[0]]
         if not toks:
             return {"total": 0, "fields": []}
-        where = " OR ".join(["value_json LIKE ?"] * len(toks))
+        # 2026-09-17（审核报告 S-3）：转义 LIKE 通配符 `%` / `_`（及转义符自身 `\`），
+        #   并显式声明 ESCAPE —— 否则令牌里若含通配符会导致引用计数**偏多**。
+        #   （实际令牌形如 `cat:12` / `entry:345`，本不含这些字符；此处为防御性处理。）
+        def _like(t: str) -> str:
+            _e = (t.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_"))
+            return '%%"%s"%%' % _e      # 注意：% 需写成 %%（这里是 Python 格式化，不是 LIKE）
+        where = " OR ".join(["value_json LIKE ? ESCAPE '\\'"] * len(toks))
         rows = self.conn.execute(
             "SELECT field_key, COUNT(1) AS n FROM entry_field_values"
             f" WHERE {where} GROUP BY field_key ORDER BY n DESC",
-            [f'%"{t}"%' for t in toks]).fetchall()
+            [_like(t) for t in toks]).fetchall()
         names = {d["field_key"]: d["display_name"]
                  for d in self.list_field_defs(include_archived=True)}
         fields = [{"field_key": r["field_key"],
@@ -903,6 +987,41 @@ class Database:
             (_now(), field_key))
         self.conn.commit()
 
+    # ------------------------------------------------------------------ #
+    # 2026-09-16（批次 14，用户要求"字段管理中各区块可逐个隐藏/显示"）
+    #   详情区"手动隐藏"字段：**纯显示偏好**，存 meta 表（逗号分隔的 field_key），
+    #   不改 field_defs 表结构、不改导入导出格式；被隐藏字段的内容仍在库中，
+    #   照常导出、照常参与搜索，取消隐藏后立即回到详情区。
+    #   语义为**硬隐藏**：无论详情字段显示策略如何都不显示（详见 config 注释）。
+    # ------------------------------------------------------------------ #
+    def get_hidden_field_keys(self) -> set:
+        """读取详情区"手动隐藏"的字段键集合（无设置/异常时返回空集合）。
+
+        - ① 名称（field_key="name"）**永不隐藏**：读取时直接剔除，
+          保证任何写入路径（含手工改库）都无法把名称项隐藏掉；
+        - 只做"去空、去重、剔除 name"，不校验字段是否存在
+          （字段可能稍后被归档/删除，此处无需强耦合）。
+        """
+        try:
+            raw = self.get_meta(META_DETAIL_HIDDEN_FIELDS) or ""
+        except Exception:                                   # noqa: BLE001
+            return set()
+        out = set()
+        for part in str(raw).split(","):
+            k = part.strip()
+            if k and k != "name":
+                out.add(k)
+        return out
+
+    def set_hidden_field_keys(self, keys) -> None:
+        """写入详情区"手动隐藏"的字段键集合（排序后逗号拼接，幂等）。
+
+        写入前统一过滤：空串剔除、去重、**剔除 name**（名称项不可隐藏）。
+        """
+        safe = sorted({str(k).strip() for k in (keys or [])
+                       if str(k).strip() and str(k).strip() != "name"})
+        self.set_meta(META_DETAIL_HIDDEN_FIELDS, ",".join(safe))
+
     def _touch_entry_updated_at(self, entry_id: int) -> None:
         """把条目的 `entries.updated_at` 刷新为当前时间（2026-09-14，审核修复 P1-D）。
 
@@ -922,14 +1041,27 @@ class Database:
 
         约定：内置 10 字段仍写 entries 既有列，**不调用本方法**；
         本方法只服务 field_key = custom_xxx 的自定义字段。
+
+        2026-09-17（审核报告 M-2）：把上述"隐式契约"**显式化**——对非 `custom_` 前缀的
+        `field_key` 直接抛 `ValueError`。拒绝两类误用：
+          · 内置 10 字段（name/intro/…）：它们的值在 `entries` 的列里，写进本表会造成
+            "同一字段两处存储"的不一致；
+          · 虚拟区块（`_tags` / `_location` / `_time`）：它们只是详情区的显示区块，
+            **不是条目的真实字段**，不应有取值。
+        现有调用方（UI 的 `_extra_field_getters`、导入路径、自测）本就只传自定义字段，
+        故本断言**不改变任何既有行为**，只为将来新增调用点时兜底。
         """
+        _k = str(field_key or "")
+        if not _k.startswith("custom_"):
+            raise ValueError(
+                "set_entry_field_value() 仅接受 custom_ 前缀的自定义字段，收到：%r" % field_key)
         self.conn.execute(
             "INSERT INTO entry_field_values(entry_id, field_key, value_text, value_json,"
             " updated_at) VALUES(?,?,?,?,?)"
             " ON CONFLICT(entry_id, field_key) DO UPDATE SET"
             " value_text = excluded.value_text, value_json = excluded.value_json,"
             " updated_at = excluded.updated_at",
-            (entry_id, field_key, value_text or "", value_json or "", _now()))
+            (entry_id, _k, value_text or "", value_json or "", _now()))
         self._touch_entry_updated_at(entry_id)   # P1-D：让变更包能采集到这次改动
         self.conn.commit()
 
@@ -2005,6 +2137,17 @@ class Database:
     # 条目 Entry
     # ------------------------------------------------------------------ #
     @staticmethod
+    def _entry_uuid_for(entry) -> str:
+        """取该条目的**稳定 ID**；为空则现场生成（2026-09-17，FR-93）。
+
+        - 普通新增：`Entry.uuid` 为空 ⇒ 自动分配；
+        - 导入 / 回收站恢复：`Entry.uuid` 已有值 ⇒ **沿用**（这正是"同一条目跨机器认人"的关键）；
+        - "复制到（独立副本）"与"分类子树深拷贝"：调用方会显式传**空串** ⇒ 分配新 ID（副本是新条目）。
+        """
+        _u = str(getattr(entry, "uuid", "") or "").strip()
+        return _u or new_entry_uuid()
+
+    @staticmethod
     def _entry_params(entry: Entry) -> tuple:
         return (
             entry.category_id, entry.name, entry.intro, entry.origin, entry.features,
@@ -2014,11 +2157,15 @@ class Database:
 
     def add_entry(self, entry: Entry) -> int:
         ts = _now()
+        # 2026-09-16（批次 11-7，用户要求 3）：`Entry.created_at` 非空时**保留原创建时间**
+        #   （导入/恢复场景）；为空则仍取当前时间 ⇒ 普通新增行为**完全不变**。
+        ca = str(getattr(entry, "created_at", "") or "").strip() or ts
+        # 2026-09-17（FR-93）：稳定 ID —— 空则自动分配，已有则沿用（导入/恢复）
         cur = self.conn.execute(
             "INSERT INTO entries(category_id, name, intro, origin, features, scenes, works, "
             "image_desc, prompt_cn, prompt_en, image_plan, image_path, is_favorite, "
-            "created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (*self._entry_params(entry), ts, ts),
+            "created_at, updated_at, uuid) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (*self._entry_params(entry), ca, ts, self._entry_uuid_for(entry)),
         )
         self.conn.commit()
         return cur.lastrowid
@@ -2027,13 +2174,18 @@ class Database:
         """批量插入条目（单事务提交，比逐条 add_entry 快；JSON/Excel 大文件导入用）。
 
         2026-08-18（P2-4 新增）：避免大文件导入时逐条 commit 的性能与碎片化开销。
+        2026-09-16（批次 11-7）：`Entry.created_at` 非空时保留原创建时间（导出→导入不丢）。
+        2026-09-17（FR-93）：每条写入稳定 ID（空则分配、已有则沿用）。
         """
         ts = _now()
         cols = ("category_id", "name", "intro", "origin", "features", "scenes", "works",
                 "image_desc", "prompt_cn", "prompt_en", "image_plan", "image_path",
-                "is_favorite", "created_at", "updated_at")
+                "is_favorite", "created_at", "updated_at", "uuid")
         ph = ",".join("?" * len(cols))
-        params = [(*self._entry_params(e), ts, ts) for e in entries]
+        params = [(*self._entry_params(e),
+                   str(getattr(e, "created_at", "") or "").strip() or ts, ts,
+                   self._entry_uuid_for(e))
+                  for e in entries]
         self.conn.executemany(
             f"INSERT INTO entries({', '.join(cols)}) VALUES({ph})", params)
         self.conn.commit()
@@ -2060,6 +2212,8 @@ class Database:
         return "\x1f".join(parts)
 
     def update_entry(self, entry: Entry) -> None:
+        # 2026-09-17（FR-93）：**刻意不更新 uuid** —— 修改条目必须保持其稳定身份不变
+        #   （这正是"换机同步时'修改'能识别为同一条"的前提）。
         self.conn.execute(
             "UPDATE entries SET category_id = ?, name = ?, intro = ?, origin = ?, features = ?, "
             "scenes = ?, works = ?, image_desc = ?, prompt_cn = ?, prompt_en = ?, "
@@ -2070,6 +2224,17 @@ class Database:
 
     def get_entry(self, entry_id: int) -> Optional[dict]:
         row = self.conn.execute("SELECT * FROM entries WHERE id = ?", (entry_id,)).fetchone()
+        return dict(row) if row else None
+
+    def get_entry_by_uuid(self, entry_uuid: str) -> Optional[dict]:
+        """按**稳定 ID** 取条目（2026-09-17，FR-93：导入 / 变更包"按 uuid 认人"用）。
+
+        空串 / 空值直接返回 None（空串不是有效身份）；不存在返回 None。
+        """
+        _u = str(entry_uuid or "").strip()
+        if not _u:
+            return None
+        row = self.conn.execute("SELECT * FROM entries WHERE uuid = ?", (_u,)).fetchone()
         return dict(row) if row else None
 
     def delete_entry(self, entry_id: int, purge_image: bool = True) -> None:
@@ -2190,8 +2355,8 @@ class Database:
                 cur = self.conn.execute(
                     "INSERT INTO entries(category_id, name, intro, origin, features, scenes, "
                     "works, image_desc, prompt_cn, prompt_en, image_plan, image_path, "
-                    "is_favorite, created_at, updated_at) "
-                    "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "is_favorite, created_at, updated_at, uuid) "
+                    "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (main,
                      payload.get("name", row["name"]),
                      payload.get("intro", ""), payload.get("origin", ""),
@@ -2200,7 +2365,10 @@ class Database:
                      payload.get("prompt_cn", ""), payload.get("prompt_en", ""),
                      payload.get("image_plan", ""), payload.get("image_path", ""),
                      1 if payload.get("is_favorite") else 0,
-                     payload.get("created_at") or now, now))
+                     payload.get("created_at") or now, now,
+                     # 2026-09-17（FR-93）：**沿用快照里的稳定 ID**（恢复后仍是"同一条目"）；
+                     # 老快照（v5 之前写入）没有 uuid ⇒ 现场分配一个。
+                     str(payload.get("uuid") or "").strip() or new_entry_uuid()))
                 new_id = cur.lastrowid
                 # 2026-09-13（1-A-5 第 3 步·下）：从回收站快照恢复自定义字段取值
                 # 2026-09-13（3-b）：结构化取值（目录层级型的令牌+快照名）同时恢复
@@ -2404,13 +2572,30 @@ class Database:
         except OSError:
             pass
 
-    def list_entries(self, category_id: int, include_descendants: bool = False) -> List[dict]:
+    # 条目区排序白名单（2026-09-16 批次 11-7，用户要求 3）：避免把用户输入拼进 SQL
+    _ENTRY_ORDER_SQL = {
+        "updated": "updated_at DESC, id",
+        "created": "created_at DESC, id DESC",
+        "name": "name COLLATE NOCASE ASC, id",
+    }
+
+    @classmethod
+    def entry_order_sql(cls, order_by: Optional[str] = None) -> str:
+        """条目排序 SQL 片段（**白名单**）：非法 / None ⇒ 默认"最后修改时间倒序"。"""
+        return cls._ENTRY_ORDER_SQL.get(order_by or "", cls._ENTRY_ORDER_SQL["updated"])
+
+    def list_entries(self, category_id: int, include_descendants: bool = False,
+                     order_by: Optional[str] = None) -> List[dict]:
         """列出某分类可见条目（主挂靠=该分类 ∪ 关联表含该分类，去重）。
 
         include_descendants=True 时含所有子分类子树内的可见条目。
         2026-09-07（条目多位置施工）：单分类列举由"只看 category_id"改为两路并集，
         使"关联到"的条目也能在对应分类下列出。
+        order_by（2026-09-16 批次 11-7，用户要求 3）：条目区排序方式，**白名单**取值——
+          None / "updated"（默认，最后修改时间倒序）/ "created"（新增时间倒序）/ "name"（名称升序）；
+          非法值一律回退默认 ⇒ 老调用方（不传）行为**完全不变**。
         """
+        _order = self.entry_order_sql(order_by)
         if include_descendants:
             ids = self._collect_category_ids(category_id)
             if not ids:
@@ -2422,7 +2607,7 @@ class Database:
                 " UNION "
                 f" SELECT e.* FROM entries e JOIN entry_links l ON l.entry_id = e.id"
                 f"  WHERE l.category_id IN ({ph})"
-                ") ORDER BY updated_at DESC, id",
+                f") ORDER BY {_order}",
                 ids + ids,
             ).fetchall()
         else:
@@ -2432,7 +2617,7 @@ class Database:
                 " UNION "
                 " SELECT e.* FROM entries e JOIN entry_links l ON l.entry_id = e.id"
                 "  WHERE l.category_id = ?"
-                ") ORDER BY updated_at DESC, id",
+                f") ORDER BY {_order}",
                 (category_id, category_id),
             ).fetchall()
         return [dict(r) for r in rows]
@@ -2686,11 +2871,14 @@ class Database:
                 cur = self.conn.execute(
                     "INSERT INTO entries(category_id, name, intro, origin, features, scenes, "
                     "works, image_desc, prompt_cn, prompt_en, image_plan, image_path, "
-                    "is_favorite, created_at, updated_at) "
-                    "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "is_favorite, created_at, updated_at, uuid) "
+                    "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (target_cat_id, name, e["intro"], e["origin"], e["features"],
                      e["scenes"], e["works"], e["image_desc"], e["prompt_cn"],
-                     e["prompt_en"], e["image_plan"], e["image_path"], 0, ts, ts))
+                     e["prompt_en"], e["image_plan"], e["image_path"], 0, ts, ts,
+                     # 2026-09-17（FR-93）：**复制到 = 独立副本** ⇒ 分配**新**稳定 ID
+                     #   （不可沿用原条目 uuid，否则跨机器会被误认成"同一条目"）。
+                     new_entry_uuid()))
                 new_id = cur.lastrowid
                 # 2026-09-13（1-A-5 第 3 步·下）：自定义字段取值一并复制（独立副本）
                 for r in self.conn.execute(
@@ -3029,12 +3217,14 @@ class Database:
         cid = self._insert_category_tx(new_parent_id, new_name, new_domain_id)
         ts = _now()
         for e in self.list_entries(src_id):
-            entry = Entry(**{**e, "id": None, "category_id": cid})
+            # 2026-09-17（FR-93）：分类子树深拷贝产出的是**独立副本** ⇒ uuid 置空以分配**新** ID
+            #   （不可沿用原条目的 uuid，否则跨机器会被误认成"同一条目"）。
+            entry = Entry(**{**e, "id": None, "category_id": cid, "uuid": ""})
             cur = self.conn.execute(
                 "INSERT INTO entries(category_id, name, intro, origin, features, scenes, works, "
                 "image_desc, prompt_cn, prompt_en, image_plan, image_path, is_favorite, "
-                "created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (*self._entry_params(entry), ts, ts),
+                "created_at, updated_at, uuid) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (*self._entry_params(entry), ts, ts, new_entry_uuid()),
             )
             self._copy_aux_tx(e["id"], cur.lastrowid, ts)
         for child in self.list_categories(parent_id=src_id):
@@ -3752,6 +3942,34 @@ def _selftest() -> None:
         assert db.get_entry(e_in2) is None
         print("[30] 分类删除保护：安全删除/级联短语 通过")
 
+        # 31. 条目排序白名单 + 创建时间保真（2026-09-16 批次 11-7，用户要求 3）
+        assert Database.entry_order_sql(None) == "updated_at DESC, id"
+        assert Database.entry_order_sql("坏值; DROP TABLE") == "updated_at DESC, id", "非法值须回退默认"
+        assert "created_at" in Database.entry_order_sql("created")
+        assert "name" in Database.entry_order_sql("name")
+        _did31 = db.add_domain("排序测试根")
+        _cid31 = db.add_category("排序测试类", domain_id=_did31)
+        _eid_old = db.add_entry(Entry(category_id=_cid31, name="排序-1",
+                                      created_at="2001-01-01 00:00:00"))
+        _eid_new = db.add_entry(Entry(category_id=_cid31, name="排序-2"))
+        assert db.get_entry(_eid_old)["created_at"] == "2001-01-01 00:00:00", \
+            "Entry.created_at 非空时须保留（导入/恢复不丢时间）"
+        _ca_new = db.get_entry(_eid_new)["created_at"]
+        assert _ca_new and _ca_new != "2001-01-01 00:00:00", "未指定时仍取当前时间"
+        _by_created = [x["name"] for x in db.list_entries(_cid31, order_by="created")]
+        assert _by_created == ["排序-2", "排序-1"], _by_created         # 新增时间倒序（新的在前）
+        _by_name = [x["name"] for x in db.list_entries(_cid31, order_by="name")]
+        assert _by_name == ["排序-1", "排序-2"], _by_name               # 名称升序
+        assert len(db.list_entries(_cid31, order_by="怪值")) == 2       # 非法排序不报错
+        # 批量插入同样保留 created_at
+        _n31 = db.add_entries_batch([Entry(category_id=_cid31, name="排序-3",
+                                           created_at="2002-02-02 00:00:00")])
+        assert _n31 == 1
+        _c31 = [x for x in db.list_entries(_cid31, order_by="created")
+                if x["name"] == "排序-3"]
+        assert _c31 and _c31[0]["created_at"] == "2002-02-02 00:00:00", _c31
+        print("[31] 条目排序白名单/创建时间保真 通过")
+
         print(f"[统计] {db.stats()}")
         print("=== 数据库层全部自测通过 ===")
     finally:
@@ -3792,9 +4010,10 @@ def _migrate_selftest() -> None:
         conn.commit()
         conn.close()
 
-        db = Database(v2)  # 触发结构迁移 v2→v3→v4
+        _u = ""   # 迁移后第 1 条的 uuid（供"重开幂等"断言比对；提前初始化避免掩盖真实错误）
+        db = Database(v2)  # 触发结构迁移 v2→v3→v4→v5
         try:
-            assert db.get_meta("schema_version") == "4"
+            assert db.get_meta("schema_version") == "5"
             assert db._has_column("domains", "project_id")
             assert len(db.list_projects()) == 5
             assert db.get_entry(1)["name"] == "迁移条目"  # 数据无损
@@ -3804,7 +4023,16 @@ def _migrate_selftest() -> None:
                 assert db.conn.execute(
                     "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
                     (t,)).fetchone()[0] == 1, t
-            assert len(db.list_field_defs()) == 10
+            assert len(db.list_field_defs()) == 13  # 2026-09-16：10 内置 + 3 虚拟区块
+            # v4→v5（2026-09-17，FR-93）：entries 补 uuid 列 + 回填 + 部分唯一索引
+            assert db._has_column("entries", "uuid")
+            _u = db.get_entry(1)["uuid"]
+            assert _u and len(_u) == 32, _u                     # 老条目已被回填
+            assert db.conn.execute(
+                "SELECT COUNT(*) FROM entries WHERE uuid IS NULL OR uuid=''").fetchone()[0] == 0
+            assert db.conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index'"
+                " AND name='idx_entries_uuid'").fetchone()[0] == 1
             # 归属分配：全命中 + 未知根目录未回答 → 兜底"未明确分类"
             st = db.assign_domains_to_projects(PROJECT_DOMAIN_MAPPING)
             assert st["matched"] == 2, st
@@ -3816,16 +4044,17 @@ def _migrate_selftest() -> None:
             # 幂等：重跑不再产生变化
             st2 = db.assign_domains_to_projects({}, None)
             assert st2 == {"matched": 0, "unmatched": 0, "fallback": 0}, st2
-            print("[迁移] v2→v4 结构升级/字段预置/归属分配/兜底/幂等 通过")
+            print("[迁移] v2→v5 结构升级/字段预置/uuid回填/归属分配/兜底/幂等 通过")
         finally:
             db.close()
-        # 幂等：重开库不再重复迁移
+        # 幂等：重开库不再重复迁移（uuid 保持不变）
         db2 = Database(v2)
         try:
-            assert db2.get_meta("schema_version") == "4"
+            assert db2.get_meta("schema_version") == "5"
+            assert db2.get_entry(1)["uuid"] == _u                   # 重开不改 uuid
             assert len(db2.list_projects()) == 6  # 5 预置 + 未明确分类
-            assert len(db2.list_field_defs()) == 10  # 不重复预置
-            print("[迁移] 重开幂等 通过")
+            assert len(db2.list_field_defs()) == 13  # 2026-09-16：10 内置 + 3 虚拟（迁移后补齐）
+            print("[迁移] 重开幂等（含 uuid 不变）通过")
         finally:
             db2.close()
     finally:
@@ -3833,7 +4062,7 @@ def _migrate_selftest() -> None:
 
 
 def _fields_selftest() -> None:
-    """schema v4 字段定义（第 1 期地基）自测：预置/读取/改名/幂等/不重复预置。"""
+    """字段定义（第 1 期地基；2026-09-17 起库结构为 v5）自测：预置/读取/改名/幂等/不重复预置。"""
     import shutil
     import tempfile
 
@@ -3842,14 +4071,15 @@ def _fields_selftest() -> None:
         p = os.path.join(tmp, "fields.db")
         db = Database(p)
         try:
-            assert db.get_meta("schema_version") == "4"
+            assert db.get_meta("schema_version") == "5"
             defs = db.list_field_defs()
-            assert len(defs) == 10, len(defs)
-            # 顺序与内置键一致
+            assert len(defs) == 13, len(defs)  # 2026-09-16：10 内置 + 3 虚拟区块
+            # 顺序：虚拟区块（sort_order 负）→ name → ②~⑩
             assert [d["field_key"] for d in defs] == [
+                "_location", "_time", "_tags",
                 "name", "intro", "origin", "features", "scenes",
                 "works", "image_desc", "prompt_cn", "prompt_en", "image_plan"]
-            # 10 项均为内置、不可删除（is_builtin=1）
+            # 13 项均为内置、不可删除（is_builtin=1）
             assert all(d["is_builtin"] == 1 for d in defs)
             # 类型：① 短文本；⑧⑨ 长文本；⑩ 链接
             assert db.get_field_def("name")["field_type"] == "text"
@@ -3862,7 +4092,7 @@ def _fields_selftest() -> None:
             # 重开幂等：不重复预置，改名保留
             db.close()
             db = Database(p)
-            assert len(db.list_field_defs()) == 10
+            assert len(db.list_field_defs()) == 13  # 2026-09-16：10 内置 + 3 虚拟区块
             assert db.get_field_def("image_desc")["display_name"] == "⑦ 高清配图（改名测试）"
             assert db.get_field_def("__no_such__") is None
             print("[字段] schema v4 预置/类型/改名/幂等 通过")
@@ -3870,7 +4100,7 @@ def _fields_selftest() -> None:
             assert db.add_field_def("作者", "text") == "custom_1"
             assert db.add_field_def("发布日期", "date") == "custom_2"
             defs2 = db.list_field_defs()
-            assert len(defs2) == 12, len(defs2)
+            assert len(defs2) == 15, len(defs2)  # 2026-09-16：13 预置 + 2 自定义
             assert defs2[-1]["field_key"] == "custom_2"    # 追加到末尾
             assert defs2[-1]["is_builtin"] == 0            # 自定义字段
             assert db.get_field_def("custom_1")["field_type"] == "text"
@@ -3883,7 +4113,7 @@ def _fields_selftest() -> None:
             # 重开：自定义字段与改名均保留，且键不重复
             db.close()
             db = Database(p)
-            assert len(db.list_field_defs()) == 12
+            assert len(db.list_field_defs()) == 15  # 2026-09-16：13 预置 + 2 自定义
             assert db.add_field_def("第三个", "textarea") == "custom_3"
             print("[字段] 新增自定义字段（键生成/类型校验/末尾追加/持久化）通过")
             # ---- 1-A-5 第 3 步（上）：归档/恢复 + 自定义字段排序 ----
@@ -3901,7 +4131,7 @@ def _fields_selftest() -> None:
                     raise SystemExit(f"内置字段不应可归档：{bad}")
                 except ValueError:
                     pass
-            # 排序：仅自定义字段之间（内置 10 项不参与）
+            # 排序：自定义字段之间（2026-09-16：UI 层已放开内置/虚拟也参与排序）
             cids = [d["id"] for d in db.list_field_defs() if not d["is_builtin"]]
             assert len(cids) == 3, cids
             assert db.swap_order("field_defs", cids, cids[1], -1) is True
@@ -3916,6 +4146,24 @@ def _fields_selftest() -> None:
             assert db.get_entry_field_value(eid2, "custom_1") == "保留内容"
             db.restore_field_def("custom_1")
             print("[字段] 归档/恢复/内置不可归档/排序/取值保留 通过")
+            # ---- 2026-09-16（批次 14）：详情区"手动隐藏"字段（meta 存储，硬隐藏）----
+            _n_defs_before = len(db.list_field_defs())   # 隐藏前后字段定义数应完全不变
+            assert db.get_hidden_field_keys() == set()          # 默认无隐藏
+            db.set_hidden_field_keys(["origin", "_tags", "custom_2"])
+            assert db.get_hidden_field_keys() == {"origin", "_tags", "custom_2"}
+            # 去空 / 去重 / 剔除 name（① 名称永不隐藏）
+            db.set_hidden_field_keys(["origin", "origin", "  ", "name", " _time "])
+            assert db.get_hidden_field_keys() == {"origin", "_time"}
+            # 幂等：重复写入同一集合不产生变化
+            db.set_hidden_field_keys(["origin", "_time"])
+            assert db.get_hidden_field_keys() == {"origin", "_time"}
+            # 清空
+            db.set_hidden_field_keys([])
+            assert db.get_hidden_field_keys() == set()
+            # 隐藏**不改变**字段定义与取值（纯显示偏好，不影响数据）
+            assert len(db.list_field_defs()) == _n_defs_before
+            assert db.get_entry_field_value(eid2, "custom_1") == "保留内容"
+            print("[字段] 手动隐藏（meta 读写/去空去重/剔除name/清空/不影响数据）通过")
         finally:
             db.close()
     finally:
@@ -3944,9 +4192,9 @@ def _field_values_selftest() -> None:
             assert len(db.list_entry_field_values(eid)) == 1
             # 2. 未写入返回 None（区别于写入空串）
             assert db.get_entry_field_value(eid, "custom_none") is None
-            # 3. 统一读取层：内置 10 项恒在 + 自定义项并入；不存在条目返回空 dict
+            # 3. 统一读取层：内置 13 项恒在（10 内置 + 3 虚拟）+ 自定义项并入；不存在条目返回空 dict
             f = db.get_entry_fields(eid)
-            assert len([k for k in f if not k.startswith("custom_")]) == 10, f
+            assert len([k for k in f if not k.startswith("custom_")]) == 13, f
             assert f["name"] == "字段测试条目"
             assert f["intro"] == "内置介绍内容"
             assert f["custom_author"] == "李四"

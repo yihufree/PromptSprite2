@@ -155,10 +155,13 @@ def main() -> None:
 
     # 5. 全局热键（失败降级，不影响主功能）
     if not args.smoke:
+        # 2026-09-17（需求 S-2）：热键改为**可配置**——从 meta 读取（默认仍是 Ctrl+Shift+P）
+        _hk = hotkey.current_hotkey(db)
         ok = hotkey.register_global_hotkey(
-            lambda: app.after(0, app.show_and_focus_search))
+            lambda: app.after(0, app.show_and_focus_search), _hk)
         if not ok:
-            print("[警告] 全局热键注册失败：请以管理员身份运行，或将该程序加入杀毒软件白名单")
+            print("[警告] 全局热键 %s 注册失败：请以管理员身份运行，或将该程序加入杀毒软件白名单"
+                  % _hk)
 
     # 6. 系统托盘（阶段七；失败降级，不影响主功能）
     tray_icon = None

@@ -48,8 +48,21 @@ def _collect(db, dict_data, limit=0, only_untagged=False, max_tags=3):
 
     分类上下文（分类链 / 根目录 / 项目类别）**委托 app/tagger.py 的公共实现**
     （与阶段 2「批量智能打标」共用同一份逻辑，避免两处实现不一致）。
+
+    2026-09-16（批次 12-2，用户要求 2）：本工具＝"离线打标"入口，**取词是否启用**
+    与「批量智能自动打标」「设置 → 标签与词表」共用同一 meta 键 `config.META_FALLBACK_BATCH`
+    （读**目标库**的 meta；无该键 ⇒ 默认"不用取词"，与既有出厂标签口径一致）。
     """
     index = tagger.build_context_index(db)
+    # 取词开关（默认关）＋ 热点词清单（供取词命中校验）
+    try:
+        _use_fb = db.get_meta(config.META_FALLBACK_BATCH) == "1"
+    except Exception:
+        _use_fb = False
+    try:
+        _hot = db.list_hotwords()
+    except Exception:
+        _hot = []
     tagged = set()
     if only_untagged:
         tagged = {r[0] for r in db.conn.execute("SELECT DISTINCT entry_id FROM entry_tags")}
@@ -69,7 +82,8 @@ def _collect(db, dict_data, limit=0, only_untagged=False, max_tags=3):
                                    "prompt_cn", "prompt_en")}
         res = tagger_engine.suggest(texts, dict_data,
                                     tagger.entry_context_names(index, r["category_id"]),
-                                    max_tags=max_tags)
+                                    max_tags=max_tags,
+                                    field_fallback=_use_fb, hotwords=_hot)   # 批次 12-2
         names = tagger_engine.tag_names(res)
         domains[res["domain"] or "（兜底）"] += 1
         sources[res["domain_source"]] += 1

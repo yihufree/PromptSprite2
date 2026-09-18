@@ -22,6 +22,7 @@ import customtkinter as ctk
 from tkinter import messagebox, ttk
 
 from ..database import FIELD_TYPES, _ref_token
+from .ui_common import C_TAG as _C_TAG, C_OK as _C_OK, C_DANGER as _C_DANGER  # 2026-09-17（U-2）：主色常量
 
 # 「字段管理」对话框窗口：垂直固定位置＝距屏幕上边 50（2026-09-13 用户要求；
 # 便于在窗口较高时仍完整可见，不随主窗口位置上下浮动）
@@ -100,6 +101,9 @@ class FieldManagerDialog(ctk.CTkToplevel):
         self.master = master
         self.changed = False       # 是否已发生"已写库"的改动（供调用方决定刷新详情区）
         self._rows = []            # [(id, field_key, CTkEntry, 原显示名, is_builtin, archived)]
+        # 2026-09-16（批次 14）：详情区"手动隐藏"的字段键集合（存 meta，纯显示偏好）。
+        #   进入对话框时读取一次，之后每次切换都即时写库（与 ↑↓ 排序同样的"立即生效"口径）。
+        self._hidden = set(self.db.get_hidden_field_keys())
 
         self.title("🔧 字段管理")
         self.resizable(False, False)
@@ -117,8 +121,11 @@ class FieldManagerDialog(ctk.CTkToplevel):
                      ).grid(row=0, column=0, columnspan=3, padx=pad, pady=(16, 2), sticky="w")
         ctk.CTkLabel(
             self,
-            text="内置前 10 个区块固定保留、不可删除，仅可改名；可新增自定义字段并排序。\n"
-                 "「删除」= 归档隐藏：字段不再显示，但已填写的内容全部保留，可随时恢复。",
+            text="内置区块不可删除，可改名/排序；虚拟区块（标签/位置/时间）不可改名；\n"
+                 "可新增自定义字段并排序。「删除」= 归档隐藏：字段不再显示，但已填写的内容全部保留，可随时恢复。\n"
+                 "「隐藏 / 显示」= 只控制详情区是否展示该区块（① 名称固定显示，无此开关）：\n"
+                 "隐藏后详情区看不到该区块、下方内容自动上移；已填内容不会丢失，点「显示」即恢复。\n"
+                 "下方「全部隐藏 / 全部显示」为批量设置（同样不含 ① 名称）。",
             justify="left", text_color="gray", font=("Microsoft YaHei", 11)
         ).grid(row=1, column=0, columnspan=3, padx=pad, pady=(0, 8), sticky="w")
 
@@ -126,17 +133,23 @@ class FieldManagerDialog(ctk.CTkToplevel):
         add_row = ctk.CTkFrame(self, fg_color="#f4f0fb", corner_radius=8)
         add_row.grid(row=2, column=0, columnspan=3, padx=pad, pady=(0, 8), sticky="ew")
         ctk.CTkLabel(add_row, text="新增字段：", font=("Microsoft YaHei", 12, "bold"),
-                     text_color="#7A4FBF").pack(side="left", padx=(10, 4), pady=8)
+                     text_color=_C_TAG).pack(side="left", padx=(10, 4), pady=8)
         self.new_name = ctk.CTkEntry(add_row, width=200, placeholder_text="字段显示名")
         self.new_name.pack(side="left", padx=4, pady=8)
         self.new_type = ctk.CTkOptionMenu(
             add_row, width=140, values=[lbl for _k, lbl in TYPE_LABELS])
         self.new_type.set("文本框（单行）")
         self.new_type.pack(side="left", padx=4, pady=8)
-        ctk.CTkButton(add_row, text="＋ 添加", width=86, fg_color="#7A4FBF",
+        ctk.CTkButton(add_row, text="＋ 添加", width=86, fg_color=_C_TAG,
                       command=self._on_add).pack(side="left", padx=(6, 10), pady=8)
 
         # ---- 字段列表 ----
+        # 2026-09-16（批次 14）：宽度 660 → 720，为新增的「隐藏 / 显示」按钮留出空间
+        #   （同时把"显示名"输入框 190→170、"类型"控件 140→124 略作收窄，避免列表行溢出）。
+        # 2026-09-16（批次 15，用户要求 2）：整窗宽度收窄——各列再压缩一档
+        #   （field_key 78→68、显示名 170→148、类型 124→108 / 88→78、"数据源…" 68→60、
+        #     隐藏按钮 48→44、删除 52→48、列表区 720→660），整窗宽度由约 937px 降至约 861px；
+        #   列表区宽度以"最宽行（含「数据源…」的列表框）实测 795px"为准留有余量，不会被裁剪。
         self._body = ctk.CTkScrollableFrame(self, width=660, height=320)
         self._body.grid(row=3, column=0, columnspan=3, padx=pad, pady=(0, 6), sticky="nsew")
 
@@ -146,13 +159,21 @@ class FieldManagerDialog(ctk.CTkToplevel):
             opt_row, text="显示已归档字段", font=("Microsoft YaHei", 12),
             command=self._rebuild_list)
         self.show_archived.pack(side="left")
+        # 2026-09-16（批次 15，用户要求 1）：一键「全部隐藏 / 全部显示」（作用于**全部可隐藏区块**）。
+        #   「全部隐藏」不含 ① 名称（名称固定显示，数据层也会强制剔除 name）。
+        ctk.CTkButton(opt_row, text="全部隐藏", width=78, height=26, fg_color="#D98324",
+                      command=lambda: self._set_all_hidden(True)
+                      ).pack(side="left", padx=(14, 4))
+        ctk.CTkButton(opt_row, text="全部显示", width=78, height=26, fg_color=_C_OK,
+                      command=lambda: self._set_all_hidden(False)
+                      ).pack(side="left", padx=(4, 0))
         self.hint = ctk.CTkLabel(opt_row, text="", text_color="gray",
                                  font=("Microsoft YaHei", 11))
         self.hint.pack(side="left", padx=(12, 0))
 
         btn_row = ctk.CTkFrame(self, fg_color="transparent")
         btn_row.grid(row=5, column=0, columnspan=3, sticky="e", padx=pad, pady=(4, 16))
-        ctk.CTkButton(btn_row, text="确定", width=96, fg_color="#2E8B57",
+        ctk.CTkButton(btn_row, text="确定", width=96, fg_color=_C_OK,
                       command=self._apply).pack(side="left", padx=4)
         ctk.CTkButton(btn_row, text="取消", width=96,
                       command=self.destroy).pack(side="left", padx=4)
@@ -179,16 +200,22 @@ class FieldManagerDialog(ctk.CTkToplevel):
             row = ctk.CTkFrame(self._body, fg_color="transparent")
             row.pack(fill="x", pady=2)
             # 左：稳定标识 field_key（不可改）
-            ctk.CTkLabel(row, text=d["field_key"], width=78, anchor="w",
+            # 2026-09-16（批次 15）：78 → 68（收窄整窗宽度）
+            ctk.CTkLabel(row, text=d["field_key"], width=68, anchor="w",
                          text_color="gray", font=("Microsoft YaHei", 11)
                          ).pack(side="left")
-            # 中：显示名（可改）
-            entry = ctk.CTkEntry(row, width=190)
+            # 中：显示名（可改；虚拟区块 _tags/_location/_time 不可改名）
+            # 2026-09-16（批次 14）：190 → 170，为行内新增的「隐藏 / 显示」按钮让位
+            # 2026-09-16（批次 15）：170 → 148（收窄整窗宽度）
+            entry = ctk.CTkEntry(row, width=148)
             entry.pack(side="left", padx=(4, 0))
             entry.insert(0, d["display_name"])
             if not is_builtin:
                 entry.configure(border_color="#b79ce0")   # 自定义字段：紫色描边区分
             if archived:
+                entry.configure(state="disabled", fg_color="#eef0f3")
+            # 2026-09-16（批次 13）：虚拟区块（_tags/_location/_time）不可改名
+            if str(d["field_key"]).startswith("_"):
                 entry.configure(state="disabled", fg_color="#eef0f3")
             # 标记
             if archived:
@@ -196,45 +223,66 @@ class FieldManagerDialog(ctk.CTkToplevel):
             elif is_builtin:
                 tag_text, tag_color = "内置", "#5b6b7c"
             else:
-                tag_text, tag_color = "自定义", "#7A4FBF"
+                tag_text, tag_color = "自定义", _C_TAG
             ctk.CTkLabel(row, text=tag_text, width=48, anchor="w",
                          text_color=tag_color, font=("Microsoft YaHei", 11)
                          ).pack(side="left", padx=(4, 0))
             # 2026-09-14（审核补充 P5）：**自定义字段可改类型**（内置仅可改名，保持只读标签）
+            # 2026-09-16（批次 14）：类型控件 140 → 124、只读标签 96 → 88，为行内新增按钮让位
+            # 2026-09-16（批次 15）：124 → 108、88 → 78（收窄整窗宽度）
             if not is_builtin and not archived:
                 _tmenu = ctk.CTkOptionMenu(
-                    row, width=140, values=[lbl for _k, lbl in TYPE_LABELS],
+                    row, width=108, values=[lbl for _k, lbl in TYPE_LABELS],
                     command=lambda lbl, k=d["field_key"]: self._on_type_change(k, lbl),
                     font=("Microsoft YaHei", 11))
                 _tmenu.set(self._type_label(d.get("field_type")))
                 _tmenu.pack(side="left", padx=(4, 0))
             else:
-                ctk.CTkLabel(row, text=self._type_label(d.get("field_type")), width=96,
+                ctk.CTkLabel(row, text=self._type_label(d.get("field_type")), width=78,
                              anchor="w", text_color="gray", font=("Microsoft YaHei", 11)
                              ).pack(side="left")
             # 2026-09-13（第 3 期 3-a）：列表框字段提供"数据源…"配置入口
             if d.get("field_type") == "list" and not archived:
                 _n = self._source_brief(d["field_key"])
-                ctk.CTkButton(row, text="数据源…", width=68, height=24, fg_color="#2f6fb0",
+                # 2026-09-16（批次 15）：68 → 60（收窄整窗宽度）
+                ctk.CTkButton(row, text="数据源…", width=60, height=24, fg_color="#2f6fb0",
                               command=lambda k=d["field_key"], nm=d["display_name"]:
                                   self._edit_source(k, nm)
                               ).pack(side="left", padx=(6, 0))
                 ctk.CTkLabel(row, text=_n, anchor="w", text_color="#2f6fb0",
                              font=("Microsoft YaHei", 10)).pack(side="left", padx=(4, 0))
-            # 操作按钮（内置字段不可删除、不参与排序）
+            # 2026-09-16（批次 13）：**所有非归档字段均可排序**（含内置 10 项与虚拟区块）。
+            #   - 内置/虚拟：仅 ↑↓（不可删除、不可改名）；
+            #   - 自定义：↑↓ + 删除。
+            #   虚拟区块（_tags/_location/_time）的显示名输入框已在上方禁用。
             fid = d["id"]
-            if not is_builtin and not archived:
+            is_virtual = str(d["field_key"]).startswith("_")
+            if not archived:
                 ctk.CTkButton(row, text="↑", width=28, height=24, fg_color="#8a94a6",
                               command=lambda i=fid: self._move(i, -1)
                               ).pack(side="left", padx=(4, 0))
                 ctk.CTkButton(row, text="↓", width=28, height=24, fg_color="#8a94a6",
                               command=lambda i=fid: self._move(i, 1)
                               ).pack(side="left", padx=(2, 0))
-                ctk.CTkButton(row, text="删除", width=52, height=24, fg_color="#D9534F",
+            # 2026-09-16（批次 14，用户要求）：↑↓ 右侧的「隐藏 / 显示」开关——逐个控制
+            #   详情区是否展示该区块（硬隐藏；① 名称固定显示，不提供本按钮）。
+            #   按钮文案＝**下一步动作**（当前显示→"隐藏"，当前隐藏→"显示"），与「删除/恢复」同口径；
+            #   颜色随之区分：可隐藏＝橙、可显示＝绿（一眼看出哪些项当前是隐藏的）。
+            if not archived and d["field_key"] != "name":
+                _hid = d["field_key"] in self._hidden
+                # 2026-09-16（批次 15）：48 → 44（收窄整窗宽度）
+                ctk.CTkButton(
+                    row, text=("显示" if _hid else "隐藏"), width=44, height=24,
+                    fg_color=(_C_OK if _hid else "#D98324"),
+                    command=lambda k=d["field_key"]: self._toggle_hidden(k)
+                ).pack(side="left", padx=(4, 0))
+            if not is_builtin and not archived:
+                # 2026-09-16（批次 15）：52 → 48（收窄整窗宽度）
+                ctk.CTkButton(row, text="删除", width=48, height=24, fg_color=_C_DANGER,
                               command=lambda k=d["field_key"]: self._archive(k)
                               ).pack(side="left", padx=(6, 0))
             elif archived:
-                ctk.CTkButton(row, text="恢复", width=52, height=24, fg_color="#2E8B57",
+                ctk.CTkButton(row, text="恢复", width=52, height=24, fg_color=_C_OK,
                               command=lambda k=d["field_key"]: self._restore(k)
                               ).pack(side="left", padx=(6, 0))
             self._rows.append((fid, d["field_key"], entry, d["display_name"],
@@ -333,14 +381,65 @@ class FieldManagerDialog(ctk.CTkToplevel):
         self._rebuild_list()
 
     def _move(self, field_id: int, delta: int) -> None:
-        """在**自定义字段之间**上移/下移（内置 10 项顺序固定，不参与）。"""
+        """上移/下移（2026-09-16 批次 13：**所有非归档字段均可排序**，含内置与虚拟区块）。"""
         if self._save_renames() < 0:
             return
-        cids = [d["id"] for d in self.db.list_field_defs()
-                if not d.get("is_builtin")]
+        cids = [d["id"] for d in self.db.list_field_defs()]   # 全部非归档字段（含内置/虚拟）
         if not self.db.swap_order("field_defs", cids, field_id, delta):
             return
         self.changed = True
+        self._rebuild_list()
+
+    def _toggle_hidden(self, field_key: str) -> None:
+        """切换某区块在详情区的「隐藏 / 显示」（2026-09-16 批次 14，用户要求）。
+
+        - 只写 meta（`settings_detail_hidden_fields`）＝**纯显示偏好**：
+          不改字段定义、不动任何条目的任何数据；被隐藏字段的内容完整保留。
+        - 语义为**硬隐藏**：无论"详情字段显示策略"是精简/自动/全部，被隐藏项都不显示；
+          固定头部「⏵ 显示全部字段」按钮**不会**恢复它，只能在此改回"显示"。
+        - ① 名称（field_key="name"）**不可隐藏**：本方法直接拒绝（界面也不提供按钮）。
+        - 与 ↑↓ 一致：即时写库、置 `changed`、重建列表；主窗口在关闭本窗口后重建详情区生效。
+        """
+        if field_key == "name":
+            return
+        if self._save_renames() < 0:
+            return
+        if field_key in self._hidden:
+            self._hidden.discard(field_key)
+            act = "显示"
+        else:
+            self._hidden.add(field_key)
+            act = "隐藏"
+        self.db.set_hidden_field_keys(self._hidden)
+        self.changed = True
+        self.hint.configure(
+            text=f"已{act}「{field_key}」；关闭本窗口后详情区按新设置显示（内容不会丢失）。")
+        self._rebuild_list()
+
+    def _set_all_hidden(self, hide: bool) -> None:
+        """一键「全部隐藏 / 全部显示」（2026-09-16 批次 15，用户要求 1）。
+
+        - 「全部隐藏」：隐藏**全部可隐藏区块**＝内置 9 项（不含 ① 名称）+ 虚拟 3 项
+          （🏷 标签 / 🧭 位置 / 🕒 时间）+ 全部自定义字段（已归档项本就不显示，不纳入）；
+        - 「全部显示」：清空隐藏集合，恢复默认"全部显示"；
+        - ① 名称**始终显示**：既不纳入本操作，数据层写入时也会强制剔除 `name`；
+        - 只写 meta（纯显示偏好）：**不改字段定义、不动任何条目的任何数据**；
+        - 与 ↑↓ / 单项隐藏一致：即时写库、置 `changed`、重建列表，关闭本窗口后详情区生效。
+        """
+        if self._save_renames() < 0:
+            return
+        if hide:
+            keys = {d["field_key"] for d in self.db.list_field_defs()
+                    if d["field_key"] != "name"}
+        else:
+            keys = set()
+        self._hidden = set(keys)
+        self.db.set_hidden_field_keys(self._hidden)
+        self.changed = True
+        self.hint.configure(
+            text=("已隐藏全部区块（① 名称始终显示，共 %d 项）；关闭本窗口后生效。"
+                  % len(self._hidden)) if hide
+            else "已恢复为「全部显示」；关闭本窗口后生效。")
         self._rebuild_list()
 
     def _archive(self, field_key: str) -> None:
@@ -456,7 +555,7 @@ class _TreeRefPickDialog(ctk.CTkToplevel):
 
         btn = ctk.CTkFrame(self, fg_color="transparent")
         btn.grid(row=3, column=0, sticky="e", padx=12, pady=(4, 12))
-        ctk.CTkButton(btn, text="确定", width=88, fg_color="#2E8B57",
+        ctk.CTkButton(btn, text="确定", width=88, fg_color=_C_OK,
                       command=self._ok).pack(side="left", padx=4)
         ctk.CTkButton(btn, text="取消", width=88,
                       command=self.destroy).pack(side="left", padx=4)
@@ -551,7 +650,7 @@ class ListSourceDialog(ctk.CTkToplevel):
         self.src.grid(row=2, column=1, padx=pad, pady=6, sticky="w")
         self.src.set({_SRC_SEQ: _SRC_SEQ, "tree_level": _SRC_TREE,
                       "entries": _SRC_ENTRIES}.get(cfg["source_type"], _SRC_SEQ))
-        self.src_hint = ctk.CTkLabel(self, text="", text_color="#D9534F",
+        self.src_hint = ctk.CTkLabel(self, text="", text_color=_C_DANGER,
                                      font=("Microsoft YaHei", 11))
         self.src_hint.grid(row=3, column=0, columnspan=2, padx=pad, pady=(0, 4), sticky="w")
 
@@ -617,7 +716,7 @@ class ListSourceDialog(ctk.CTkToplevel):
 
         btn = ctk.CTkFrame(self, fg_color="transparent")
         btn.grid(row=7, column=0, columnspan=2, sticky="e", padx=pad, pady=(6, 14))
-        self.ok_btn = ctk.CTkButton(btn, text="保存", width=92, fg_color="#2E8B57",
+        self.ok_btn = ctk.CTkButton(btn, text="保存", width=92, fg_color=_C_OK,
                                     command=self._save)
         self.ok_btn.pack(side="left", padx=4)
         ctk.CTkButton(btn, text="取消", width=92, command=self.destroy).pack(side="left", padx=4)

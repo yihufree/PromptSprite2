@@ -7,6 +7,10 @@ compare_dialog.py - 数据比对（2026-09-08 V1.7.0 新增，只读诊断）
   - 根目录/项目类别差异
   - 条目差异（按"详情内容键 content_key"：
       备份独有 = 当前库中已不存在；当前独有 = 备份后新增）
+  - **2026-09-17 升级（FR-93 之后）**：条目"内容已修改"的配对**优先按稳定 ID（uuid）**——
+    两库同 uuid 即同一条目，内容键不同就是"内容被改"（**改名的条目也能正确识别**；
+    备注里标"按稳定 ID 配对"）。老备份库（无 uuid）自动回退原"名称 + 主位置"配对，
+    **行为与升级前完全一致**。
 全程只读：备份库先复制到临时文件再打开，绝不写当前主库。
 可"导出差异报告（HTML）"另存。
 """
@@ -192,18 +196,31 @@ def compare_databases(db_current, db_backup) -> dict:
         if locs_cur != locs_bak and ids_cur != ids_bak:
             rows.append(_row("条目（位置关联变化）", nm,
                              f"位置：{'、'.join(sorted(locs_bak))} → {'、'.join(sorted(locs_cur))}"))
-    # 条目：A) 名称一致但内容不同 → 内容已修改（避免报成删除+新增）
-    #   先按"名称+主位置"精确配对；若主位置链也变了（如所在分类改名/移动），
-    #   仅在"该名称在两侧的独有集合中各只出现 1 次"时才兜底配对，避免误配。
+    # 条目：A0) **稳定 ID 优先**（2026-09-17 新增，FR-93 之后的数据比对升级）
+    #   两库同一条目的 uuid 相同 ⇒ 可直接判定"这是同一条"：
+    #     · 内容键也相同 ⇒ 已在上一段按"位置关联变化"处理，不会进入本段；
+    #     · 内容键不同   ⇒ **明确是"内容已修改"**，不再依赖"名称 + 主位置"猜测，
+    #                      因此"改了名 + 改了内容"这类情况也能正确识别为修改。
+    #   老备份库（schema v4 及更早）没有 uuid：其副本被打开时会被自动迁移并**新分配** uuid，
+    #   与当前库的 uuid 不可能一致 ⇒ 本段不命中，自动回退下面的原配对逻辑，**行为与改造前一致**。
     used_bak = set()
     cur_only_keys = sorted(key_cur - key_bak)
     bak_only_keys = sorted(key_bak - key_cur)
+    # uuid → 备份侧 content_key（仅"备份独有"的条目参与配对）
+    bak_by_uuid = {}
+    for k in bak_only_keys:
+        _u = str(bak_entries[k][4].get("uuid") or "").strip()
+        if _u:
+            bak_by_uuid[_u] = k
     cur_name_cnt, bak_name_cnt = {}, {}
     for k in cur_only_keys:
         cur_name_cnt[cur_entries[k][0]] = cur_name_cnt.get(cur_entries[k][0], 0) + 1
     for k in bak_only_keys:
         bak_name_cnt[bak_entries[k][0]] = bak_name_cnt.get(bak_entries[k][0], 0) + 1
 
+    # 条目：A) 名称一致但内容不同 → 内容已修改（避免报成删除+新增）——**稳定 ID 未命中时的回退路径**
+    #   先按"名称+主位置"精确配对；若主位置链也变了（如所在分类改名/移动），
+    #   仅在"该名称在两侧的独有集合中各只出现 1 次"时才兜底配对，避免误配。
     def _pair_backup(nm, path):
         bk = bak_by_name.get((nm, path))
         if bk and bk not in used_bak:
@@ -215,14 +232,22 @@ def compare_databases(db_current, db_backup) -> dict:
 
     for key in cur_only_keys:
         nm, path, _l, _i, e = cur_entries[key]
-        bk = _pair_backup(nm, path)
+        # 2026-09-17：先试"稳定 ID 配对"（最可靠），未命中再走原"名称 + 主位置"配对
+        _u = str(e.get("uuid") or "").strip()
+        _bu = bak_by_uuid.get(_u) if _u else None
+        bk = _bu if (_bu is not None and _bu not in used_bak) else None
+        _by_stable_id = bk is not None
+        if bk is None:
+            bk = _pair_backup(nm, path)
         if bk is not None:
             used_bak.add(bk)
             changes = _changed_fields(bak_entries[bk][4], e)
             path_bak = bak_entries[bk][1]
             loc = path if path_bak == path else f"{path_bak} → {path}"
+            # 2026-09-17：按稳定 ID 配对时在备注里标明（便于与"按名称猜测"配对区分）
+            _tail = "｜按稳定 ID 配对" if _by_stable_id else ""
             rows.append(_row("条目（内容已修改）", nm,
-                             f"{loc}｜变化字段：{changes or '内容字段'}"))
+                             f"{loc}｜变化字段：{changes or '内容字段'}{_tail}"))
         else:
             rows.append(_row("条目（当前新增）", nm, path))
     for key in bak_only_keys:

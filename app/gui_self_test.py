@@ -17,11 +17,13 @@ import os
 import sys
 import tempfile
 import time
+import tkinter as tk   # 2026-09-16（批次 11-1）：浮窗"底边夹紧"专项断言需自建底部控件
 
 from app.database import Database
 from app.models import Entry
-from app import config, tagger
+from app import auto_words, config, tagger, tagger_dict   # 2026-09-18：词表断言改为"与出厂种子对比"
 from app.ui import main_window as _mw
+from app.ui import auto_words_dialog as _awmod   # 2026-09-16（批次 12-3）：自动取词管理对话框
 from app.ui import batch_tag_dialog as _btd   # 阶段 2：批量打标（备份桩用）
 from app.ui.main_window import MainWindow
 from app.ui.move_selector import MoveSelector
@@ -265,11 +267,26 @@ def main():
               and app.detail_state_lbl.cget("text") == "详情 · 精简模式"
               and getattr(app, "show_all_btn", None) is not None
               and app.show_all_btn.cget("text") == "⏵ 显示全部字段")
-        # ②~⑦ 折叠组默认折叠（标题条内有自己的"展开"按钮）
-        check("②~⑦ 折叠组默认折叠",
-              app._detail_group_open is False
-              and app._detail_group_toggle is not None
-              and app._detail_group_toggle.cget("text") == "展开")
+        # 2026-09-16（批次 13）：②~⑦ 现拆为独立可折叠块，默认折叠（各有自己的"展开"按钮）。
+        #   切到全字段模式重渲染，确保 ②~⑦ 全部可见后再统计「展开」按钮数。
+        _dm_bak = app._detail_mode
+        app._detail_mode = _mw.config.DETAIL_MODE_FULL
+        app._show_detail(db.get_entry(e_m)); pump(app)
+        expand_btns = []
+        def _count_expand(w):
+            try:
+                if type(w).__name__ == "CTkButton" and w.cget("text") == "展开":
+                    expand_btns.append(w)
+            except Exception:
+                pass
+            for c in w.winfo_children():
+                _count_expand(c)
+        _count_expand(app.detail_scroll)
+        check("②~⑦ 各字段默认折叠（≥6 个「展开」按钮）",
+              getattr(app, "_detail_expand_all", False) is False
+              and len(expand_btns) >= 6)
+        app._detail_mode = _dm_bak
+        app._show_detail(db.get_entry(e_m)); pump(app)
 
         # ---- 2. 关联 / 复制 / 移动 / 解除 ----
         app._pick_entry_targets = lambda mode, eid: [l_leaf]
@@ -406,8 +423,10 @@ def main():
         app._refresh_tag_page(); pump(app)
         check("dict tab keeps entry view", app._view == ("cat", l1))
         seed = tagger.load_dict(db)
+        # 2026-09-18：出厂词表已换成 809 标签 / 21 领域包版 ⇒ 断言改为"与出厂种子一致"
+        #   （不再写死具体领域名，换出厂词表时本用例无需再改）。
         check("dict loaded from meta (seeded)", tagger.count_tags(seed) > 0
-              and set((seed.get("domains") or {}).keys()) >= {"视觉", "文学", "编程"})
+              and set((seed.get("domains") or {}).keys()) >= set(tagger_dict.builtin_domains()))
         # 导出 → 文件存在且标签数一致
         dict_path = os.path.join(tmp, "tag_dict_export.json")
         fd.save_path = dict_path
@@ -443,7 +462,50 @@ def main():
         app._on_dict_reset(); pump(app)
         back = tagger.load_dict(db)
         check("dict reset to builtin",
-              set((back.get("domains") or {}).keys()) == {"视觉", "文学", "编程"})
+              set((back.get("domains") or {}).keys()) == set(tagger_dict.builtin_domains()))
+        # 2026-09-17（用户需求）：**增量导入**（只增不删）——与「导入（替换）」并存
+        _seed_names_m = set(tagger.dict_tag_names(back))
+        _add_only = {"version": 1,
+                     "universal": {"领域": {"视觉": ["自测增量词"]}},
+                     "domains": {"视觉": {"题材主体": {"人像": ["headshot增量"]},
+                                          "自测新维度": {"自测新标签": ["自测新词"]}}},
+                     "domain_map": {"视觉": ["自测判定词"]}}
+        _add_only_path = os.path.join(tmp, "tag_dict_merge.json")
+        assert tagger.write_dict_file(_add_only_path, _add_only)["ok"]
+        fd.open_path = _add_only_path
+        mb.asks.clear()
+        app._on_dict_merge(); pump(app)
+        _after_m = tagger.load_dict(db)
+        check("dict merge: 只增不删（原标签一个不少 + 新标签/新维度已加 + 匹配词并入）",
+              _seed_names_m <= set(tagger.dict_tag_names(_after_m))
+              and "自测新标签" in _after_m["domains"]["视觉"]["自测新维度"]
+              and "自测增量词" in _after_m["universal"]["领域"]["视觉"]
+              and "headshot增量" in _after_m["domains"]["视觉"]["题材主体"]["人像"])
+        check("dict merge: 确认框写明『只增不删』与将新增量 [%s]"
+              % ([str(a[0]) for (_k, a, _kk) in mb.asks][:1] or "无"),
+              any(_k == "yesno" and "只增不删" in str(a[0])
+                  and "将新增标签" in str(a[1])
+                  for (_k, a, _kk) in mb.asks))
+        # 同一份文件再来一次 → **幂等**：明确提示"无可新增内容"，且词表不变
+        _cnt_m = tagger.count_tags(_after_m)
+        mb.asks.clear()
+        app._on_dict_merge(); pump(app)
+        check("dict merge: 重复合并幂等（提示无可新增、标签数不变）[%d→%d]"
+              % (_cnt_m, tagger.count_tags(tagger.load_dict(db))),
+              tagger.count_tags(tagger.load_dict(db)) == _cnt_m
+              and any(_k == "info" and "无可新增内容" in str(a[0]) for (_k, a, _kk) in mb.asks))
+        # 非法文件 → 拒绝且词表不变
+        fd.open_path = bad_path
+        mb.asks.clear()
+        app._on_dict_merge(); pump(app)
+        check("dict merge: 非法文件被拒且词表不变",
+              tagger.count_tags(tagger.load_dict(db)) == _cnt_m
+              and any(_k == "warn" and "词表文件不合法" in str(a[0]) for (_k, a, _kk) in mb.asks))
+        # 复位回出厂状态，避免影响后续用例（与改动前的状态一致）
+        app._on_dict_reset(); pump(app)
+        check("dict merge: 用例后复位回出厂",
+              set((tagger.load_dict(db).get("domains") or {}).keys())
+              == set(tagger_dict.builtin_domains()))
         # 设置入口：经主窗口方法打开并切到词表档
         app._tag_page_view = "cloud"
         app._open_dict_manager(); pump(app)
@@ -489,12 +551,13 @@ def main():
         check("tag page closed after gov check", not app._tag_page_on)
 
         # ---- 6c（2026-09-15 批次 6-2 补充，用户选定"一并置灰"）：
-        #   热点词档 3 个（文本导入/热点词更新/清空全部）、词表档 2 个（导入词表/恢复出厂词表）
+        #   热点词档 3 个（文本导入/热点词更新/清空全部）、词表档 3 个（导入（替换）/增量导入/恢复出厂）
         #   同为写操作 ⇒ 锁定态置灰；词表档"⬆ 导出词表…"是只读 ⇒ 保持可用。
+        #   （2026-09-17 用户需求：词表档由 2 个写操作 → **3 个**，新增「➕ 增量导入…」。）
         def _gov_state():
             return [(str(text_of(b))[:10], str(b.cget("state"))) for b in _gov_now()]
 
-        for _mode, _n, _ro in (("hot", 3, ""), ("dict", 2, "导出词表")):
+        for _mode, _n, _ro in (("hot", 3, ""), ("dict", 3, "导出词表")):
             app._tag_page_view = _mode
             if not app._tag_page_on:
                 app._open_tag_page()
@@ -624,9 +687,10 @@ def main():
             # 3) 词表导入 / 选封面 / 图集加图（原先仅靠按钮置灰）：锁定态不应弹出任何文件框
             fd.calls.clear()
             app._on_dict_import(); pump(app)
+            app._on_dict_merge(); pump(app)      # 2026-09-17：新增的增量导入入口同受守卫
             app._pick_image(); pump(app)
             app._add_gallery_local(); pump(app)
-            check("guard(6-3b): 锁定态 词表导入/选图/图集添加均被拦截（未弹文件框）[%s]"
+            check("guard(6-3b): 锁定态 词表导入/增量导入/选图/图集添加均被拦截（未弹文件框）[%s]"
                   % ([c[0] for c in fd.calls] or "无"), not fd.calls)
             # 4) 保存新增条目：锁定态返回 False（阻止切换），不写库
             _adding_b = app._adding_new
@@ -903,6 +967,9 @@ def main():
             pump(app, 4)
 
         # ---- 8bc（2026-09-15 批次 8-B/8-C）：无上下文也能推荐 + ①名称取词兜底 + 批量路径隔离 ----
+        # 2026-09-17（审核 R-2）：两窗口的"单条推荐"公共流程已抽取到
+        #   `app/tagger.py::run_ui_suggest`，故本组断言改为：
+        #   ① 两个窗口都调用 run_ui_suggest；② 公共实现里带 fallback_global / field_fallback。
         try:
             with open(_mw.__file__, "r", encoding="utf-8") as _f8bc:
                 _src8bc = _f8bc.read()
@@ -910,8 +977,8 @@ def main():
             _src8bc = ""
         _i8bc = _src8bc.find("def _suggest_tags")
         _seg8bc = _src8bc[_i8bc:_i8bc + 6000] if _i8bc >= 0 else ""
-        check("engine(8-B): 主窗口单条推荐传 fallback_global=True [段=%d 字符]" % len(_seg8bc),
-              "fallback_global=True" in _seg8bc)
+        check("engine(8-B/R-2): 主窗口单条推荐走公共 run_ui_suggest [段=%d 字符]" % len(_seg8bc),
+              "run_ui_suggest" in _seg8bc)
         _qsrc8bc, _bsrc8bc = "", ""
         try:
             from app.ui import quick_add as _qa8bc
@@ -925,10 +992,37 @@ def main():
                 _bsrc8bc = _fb8bc.read()
         except Exception:
             _bsrc8bc = ""
-        check("engine(8-B): 快速新建单条推荐同样传 fallback_global=True",
-              "fallback_global=True" in _qsrc8bc)
+        check("engine(8-B/R-2): 快速新建单条推荐同样走公共 run_ui_suggest",
+              "run_ui_suggest" in _qsrc8bc)
         check("engine(8-B): 批量打标路径未启用 fallback_global（隔离）[源=%d 字符]"
               % len(_bsrc8bc), bool(_bsrc8bc) and "fallback_global" not in _bsrc8bc)
+        # 公共实现（tagger.py）必须带这两个口径；两窗口自身不再重复书写
+        try:
+            with open(tagger.__file__, "r", encoding="utf-8") as _ftg8bc:
+                _tsrc8bc = _ftg8bc.read()
+        except Exception:
+            _tsrc8bc = ""
+        _itg = _tsrc8bc.find("def run_ui_suggest")
+        _tseg = _tsrc8bc[_itg:_itg + 3000] if _itg >= 0 else ""
+        check("engine(8-B/R-2): 公共实现带 fallback_global=True [段=%d 字符]" % len(_tseg),
+              "fallback_global=True" in _tseg)
+
+        # ---- 11-3（2026-09-16）：字段取词只对"UI 单条推荐"开启；批量/离线打标保持关闭 ----
+        check("engine(11-3/R-2): 公共实现带 field_fallback=True",
+              "field_fallback=True" in _tseg)
+        # 2026-09-16（批次 12-2，用户要求 2）：批量/离线打标的取词**改由设置开关控制**（默认关）
+        check("engine(11-3/12-2): 批量打标路径的取词由设置控制（默认关）[源=%d 字符]"
+              % len(_bsrc8bc),
+              "field_fallback=_use_fb" in _bsrc8bc and "META_FALLBACK_BATCH" in _bsrc8bc)
+        _btb_src = ""
+        try:
+            with open(os.path.join(os.path.dirname(os.path.dirname(
+                    os.path.abspath(__file__))), "tag_builtin.py"), "r", encoding="utf-8") as _fb3:
+                _btb_src = _fb3.read()
+        except Exception:
+            _btb_src = ""
+        check("engine(11-3/12-2): 离线打标 tag_builtin 的取词同样由设置控制",
+              "META_FALLBACK_BATCH" in _btb_src and "field_fallback=_use_fb" in _btb_src)
 
         _vwbc, _ccbc, _lcbc = app._view, app._cur_cat_id, app._last_cat_id
         _addbc, _tgtbc, _detbc = app._adding_new, app._add_target, app._detail_entry_id
@@ -948,7 +1042,10 @@ def main():
             pump(app, 4)
             check("engine(8-B): 无分类上下文新增也能推荐出标签 [%s]" % (app._tag_names[:2],),
                   len(app._tag_names) >= 1)
-            # 2) 引擎（含 8-B 兜底）仍无结果 → 用①名称切词兜底
+            # 2) 2026-09-16（批次 11-5，方案 D）→ **2026-09-18（用户第 3 轮"兜底规则"）改版**：
+            #    原口径"词表外的取词词一律不采纳"在"热点词 + 领域/词表都为 0"时会导致**整条无标签**，
+            #    与用户要求"字段取词必须推荐 1~3 个"冲突 ⇒ 现由**兜底取词**接住：
+            #    另两来源为 0 时，词表外的词**以原文成为标签**（来源标注「取词（兜底）」）。
             app._name_entry.delete(0, "end")
             app._name_entry.insert(0, "Kqxl Mmno")
             for _kbc in ("prompt_cn", "prompt_en"):
@@ -957,13 +1054,72 @@ def main():
             app._refresh_tag_chips()
             app._suggest_tags()
             pump(app, 4)
-            check("engine(8-C): 引擎仍为空时用①名称切词兜底 [%s]" % (app._tag_names[:2],),
-                  "Kqxl" in app._tag_names and "Mmno" in app._tag_names)
+            check("engine(11-5→09-18): 另两来源为 0 时由「兜底取词」接住 [%s]" % (app._tag_names,),
+                  "Kqxl" in app._tag_names or "Mmno" in app._tag_names)
+            # 3) 名称里含词表标签 ⇒ 取词命中并推荐
+            app._name_entry.delete(0, "end")
+            app._name_entry.insert(0, "Kqxl 赛博朋克")
+            app._tag_names = []
+            app._refresh_tag_chips()
+            app._suggest_tags()
+            pump(app, 4)
+            check("engine(11-5): 名称含词表标签时取词命中 [%s]" % (app._tag_names,),
+                  "赛博朋克" in app._tag_names)
         finally:
             app._view, app._cur_cat_id, app._last_cat_id = _vwbc, _ccbc, _lcbc
             app._adding_new, app._add_target = _addbc, _tgtbc
             app._detail_entry_id = _detbc
             app._detail_dirty = False
+            app._show_detail(None)
+            pump(app, 4)
+
+        # ---- 12-3（2026-09-16，用户要求 1）：智能自动取词词库（采集 / 自动升热点词 / 开关）----
+        _aw_cfg_bak = auto_words.load_cfg(db)
+        _aw_data_bak = auto_words.load(db)
+        try:
+            auto_words.clear(db)
+            auto_words.save_cfg(db, {"enabled": True, "hot_th": 1, "tag_th": 99})
+            app._view = ("uncat", None)
+            app._cur_cat_id = None
+            app._last_cat_id = None
+            app._detail_dirty = False
+            app._start_new_entry(); pump(app, 8)
+            app._name_entry.insert(0, "ZzNewWord 赛博朋克")
+            app._tag_names = []
+            app._refresh_tag_chips()
+            app._suggest_tags(); pump(app, 4)
+            _aw = auto_words.load(db)
+            check("auto-words(12-3): 推荐后把词表外新词沉淀入词库 [%s]" % list(_aw)[:3],
+                  "ZzNewWord" in _aw)
+            check("auto-words(12-3): 词表内词不采集（赛博朋克）", "赛博朋克" not in _aw)
+            check("auto-words(12-3): 达热点阈值自动升为热点词 [%s]" % db.list_hotwords()[:3],
+                  "ZzNewWord" in db.list_hotwords())
+            # 关开关 ⇒ 不再采集
+            auto_words.save_cfg(db, {"enabled": False})
+            app._name_entry.delete(0, "end")
+            app._name_entry.insert(0, "ZzAnotherWord")
+            app._tag_names = []
+            app._refresh_tag_chips()
+            app._suggest_tags(); pump(app, 4)
+            check("auto-words(12-3): 关闭开关后不再采集",
+                  "ZzAnotherWord" not in auto_words.load(db))
+            # 管理对话框：可打开并列出词条
+            auto_words.save_cfg(db, {"enabled": True, "hot_th": 1, "tag_th": 99})
+            _awd = _awmod.AutoWordsDialog(app, db); pump(app)
+            check("auto-words(12-3): 管理对话框打开并列出词条 [%d]" % len(_awd._rows),
+                  len(_awd._rows) >= 1)
+            try:
+                _awd.grab_release()
+            except Exception:
+                pass
+            _awd.destroy(); pump(app)
+        finally:
+            auto_words.save(db, _aw_data_bak)
+            auto_words.save_cfg(db, _aw_cfg_bak)
+            try:
+                db.remove_hotwords(["ZzNewWord"])
+            except Exception:
+                pass
             app._show_detail(None)
             pump(app, 4)
 
@@ -1113,8 +1269,72 @@ def main():
         check("settings uses tabview", tabv is not None)
         if tabv is not None:
             _names = list(getattr(tabv, "_tab_dict", {}).keys())
-            check("settings has 5 pages",
-                  _names == ["界面", "外观", "数据与备份", "标签与词表", "关于"])
+            # 2026-09-16（批次 11-2，用户反馈 5）：新增独立【字段】页（原字段管理在标签与词表页）
+            check("settings has 6 pages",
+                  _names == ["界面", "外观", "数据与备份", "字段", "标签与词表", "关于"])
+            _pgf = tabv._tab_dict.get("字段")
+            check("field page exists & 字段管理按钮在其上",
+                  _pgf is not None and dlg._mgr_btn_field.winfo_parent() == str(_pgf))
+            # 标签与词表页的管理入口共 4 个：词表 / 热点词 / 批量打标 / 清理垃圾标签。
+            # 2026-09-17（用户要求 3）：为不超出本页高度，「批量打标」与「清理垃圾标签」
+            #   并入**同一行的 Frame** ⇒ 直接挂在页面上的 CTkButton 变为 2 个，
+            #   4 个按钮本体仍都在本页（下面逐项校验）。
+            _pgt = tabv._tab_dict.get("标签与词表")
+            _tag_mgr = [b for b in (_pgt.winfo_children() if _pgt is not None else [])
+                        if isinstance(b, _ctk.CTkButton)]
+            _mgr_all = (dlg._mgr_btn_dict, dlg._mgr_btn_hot,
+                        dlg._mgr_btn_batch, dlg._mgr_btn_cleanup)
+            check("tag page holds 4 mgr entries (2 direct + 2 in row frame) [%d]" % len(_tag_mgr),
+                  len(_tag_mgr) == 2
+                  and all(b is not dlg._mgr_btn_field for b in _tag_mgr)
+                  and all(b.winfo_exists() for b in _mgr_all)
+                  and dlg._mgr_btn_batch.master.master == _pgt
+                  and dlg._mgr_btn_cleanup.master.master == _pgt)
+
+            # ---- 11-6（2026-09-16，用户确认问题 2）：标签推荐策略与顺序（勾选 + ↑/↓ 排序） ----
+            check("policy(11-6): 4 个来源行已渲染 [%d]" % len(dlg._policy_rows),
+                  len(dlg._policy_rows) == 4
+                  and all(w["chk"].winfo_exists() for w in dlg._policy_rows.values()))
+            check("policy(11-6): 默认顺序 = 热点词 → 领域+词典 → 取词 → 扩展 [%s]"
+                  % dlg._policy_order,
+                  dlg._policy_order == ["hotword", "domain_dict", "field", "ext"])
+            _i_before = dlg._policy_order.index("field")
+            dlg._pol_move("field", -1); pump(app)
+            check("policy(11-6): ↑ 上移一位生效 [%s]" % dlg._policy_order,
+                  dlg._policy_order.index("field") == _i_before - 1
+                  and len(dlg._policy_rows) == 4)
+            dlg._policy_rows["field"]["chk"].deselect(); dlg._pol_snapshot()
+            check("policy(11-6): 取消勾选被记录为不启用 [%s]"
+                  % dlg._policy_enabled.get("field"),
+                  dlg._policy_enabled.get("field") is False)
+            dlg._pol_reset(); pump(app)
+            check("policy(11-6): 恢复默认顺序与开关 [%s]" % (dlg._policy_order,),
+                  dlg._policy_order == ["hotword", "domain_dict", "field", "ext"]
+                  and dlg._policy_enabled.get("field") is True)
+            _pgt_h = (_pgt.winfo_height() if _pgt.winfo_height() > 50
+                      else max(tabv.winfo_height() - 46, 100))   # 页内容区高（未映射时退化为估值）
+            _pgt_bottom = max((c.winfo_y() + c.winfo_height()
+                               for c in _pgt.winfo_children()), default=0)
+            check("policy(11-6): 标签与词表页内容未超出页高 [底=%d 页高≈%d]"
+                  % (_pgt_bottom, _pgt_h), _pgt_bottom <= _pgt_h)
+            # 2026-09-16（批次 11-7，用户要求 3）：界面页新增「条目排序」三选项
+            _pgu = tabv._tab_dict.get("界面")
+            check("sort(11-7): 界面页含「条目排序」三选项 [%s]" % dlg.seg_sort.get(),
+                  dlg.seg_sort.get() in ("修改时间", "添加时间", "名称"))
+            _pgu_bottom = max((c.winfo_y() + c.winfo_height()
+                               for c in _pgu.winfo_children()), default=0)
+            check("sort(11-7): 界面页内容未超出页高 [底=%d 页高≈%d]" % (_pgu_bottom, _pgt_h),
+                  _pgu_bottom <= _pgt_h)
+            # 2026-09-16（批次 12-2，用户要求 2）：设置页同一开关（与批量对话框共用 meta 键）
+            check("fb-batch(12-2): 设置页含「取词用于批量打标」开关且默认关",
+                  hasattr(dlg, "sw_fb_batch") and dlg.sw_fb_batch.get() == 0)
+            # 2026-09-16（批次 12-3，用户要求 1）：设置页同一组「智能自动取词」（开关 + 两阈值 + 入口）
+            check("auto-words(12-3): 设置页含智能自动取词组（开关/两阈值）",
+                  all(hasattr(dlg, a) for a in ("sw_aw", "ent_aw_hot", "ent_aw_tag")))
+            # 2026-09-16（批次 12-2/12-3）：设置窗口须能在 1366×768（最低分辨率）的工作区内完整显示
+            _req_h = dlg.winfo_reqheight()
+            check("settings(12-2): 设置窗口高度适配 768 屏 [req=%d ≤ 720]" % _req_h,
+                  _req_h <= 720)
             # 2026-09-15（批次 4）：【外观】页 = 6 组 × (字体/字号[/文字色/背景色])，均为"默认（不改）"
             _pg = tabv._tab_dict.get("外观")
             check("appearance page exists", _pg is not None)
@@ -1163,6 +1383,14 @@ def main():
                      if _w.winfo_reqwidth() > _avail]
             check("about page: no text overflows page width [%s]" % (_wide or "ok"),
                   not _wide)
+            # 2026-09-16（批次 15）：关于页新增「详情区排布」说明 → 校验其内容不超出页高
+            #   （本页无滚动条，超出即被裁掉）
+            _pgab_bottom = max((c.winfo_y() + c.winfo_height()
+                                for c in _pg.winfo_children()), default=0)
+            _pgt_h2 = (_pgt.winfo_height() if _pgt.winfo_height() > 50
+                       else max(tabv.winfo_height() - 46, 100))
+            check("about page: 内容未超出页高 [底=%d 页高≈%d]" % (_pgab_bottom, _pgt_h2),
+                  _pgab_bottom <= _pgt_h2)
         # 7.2 关于窗口（完整说明）也在 V2.1.0 修订里补了"无标签条目入口"一条（用户要求 1）
         #     注：必须放在 dlg._apply() **之前**——_apply() 末尾会 self.destroy()。
         try:
@@ -1183,6 +1411,10 @@ def main():
                     pass
             check("about window mentions 无标签 entry",
                   bool(_newtops) and "无标签" in _txt and "#none" in _txt)
+            # 2026-09-16（批次 15，用户要求 4）：关于窗口补入 09-15/09-16 增强说明
+            check("about window mentions 09-16 增强（区块排序/隐藏 + 智能自动取词）",
+                  "后续增强" in _txt and "区块" in _txt
+                  and "自动取词" in _txt and "全部隐藏" in _txt)
             for _t in _newtops:
                 try:
                     _t.grab_release()
@@ -1199,18 +1431,31 @@ def main():
                                             "entry_bkeep", "sw_snapshot")))
         dlg.seg_view.set("列表")
         dlg.sw_show_tags.select()
+        dlg.seg_sort.set("添加时间")          # 2026-09-16（批次 11-7，用户要求 3）
+        dlg.sw_fb_batch.select()              # 2026-09-16（批次 12-2，用户要求 2）
         dlg._apply(); pump(app)
         check("settings apply writes meta",
               db.get_meta(config.META_VIEW_MODE) == "list"
               and db.get_meta(config.META_SHOW_TAGS_IN_LIST) == "1")
+        check("fb-batch(12-2): 设置页保存写 meta（与批量对话框同键）[%s]"
+              % db.get_meta(config.META_FALLBACK_BATCH),
+              db.get_meta(config.META_FALLBACK_BATCH) == "1")
+        check("sort(11-7): 排序设置写 meta 且主窗口已生效 [%s/%s]"
+              % (db.get_meta(config.META_ENTRY_SORT), app._entry_sort),
+              db.get_meta(config.META_ENTRY_SORT) == "created"
+              and app._entry_sort == "created")
+        check("policy(11-6): 策略已写 meta [%s…]"
+              % str(db.get_meta(config.META_TAG_POLICY))[:40],
+              bool(db.get_meta(config.META_TAG_POLICY)))
         try:
             dlg.grab_release()
         except Exception:
             pass
         dlg.destroy(); pump(app)
 
-        # ---- 7b（2026-09-15 批次 6-2）：锁定态**仍可打开设置**，但「标签与词表」4 个管理入口置灰 ----
+        # ---- 7b（2026-09-15 批次 6-2）：锁定态**仍可打开设置**，但「标签与词表」5 个管理入口置灰 ----
         #   用户选定："允许打开设置、管理入口置灰"（窗口/视图/外观等纯偏好不受锁定影响）。
+        #   2026-09-17（用户要求 3）：新增「🧹 清理垃圾标签…」→ 4 个变 5 个。
         _lock_bs = app._lock_on
         try:
             app._lock_on = True
@@ -1218,16 +1463,16 @@ def main():
             pump(app)
             _m_locked = [str(b.cget("state")) for b in
                          (_dlg2._mgr_btn_dict, _dlg2._mgr_btn_hot,
-                          _dlg2._mgr_btn_field, _dlg2._mgr_btn_batch)]
-            check("settings(6-2): 锁定态可打开设置且 4 个管理入口全部置灰 [%s]" % (_m_locked,),
-                  len(_m_locked) == 4 and all(s == "disabled" for s in _m_locked))
+                          _dlg2._mgr_btn_cleanup, _dlg2._mgr_btn_field, _dlg2._mgr_btn_batch)]
+            check("settings(6-2): 锁定态可打开设置且 5 个管理入口全部置灰 [%s]" % (_m_locked,),
+                  len(_m_locked) == 5 and all(s == "disabled" for s in _m_locked))
             try:
                 _dlg2.grab_release()
             except Exception:
                 pass
             _dlg2.destroy(); pump(app)
         except Exception as _e:
-            check("settings(6-2): 锁定态可打开设置且 4 个管理入口全部置灰 [err=%s]" % _e, False)
+            check("settings(6-2): 锁定态可打开设置且 5 个管理入口全部置灰 [err=%s]" % _e, False)
         finally:
             app._lock_on = _lock_bs
         # 解锁态：管理入口不受影响（保证本次改动未破坏正常路径）
@@ -1235,9 +1480,9 @@ def main():
         pump(app)
         _m_free = [str(b.cget("state")) for b in
                    (_dlg3._mgr_btn_dict, _dlg3._mgr_btn_hot,
-                    _dlg3._mgr_btn_field, _dlg3._mgr_btn_batch)]
-        check("settings(6-2): 解锁态 4 个管理入口正常可用 [%s]" % (_m_free,),
-              len(_m_free) == 4 and all(s == "normal" for s in _m_free))
+                    _dlg3._mgr_btn_cleanup, _dlg3._mgr_btn_field, _dlg3._mgr_btn_batch)]
+        check("settings(6-2): 解锁态 5 个管理入口正常可用 [%s]" % (_m_free,),
+              len(_m_free) == 5 and all(s == "normal" for s in _m_free))
         try:
             _dlg3.grab_release()
         except Exception:
@@ -1480,10 +1725,15 @@ def main():
               % app._nav_min_width(),
               app._nav_min_width() == _mw._BASE_MIN_WIDTH)
         # 搜索框**实际宽度**必须远小于工具栏宽（改前它独占剩余宽度 ≈559px；现 ≈293px）
+        # 2026-09-17（用户要求 1，新增"✕ 一键清除"按钮）：原阈值 0.25 是"搜索框 152px 时代"的余量；
+        #   用户后来把输入框加宽到 202（实测已 ≈24.9%，贴住上限）⇒ 再放一个 ≈22px 的小按钮（本次）
+        #   即 ≈26.2% 而失败。**阈值放宽到 0.30**：本断言要守的是"搜索框不得像改前那样独占工具栏
+        #   （41%）"，而非某个具体百分点；且实测该比例随窗口宽/DPI 浮动（本机 25.1%~26.3%），
+        #   0.30 保留守护语义，又不再因换机 ±1pp 差异误报。
         _sb_w, _bar_w = app.search_box.winfo_width(), max(_bar.winfo_width(), 1)
         check("toolbar: search box actual width now small [%d/%d=%.0f%%]"
               % (_sb_w, _bar_w, 100.0 * _sb_w / _bar_w),
-              _sb_w > 0 and _sb_w <= _bar_w * 0.25)
+              _sb_w > 0 and _sb_w <= _bar_w * 0.30)
         # 8.4.1c 详情区「编辑/浏览」已改为**普通切换按钮**（2026-09-14 用户要求，与「🗂 目录隐藏」同形式）
         _tgl = app.edit_mode_toggle
         check("detail: edit/browse is a plain toggle button [%s]"
@@ -1799,6 +2049,10 @@ def main():
             check("look: ①条目区名称字号随设置生效 17 [%s]" % (_f_size(_nl1) if _nl1 else None),
                   _nl1 is not None and _f_size(_nl1) == 17)
             # ② 条目名称一览浮层（字体 + 文字色/背景色）
+            # 2026-09-16（批次 11-1，用户反馈 4）：把浮层的"光标 Y"强制放到屏幕最下方，
+            #   以便确定性地触发"底边夹紧"逻辑（否则窗口居中时夹紧分支不执行、测不到）。
+            _wa = _mw.work_area(app)
+            app._entry_ov_y = _wa[3] - 20
             app._show_entry_overview(); pump(app)
             _lb = getattr(app, "_entry_ov_listbox", None)
             check("look: ②浮层字号/配色随设置生效 [%s %s %s]"
@@ -1806,7 +2060,14 @@ def main():
                      _lb.cget("fg") if _lb else None, _lb.cget("bg") if _lb else None),
                   _lb is not None and _f_size(_lb) == 20
                   and str(_lb.cget("fg")) == "#112233" and str(_lb.cget("bg")) == "#eeeeee")
+            # 2026-09-16（批次 11-1，用户反馈 4）：浮层底边必须落在"屏幕工作区"内（不再被任务栏遮挡）
+            _ovp = getattr(app, "_entry_ov_popup", None)
+            check("fix(11-1): ②浮层底边在工作中区内 [底=%s 工作区底=%s 屏底=%s]"
+                  % ((_ovp.winfo_rooty() + _ovp.winfo_height()) if _ovp else None,
+                     _wa[3], app.winfo_screenheight()),
+                  _ovp is not None and _ovp.winfo_rooty() + _ovp.winfo_height() <= _wa[3])
             app._hide_entry_overview(); pump(app)
+            app._entry_ov_y = None          # 复位，避免影响后续断言
             # ⑤ + ⑥ 详情区（提示词框 / ①名称框 + 高度自适应）
             app._show_detail(db.get_entry(_eid)); pump(app)
             _pc = app._detail_boxes.get("prompt_cn")
@@ -1818,6 +2079,12 @@ def main():
             check("look: ⑤英文版提示词框（同代码路径，未设置时保持默认）[%s=%s]"
                   % (_f_size(_pe) if _pe else None, app._default_ctk_font()[1]),
                   _pe is not None and _f_size(_pe) == int(app._default_ctk_font()[1]))
+            # 2026-09-16（批次 11-7，用户要求 3）：详情区显示「新增于 / 修改于」时间行（只读）
+            _t_lbls = []
+            walk_types(app.detail_scroll, "CTkLabel", _t_lbls)
+            _t_txt = " ".join(str(c.cget("text")) for c in _t_lbls)
+            check("time(11-7): 详情区显示时间行（新增于/修改于）",
+                  "新增于" in _t_txt and "修改于" in _t_txt)
             check("look: ⑥①名称框字号生效且高度自适应 [%s %s]"
                   % (_f_size(app._name_entry), app._name_entry.cget("height")),
                   _f_size(app._name_entry) == 20
@@ -1832,7 +2099,25 @@ def main():
                       % (_f_size(_tips[0]) if _tips else None),
                       bool(_tips) and _f_size(_tips[0]) == 16
                       and str(_tips[0].cget("fg")) == "#005500")
+                # 2026-09-16（批次 11-1，用户反馈 4）：把触发控件放到"工作区最底部"，
+                #   确定性触发"底边夹紧"逻辑，断言提示窗底边不越出工作区（否则会落进任务栏被遮挡）。
+                _low = tk.Toplevel(app)
+                _low.geometry("140x24+%d+%d" % (_wa[0] + 40, _wa[3] - 26))
+                _lf = tk.Frame(_low, width=140, height=24)
+                _lf.pack()
+                _low.update_idletasks()
                 app._cancel_field_tip(); pump(app)
+                app._show_field_tip(_lf, "底边夹紧测试\n" * 40, None, "底边断言"); pump(app)
+                _tp = getattr(app, "_tip_popup", None)
+                check("fix(11-1): ③字段提示窗底边在工作中区内 [底=%s 工作区底=%s 屏底=%s]"
+                      % ((_tp.winfo_rooty() + _tp.winfo_height()) if _tp else None,
+                         _wa[3], app.winfo_screenheight()),
+                      _tp is not None and _tp.winfo_rooty() + _tp.winfo_height() <= _wa[3])
+                app._cancel_field_tip(); pump(app)
+                try:
+                    _low.destroy()
+                except Exception:
+                    pass
             # 未设置（清空）→ 必须回到原值（零回归）
             app._ui_appearance = _ua.empty()
             app._render_entries(_els, "外观断言")
@@ -2299,6 +2584,7 @@ def main():
         try:
             dlg3 = BatchTagDialog(app, db, db_path=_db_path)
             pump(app)
+            _dlg3_def_geo = dlg3.wm_geometry().split("+")[0]   # 记住默认尺寸（下方要恢复它做断言）
             check("target-db: control exists & defaults to current",
                   hasattr(dlg3, "om_target") and dlg3._is_current_db())
             # 2026-09-14 修复回归：底部"确认执行"按钮栏必须**先于可扩展预演区** pack，
@@ -2335,6 +2621,47 @@ def main():
             check("batch dialog: toolbar visible at min size",
                   dlg3._tool_bar.winfo_y() + dlg3._tool_bar.winfo_height()
                   <= dlg3.winfo_height() + 1)
+            # ---- 2026-09-18（用户实测反馈）：出厂词表升级后「⑤ 标签重点范围」维度由 8 个 → 101 个，
+            #   原先"5 个/行、不限高"把工具行与预演区整体挤出视野（看不到也点不到）。
+            #   修复口径：该区改为 **固定高度视口 + 多列 + 可滚动**（列数随宽度自适应），
+            #   下面三条断言把该口径固化：① 高度受限且内容可滚动；② 维度一个不少；③ 默认尺寸下
+            #   工具行与预演区都在视野内且有可用高度。
+            _dim_n = len(dlg3._dim_vars)
+            _dm_vp = dlg3._dim_box._parent_canvas.winfo_height()
+            _dm_ct = dlg3._dim_box.winfo_height()
+            check("batch dialog(09-18): 维度区高度受限且内容可滚动 [维度=%d 视口=%d 内容=%d 列=%d]"
+                  % (_dim_n, _dm_vp, _dm_ct, dlg3._dim_cols),
+                  _dim_n >= 20 and 40 <= _dm_vp <= 200 and _dm_ct > _dm_vp)
+            check("batch dialog(09-18): 全部维度都有复选框（一个不少）[%d/%d]"
+                  % (len(dlg3._dim_cbs), _dim_n),
+                  len(dlg3._dim_cbs) == _dim_n == len(dlg3._dim_vars))
+            dlg3.wm_geometry(_dlg3_def_geo)        # 恢复默认尺寸（用 wm_ 直通，避免 CTk 二次缩放）
+            pump(app, 6)
+            dlg3.update_idletasks()
+            _tb_b, _tx_b, _tx_h, _win_h = (
+                dlg3._tool_bar.winfo_y() + dlg3._tool_bar.winfo_height(),
+                dlg3.txt.winfo_y() + dlg3.txt.winfo_height(),
+                dlg3.txt.winfo_height(), dlg3.winfo_height())
+            check("batch dialog(09-18): 默认尺寸下工具行与预演区都在视野内 "
+                  "[工具行底=%d 预演底=%d 预演高=%d 窗高=%d]" % (_tb_b, _tx_b, _tx_h, _win_h),
+                  _tb_b <= _win_h and _tx_b <= _win_h and _tx_h >= 80)
+            # 2026-09-16（批次 12-2，用户要求 2）：「⑦ 取词用于批量打标」开关
+            #   —— 与「设置 → 标签与词表」共用同一 meta 键；切换后立即写 meta 并作废预演
+            db.set_meta(config.META_FALLBACK_BATCH, "0")      # 先归零，使断言不依赖前序用例
+            check("fb-batch(12-2): 批量对话框含「取词用于批量打标」勾选框且初始为关 [%s]"
+                  % bool(dlg3._use_field_fallback()),
+                  hasattr(dlg3, "var_fallback") and dlg3._use_field_fallback() is False)
+            dlg3.var_fallback.set(True); dlg3._on_fallback_toggle(); pump(app)
+            check("fb-batch(12-2): 勾选后写 meta 且生效 [%s]"
+                  % db.get_meta(config.META_FALLBACK_BATCH),
+                  db.get_meta(config.META_FALLBACK_BATCH) == "1"
+                  and dlg3._use_field_fallback() is True
+                  and dlg3._plan is None)          # 策略变更 ⇒ 预演结果作废
+            dlg3.var_fallback.set(False); dlg3._on_fallback_toggle(); pump(app)
+            check("fb-batch(12-2): 取消勾选后写 meta 且生效 [%s]"
+                  % db.get_meta(config.META_FALLBACK_BATCH),
+                  db.get_meta(config.META_FALLBACK_BATCH) == "0"
+                  and dlg3._use_field_fallback() is False)
             _ok_bad, _msg_bad, _tdb_bad = dlg3._open_target_db(_bad_path)
             check("target-db: rejects non-database file", (not _ok_bad) and _tdb_bad is None)
             _ok_o, _msg_o, _tdb_o = dlg3._open_target_db(_other_path)
@@ -2427,6 +2754,217 @@ def main():
         app._tag_page_limit = _mw.TAG_PAGE_LIMIT
         app._render_tag_main(); pump(app)
         app._close_tag_page(); pump(app)
+
+        # ================================================================ #
+        # 2026-09-16（批次 14）：字段管理「隐藏 / 显示」——详情区区块逐个隐藏
+        #   · ① 名称无开关；内置 9 项 + 虚拟 3 项 + 自定义字段均有开关
+        #   · 硬隐藏：与"详情字段显示策略"无关，且"显示全部字段"按钮不解除
+        #   · 隐藏不影响数据：保存后内容完整保留（不丢内容、不丢标签、不串写）
+        #   · 空间回收：隐藏某项后其下方区块整体上移
+        # ================================================================ #
+        _h_dom = db.list_domains()[0]["id"]
+        _h_cat = db.add_category("隐藏测试L", domain_id=_h_dom)
+        _h_ck = db.add_field_def("隐藏测试自定义", "text")   # 用于验证自定义字段也有开关
+        _h_e = db.add_entry(Entry(name="隐藏测试条目", category_id=_h_cat,
+                                  intro="介绍内容KEEP", origin="溯源KEEP",
+                                  prompt_cn="中文提示词KEEP", prompt_en="ENGLISH KEEP",
+                                  image_plan="https://example.com/k.png"))
+        db.set_entry_tags(_h_e, ["隐藏标签甲", "隐藏标签乙"])
+        _dm_bak14 = app._detail_mode
+        app._detail_mode = _mw.config.DETAIL_MODE_FULL    # 全字段模式（验证硬隐藏不被模式解除）
+        app._show_detail(db.get_entry(_h_e)); pump(app)
+
+        def _rendered14(key):
+            """该区块当前是否已渲染（标签区块用 chip 行判断，其余用文本框）"""
+            if key == "_tags":
+                _r = getattr(app, "_tag_chips_row", None)
+                return bool(_r is not None and _r.winfo_exists())
+            return key in app._detail_boxes
+
+        check("14: 全字段模式下各区块默认全部渲染",
+              all(_rendered14(k) for k in ("intro", "origin", "prompt_cn",
+                                           "prompt_en", "image_plan", "_tags")))
+
+        def _hide_btns14(row):
+            _out = []
+            for _c in row.winfo_children():
+                try:
+                    if (type(_c).__name__ == "CTkButton"
+                            and _c.cget("text") in ("隐藏", "显示")):
+                        _out.append(_c)
+                except Exception:
+                    pass
+            return _out
+
+        _dlg14 = _mw.FieldManagerDialog(app, db); pump(app)
+        _rows14 = {k: entry.master for _f, k, entry, _o, _b, _a in _dlg14._rows}
+        check("14: ① 名称行无「隐藏/显示」按钮",
+              len(_hide_btns14(_rows14["name"])) == 0)
+        check("14: 内置9项/虚拟3项/自定义 均有「隐藏/显示」按钮 [%s]" % _h_ck,
+              all(len(_hide_btns14(_rows14[k])) == 1 for k in
+                  ("intro", "origin", "features", "scenes", "works", "image_desc",
+                   "prompt_cn", "prompt_en", "image_plan",
+                   "_tags", "_location", "_time", _h_ck)))
+
+        # 「空间回收」基准：隐藏 5 个区块之前，详情区内实际生成的区块控件个数。
+        #   说明：详情区是**顺序 pack 布局**——不渲染 ⇒ 该区块控件根本不创建
+        #   ⇒ 不占高度 ⇒ 其下方区块整体上移。用"直属子控件个数"断言最稳定
+        #   （不受窗口是否已映射 / 坐标系影响）。
+        _n_before14 = len(app.detail_scroll.winfo_children())
+        for _k14 in ("intro", "origin", "prompt_cn", "prompt_en", "image_plan"):
+            _dlg14._toggle_hidden(_k14)
+        _dlg14._toggle_hidden("name")          # ① 名称：应被拒绝
+        pump(app)
+        check("14: 点「隐藏」写入 meta；① 名称被拒绝 [%s]" % sorted(db.get_hidden_field_keys()),
+              db.get_hidden_field_keys() == {"intro", "origin", "prompt_cn",
+                                             "prompt_en", "image_plan"})
+        _rows14b = {k: entry.master for _f, k, entry, _o, _b, _a in _dlg14._rows}
+        check("14: 已隐藏项按钮文案翻转为「显示」",
+              _hide_btns14(_rows14b["intro"])[0].cget("text") == "显示")
+        check("14: 对话框 changed=True（供主窗口重建详情区）", _dlg14.changed is True)
+        _dlg14.destroy(); pump(app)
+
+        # 关闭对话框后主窗口重建详情区（与 _open_field_manager 收尾口径一致）
+        app._show_detail(db.get_entry(_h_e)); pump(app)
+        check("14: 硬隐藏生效——全字段模式下这些区块仍不渲染",
+              not any(_rendered14(k) for k in
+                      ("intro", "origin", "prompt_cn", "prompt_en", "image_plan")))
+        check("14: 未隐藏项（④核心特征）照常渲染", _rendered14("features"))
+        check("14: 状态行给出「已隐藏」提示 [%s]" % app.detail_state_lbl.cget("text"),
+              "已隐藏" in app.detail_state_lbl.cget("text"))
+        _n_after14 = len(app.detail_scroll.winfo_children())
+        check("14: 隐藏 5 项后详情区少 5 个区块控件（下方整体上移）[%d → %d]"
+              % (_n_before14, _n_after14),
+              _n_after14 == _n_before14 - 5)
+
+        # ★ 数据安全：隐藏后保存，被隐藏字段的内容必须**完整保留**
+        app._lock_on = False
+        app._browse_mode = False
+        app._save_detail(); pump(app)
+        _e14 = db.get_entry(_h_e)
+        check("14: 隐藏 ②③⑧⑨⑩ 后保存，内容完整保留（不清空）",
+              _e14["intro"] == "介绍内容KEEP" and _e14["origin"] == "溯源KEEP"
+              and _e14["prompt_cn"] == "中文提示词KEEP"
+              and _e14["prompt_en"] == "ENGLISH KEEP"
+              and _e14["image_plan"] == "https://example.com/k.png")
+
+        # ★ 数据安全：隐藏 🏷 标签区块后保存，标签既不清空也不串写
+        _dlg14b = _mw.FieldManagerDialog(app, db); pump(app)
+        _dlg14b._toggle_hidden("_tags")
+        _dlg14b.destroy(); pump(app)
+        app._show_detail(db.get_entry(_h_e)); pump(app)
+        check("14: 隐藏 🏷 标签后详情区无标签区块", not _rendered14("_tags"))
+        _tags_before14 = list(app._tag_names)
+        app._suggest_tags()        # 标签区块隐藏时：应直接跳过（不改动已选标签）
+        pump(app)
+        check("14: 标签区块隐藏时「推荐标签」直接跳过", app._tag_names == _tags_before14)
+        app._save_detail(); pump(app)
+        check("14: 隐藏标签后保存，标签既不清空也不串写 %s"
+              % sorted(db.list_entry_tag_names(_h_e)),
+              set(db.list_entry_tag_names(_h_e)) == {"隐藏标签甲", "隐藏标签乙"})
+
+        # 全部恢复「显示」→ 详情区重新出现，内容仍在
+        _dlg14c = _mw.FieldManagerDialog(app, db); pump(app)
+        _dlg14c._toggle_hidden("_tags")
+        for _k14 in ("intro", "origin", "prompt_cn", "prompt_en", "image_plan"):
+            _dlg14c._toggle_hidden(_k14)
+        _dlg14c.destroy(); pump(app)
+        check("14: 全部恢复显示后 meta 清空", db.get_hidden_field_keys() == set())
+        app._show_detail(db.get_entry(_h_e)); pump(app)
+        check("14: 恢复显示后各区块重新渲染（内容仍在）",
+              all(_rendered14(k) for k in ("intro", "origin", "prompt_cn",
+                                           "prompt_en", "image_plan", "_tags"))
+              and db.get_entry(_h_e)["intro"] == "介绍内容KEEP")
+        check("14: 状态行不再有「已隐藏」提示",
+              "已隐藏" not in app.detail_state_lbl.cget("text"))
+
+        # ---------------- 2026-09-16（批次 15）：全部隐藏 / 全部显示 ----------------
+        _d15 = _mw.FieldManagerDialog(app, db); pump(app)
+        _d15._set_all_hidden(True)
+        _hide_all_expected = ({d["field_key"] for d in db.list_field_defs()} - {"name"})
+        check("15: 「全部隐藏」＝全部可隐藏项（不含 ① 名称）[%d 项]"
+              % len(db.get_hidden_field_keys()),
+              db.get_hidden_field_keys() == _hide_all_expected)
+        _d15.destroy(); pump(app)
+        app._show_detail(db.get_entry(_h_e)); pump(app)
+        check("15: 全部隐藏后详情区仅剩 ① 名称 [子控件=%d]"
+              % len(app.detail_scroll.winfo_children()),
+              len(app.detail_scroll.winfo_children()) == 1)
+        check("15: ① 名称仍正常渲染且可编辑",
+              getattr(app, "_name_entry", None) is not None
+              and app._name_entry.get() == "隐藏测试条目")
+        check("15: 状态行提示已隐藏项数",
+              "已隐藏" in app.detail_state_lbl.cget("text"))
+        # ★ 全部隐藏后保存：全部字段与标签必须完整保留
+        app._lock_on = False
+        app._browse_mode = False
+        app._save_detail(); pump(app)
+        _e15 = db.get_entry(_h_e)
+        check("15: 全部隐藏后保存，全部字段与标签完整保留",
+              _e15["name"] == "隐藏测试条目" and _e15["intro"] == "介绍内容KEEP"
+              and _e15["origin"] == "溯源KEEP"
+              and _e15["prompt_cn"] == "中文提示词KEEP"
+              and _e15["prompt_en"] == "ENGLISH KEEP"
+              and _e15["image_plan"] == "https://example.com/k.png"
+              and set(db.list_entry_tag_names(_h_e)) == {"隐藏标签甲", "隐藏标签乙"})
+        # 一键恢复「全部显示」
+        _d15b = _mw.FieldManagerDialog(app, db); pump(app)
+        _d15b._set_all_hidden(False)
+        _d15b.destroy(); pump(app)
+        check("15: 「全部显示」清空隐藏集合", db.get_hidden_field_keys() == set())
+        app._show_detail(db.get_entry(_h_e)); pump(app)
+        check("15: 全部显示后各区块恢复渲染",
+              all(_rendered14(k) for k in ("intro", "origin", "prompt_cn",
+                                           "prompt_en", "image_plan", "_tags")))
+        app._detail_mode = _dm_bak14
+
+        # ---------------- 2026-09-16（批次 16）：🏷 标签区块合并为一行（参考新建对话框） ----------------
+        app._show_detail(db.get_entry(_h_e)); pump(app)
+        check("16: 标签区块四控件同一行（推荐 / 输入 / 添加 / 选择）",
+              app._tag_entry.master is app._tag_add_btn.master
+              is app._tag_pick_btn.master is app._rec_btn.master)
+        _sib16 = app._tag_chips_row.master.winfo_children()
+        check("16: 该行位于 chip 行之上",
+              _sib16.index(app._rec_btn.master) < _sib16.index(app._tag_chips_row))
+        check("16: 区块已收回一行（直接子控件 = 3）",
+              len([c for c in _sib16 if c.winfo_manager()]) == 3)
+        _txt16 = []
+
+        def _w16(w):
+            for c in w.winfo_children():
+                try:
+                    if str(c.cget("text")):
+                        _txt16.append(str(c.cget("text")))
+                except Exception:
+                    pass
+                _w16(c)
+
+        _w16(app._tag_chips_row.master)
+        check("16: 原「推荐标签」说明长文字已移除（改为浮动提示）",
+              not any("按名称/提示词自动推荐" in t for t in _txt16))
+        check("16: 「🏷 标签」标题仍在",
+              any(t.strip() == "🏷 标签" for t in _txt16))
+        check("16: 「✨ 推荐标签」已挂浮动提示",
+              bool(tk.Frame.bind(app._rec_btn, "<Enter>")))
+        # 功能不受影响：回车添加 + 保存落库
+        app._lock_on = False
+        app._browse_mode = False
+        app._tag_entry.delete(0, "end")
+        app._tag_entry.insert(0, "布局校验标签")
+        app._add_tag_from_entry(); pump(app)
+        check("16: 输入框回车添加标签仍正常", "布局校验标签" in app._tag_names)
+        app._save_detail(); pump(app)
+        check("16: 保存后标签正确落库 %s" % sorted(db.list_entry_tag_names(_h_e)),
+              set(db.list_entry_tag_names(_h_e)) == {"隐藏标签甲", "隐藏标签乙",
+                                                     "布局校验标签"})
+        # 新增条目表单复用同一 `_build_tag_block` → 同样是一行布局
+        app._select_category(_h_cat); pump(app)
+        app._start_new_entry(); pump(app)
+        check("16: 新增表单的标签区块同样为一行",
+              app._tag_entry.master is app._tag_add_btn.master
+              is app._tag_pick_btn.master is app._rec_btn.master)
+        app._adding_new = False
+        app._show_detail(db.get_entry(_h_e)); pump(app)
 
         fails = [n for n, ok_ in results if not ok_]
         # 2026-09-15（stage3 专项排查）：把"悬停选中"干扰证据随汇总一起打印（无干扰时不打印）

@@ -36,7 +36,8 @@ def batch_dir() -> str:
 
 
 def _now_stamp() -> str:
-    return datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    """2026-09-17（审核 R-4）：统一到 `config.now_stamp()`（文件名用时间戳）。"""
+    return config.now_stamp()
 
 
 def new_batch(options=None, db_path: str = "") -> dict:

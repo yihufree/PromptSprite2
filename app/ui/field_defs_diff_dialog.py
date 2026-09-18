@@ -15,6 +15,7 @@ import json
 import os
 
 import customtkinter as ctk
+from .ui_common import C_OK as _C_OK  # 2026-09-17（U-2）：主色常量
 
 _STATUS_LABEL = {"new": "＋ 新增", "diff": "⚠ 差异", "same": "＝ 一致"}
 _ACT_ADD = "新增"
@@ -78,7 +79,7 @@ class FieldDefsDiffDialog(ctk.CTkToplevel):
             line.pack(fill="x", pady=2)
             ctk.CTkLabel(line, text=_STATUS_LABEL.get(r["status"], r["status"]), width=64,
                          anchor="w", font=("Microsoft YaHei", 11),
-                         text_color=("#2E8B57" if r["status"] == "new" else "#D08A00")
+                         text_color=(_C_OK if r["status"] == "new" else "#D08A00")
                          ).pack(side="left")
             name = r["display_name"] or r["field_key"]
             local = (r.get("current") or {}).get("display_name") or "（本机无）"
@@ -93,7 +94,7 @@ class FieldDefsDiffDialog(ctk.CTkToplevel):
 
         btn = ctk.CTkFrame(self, fg_color="transparent")
         btn.grid(row=4, column=0, columnspan=2, sticky="e", padx=pad, pady=(4, 14))
-        ctk.CTkButton(btn, text="继续导入", width=104, fg_color="#2E8B57",
+        ctk.CTkButton(btn, text="继续导入", width=104, fg_color=_C_OK,
                       command=self._ok).pack(side="left", padx=4)
         ctk.CTkButton(btn, text="取消导入", width=104,
                       command=self.destroy).pack(side="left", padx=4)

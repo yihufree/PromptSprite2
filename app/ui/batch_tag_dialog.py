@@ -33,9 +33,19 @@ from tkinter import filedialog, messagebox
 
 from .. import backup, config, tagger, tagger_batch, tagger_engine
 from ..database import Database
+from .ui_common import C_DANGER as _C_DANGER, C_OK as _C_OK, C_WARN as _C_WARN  # 2026-09-17（U-2）：主色常量
+from .ui_common import widget_scaling  # 2026-09-18：窗口宽度按"源码像素"折算时用
+from .ui_common import make_scroll_area as _make_scroll_area  # 2026-09-18：高度可控的滚动区
 
 _LIMIT_MAP = {"不限": 0, "前 100": 100, "前 500": 500, "前 1000": 1000}
 _MAX_TAGS = ["1", "2", "3"]
+
+# ⑤「标签重点范围」多选区的排布常量（2026-09-18，用户实测反馈后新增）
+#   背景：出厂词表升级后维度由 8 个增到 **101 个**；原先"5 个/行、不限高"的排布高达 ≈550px，
+#   把下方的工具行（预演 / 确认执行 / 取消）与预演区整体挤出视野，**看不到也点不到**。
+#   现改为：**固定高度视口 + 多列 + 可滚动**（鼠标滚轮 / 拖动滚动条），列数按可用宽度自适应。
+_DIM_BOX_H = 104        # 维度多选区视口高度（≈4 行，多余的行靠滚动查看）
+_DIM_CELL_W = 120       # 每个复选框的占位宽度（含右侧留白）——据此估算每行可放几个
 
 
 class BatchHistoryDialog(ctk.CTkToplevel):
@@ -97,7 +107,7 @@ class BatchHistoryDialog(ctk.CTkToplevel):
                          ).pack(side="left", fill="x", expand=True)
             btn = ctk.CTkButton(row, text="撤销", width=64, height=24,
                                 font=("Microsoft YaHei", 11),
-                                fg_color=("#8a94a6" if b["undone"] else "#D9534F"),
+                                fg_color=("#8a94a6" if b["undone"] else _C_DANGER),
                                 state=("disabled" if b["undone"] else "normal"),
                                 command=lambda p=b["path"], d=dpath: self._undo(p, d))
             btn.pack(side="right")
@@ -113,10 +123,10 @@ class BatchHistoryDialog(ctk.CTkToplevel):
             "ok": False, "error": "撤销入口不可用", "restored": 0, "skipped": 0}
         if res.get("ok"):
             self.status.configure(text=f"✅ 已撤销：还原 {res['restored']} 条"
-                                       f"（跳过 {res['skipped']} 条）", text_color="#2E8B57")
+                                       f"（跳过 {res['skipped']} 条）", text_color=_C_OK)
             self._render()
         else:
-            self.status.configure(text=f"⚠ {res.get('error')}", text_color="#D9534F")
+            self.status.configure(text=f"⚠ {res.get('error')}", text_color=_C_DANGER)
 
 
 class BatchTagDialog(ctk.CTkToplevel):
@@ -138,13 +148,22 @@ class BatchTagDialog(ctk.CTkToplevel):
         # 2026-09-14 复审修正：最小宽度 720 → **800**——工具行现有 5 个按钮（预演/历史批次/撤销/
         #   取消/确认执行）实测共需 729px + 左右内边距 28px = 757px，720 宽会把按钮挤出可视区，
         #   故最小宽度必须 ≥ 757（取 800 留余量）；最小高度 520 → 560（表单区约 400px + 工具行 + 预演区）。
+        # 2026-09-16（批次 12-2）：新增「⑦ 取词用于批量打标」整行（勾选框 + 说明）后表单变高，
+        #   最小高度 560 → **620**，否则在最小尺寸下工具行会被表单挤出可视区（gui_self_test 已断言）。
+        # 2026-09-18（用户实测反馈）：出厂词表升级后「⑤ 标签重点范围」维度由 8 个 → **101 个**，
+        #   ⇒ ① 该区改为"固定高度 + 多列 + 可滚动"（见 `_DIM_BOX_H`），表单不再随维度数增高；
+        #      ② 窗口同时**加宽**（默认 ≈1000 源码像素、但不超过屏幕 92%），让一行能放 6~7 个维度；
+        #         最小宽度 800 → **900**（工具行 5 个按钮实测需 757，仍留足余量）。
         try:
-            _sh = self.winfo_screenheight()
+            _sw, _sh = self.winfo_screenwidth(), self.winfo_screenheight()
         except Exception:
-            _sh = 900
-        self.geometry("820x%d" % max(560, min(700, int(_sh * 0.85))))
+            _sw, _sh = 1280, 900
+        _w = max(900, min(1000, int(_sw * 0.92 / max(widget_scaling(self), 1.0))))
+        # 高度上限 700 → **780**（同样按屏幕自适应）：表单本就不矮，留出更充裕的预演区高度；
+        #   小屏（如 768 高）仍走 `_sh*0.88` 的屏占比。
+        self.geometry("%dx%d" % (_w, max(620, min(780, int(_sh * 0.88)))))
         try:
-            self.minsize(800, 560)
+            self.minsize(min(900, _w), 620)
         except Exception:
             pass
         try:
@@ -236,17 +255,27 @@ class BatchTagDialog(ctk.CTkToplevel):
         self.om_tags.set("3")
         self.om_tags.grid(row=r[0] - 1, column=1, pady=6, sticky="w")
 
-        # ⑤ 标签重点范围（维度多选）
+        # ⑤ 标签重点范围（维度多选）——2026-09-18 改造（用户实测反馈）：
+        #   原先"5 个/行 + 不限高"在维度达 101 个时高达 ≈550px，把下方工具行/预演区挤出视野。
+        #   现改为 **固定高度视口 + 多列 + 可滚动**：列数随可用宽度自适应（重排既有控件、不重建），
+        #   101 个复选框一个不少，只是被"折进"滚动区（鼠标滚轮 / 拖动右侧滚动条查看）。
         _row("⑤ 标签重点范围")
-        dimb = ctk.CTkFrame(frm, fg_color="transparent")
-        dimb.grid(row=r[0] - 1, column=1, pady=6, sticky="w")
-        for i, dim in enumerate(tagger.all_dimension_names(self.dict_data)):
+        _dims = tagger.all_dimension_names(self.dict_data)
+        self._dim_cbs = []
+        self._dim_cols = 0
+        self._dim_box = _make_scroll_area(frm, _DIM_BOX_H, fg_color="transparent")
+        self._dim_box.grid(row=r[0] - 1, column=1, pady=6, sticky="ew")
+        for dim in _dims:
             var = ctk.BooleanVar(value=True)
             self._dim_vars[dim] = var
-            ctk.CTkCheckBox(dimb, text=dim, variable=var, width=86, font=("Microsoft YaHei", 11)
-                            ).grid(row=i // 5, column=i % 5, padx=(0, 6), pady=2, sticky="w")
-        ctk.CTkLabel(frm, text="（取消勾选即不参与打分；「领域」与来源自带的「显式标签」始终保留）",
-                     font=("Microsoft YaHei", 10), text_color="#9aa4b1"
+            self._dim_cbs.append(ctk.CTkCheckBox(self._dim_box, text=dim, variable=var,
+                                                 width=_DIM_CELL_W - 6,
+                                                 font=("Microsoft YaHei", 11)))
+        self._dim_box.bind("<Configure>", self._on_dim_resize, add="+")
+        self._regrid_dims(6)          # 先按 6 列排；真实宽度到达后由 <Configure> 自适应
+        ctk.CTkLabel(frm, text=("共 %d 个维度：取消勾选即不参与打分；「领域」与来源自带的「显式标签」"
+                                "始终保留。（维度较多，可用鼠标滚轮 / 拖动右侧滚动条查看全部）" % len(_dims)),
+                     font=("Microsoft YaHei", 10), text_color="#9aa4b1", anchor="w", justify="left"
                      ).grid(row=r[0], column=1, pady=(0, 4), sticky="w")
         r[0] += 1
 
@@ -257,10 +286,28 @@ class BatchTagDialog(ctk.CTkToplevel):
         self.seg_write.set("追加（并入既有标签）")
         self.seg_write.grid(row=r[0] - 1, column=1, pady=6, sticky="w")
 
+        # ⑦ 取词用于批量打标（2026-09-16 批次 12-2，用户要求 2）
+        #   与「设置 → 标签与词表」页的同一开关**共用 meta 键** `config.META_FALLBACK_BATCH`：
+        #   这里是"第二个入口"——改动立即写 meta（另一处下次打开即同步）；执行时直接读 meta，
+        #   保证"界面上看到的"与"实际生效的"永远一致。
+        _row("⑦ 取词用于批量打标")
+        self.var_fallback = ctk.BooleanVar(
+            value=(self.db.get_meta(config.META_FALLBACK_BATCH) == "1"))
+        ctk.CTkCheckBox(frm, text="启用（与「设置 → 标签与词表」同一开关）",
+                        variable=self.var_fallback, font=("Microsoft YaHei", 11),
+                        command=self._on_fallback_toggle
+                        ).grid(row=r[0] - 1, column=1, pady=6, sticky="w")
+        ctk.CTkLabel(frm, text="关闭（默认）：只走「显式 → 领域 → 词典」，与内置库标签口径一致；"
+                               "开启：额外采用「字段取词」命中词表/热点词的词",
+                     font=("Microsoft YaHei", 10), text_color="#9aa4b1", anchor="w",
+                     justify="left").grid(row=r[0], column=0, columnspan=2,
+                                          pady=(0, 4), sticky="w")
+        r[0] += 1
+
         # 保护说明
         ctk.CTkLabel(frm, text="🛡 执行前**强制自动备份数据库**（备份失败则中止，不写入）；"
                                "执行记录明细，可精确撤销",
-                     font=("Microsoft YaHei", 10), text_color="#D9534F"
+                     font=("Microsoft YaHei", 10), text_color=_C_DANGER
                      ).grid(row=r[0], column=0, columnspan=2, pady=(2, 4), sticky="w")
         r[0] += 1
 
@@ -276,11 +323,11 @@ class BatchTagDialog(ctk.CTkToplevel):
                                                          self._target_path)
                       ).pack(side="left", padx=(6, 0))
         self.btn_undo = ctk.CTkButton(self._tool_bar, text="↩ 撤销本次", width=100,
-                                      fg_color="#D9534F", state="disabled",
+                                      fg_color=_C_DANGER, state="disabled",
                                       command=self._on_undo)
         self.btn_undo.pack(side="left", padx=(6, 0))
         # 右侧（预演文本框右上角位置）：确认执行 / 取消
-        ctk.CTkButton(self._tool_bar, text="✅ 确认执行", width=120, fg_color="#2E8B57",
+        ctk.CTkButton(self._tool_bar, text="✅ 确认执行", width=120, fg_color=_C_OK,
                       command=self._on_execute).pack(side="right")
         ctk.CTkButton(self._tool_bar, text="取消", width=90,
                       command=self.destroy).pack(side="right", padx=(0, 6))
@@ -291,8 +338,55 @@ class BatchTagDialog(ctk.CTkToplevel):
         self.txt.insert("1.0", "点「🔍 预演（不写库）」查看将要写入的标签（不会修改任何数据）。")
         self.txt.configure(state="disabled")
 
+    # ------------------------------------------------------------------ #
+    # ⑤ 维度多选区的"自适应列数"排布（2026-09-18）
+    # ------------------------------------------------------------------ #
+    def _regrid_dims(self, cols: int) -> None:
+        """按 `cols` 列重排维度复选框（**只重排既有控件，不重建** ⇒ 快且不丢勾选状态）。"""
+        cols = max(1, int(cols))
+        if cols == self._dim_cols:
+            return
+        self._dim_cols = cols
+        for i, cb in enumerate(self._dim_cbs):
+            cb.grid(row=i // cols, column=i % cols, padx=(0, 4), pady=2, sticky="w")
+
+    def _on_dim_resize(self, _event=None) -> None:
+        """维度区宽度变化 → 按可用宽度决定每行放几个（窗口拉宽即多显示几列）。"""
+        try:
+            w = int(self._dim_box.winfo_width())
+        except Exception:
+            return
+        if w < 80:            # 尚未完成布局（宽度为 1）→ 不动
+            return
+        self._regrid_dims(w // _DIM_CELL_W)
+
     # 注：状态行已优先 pack 到窗口底部、「✅ 确认执行 / 取消」已并入上方工具行
     #     （2026-09-14 修复"预演后找不到确认按钮" + 用户要求的按钮位置调整）。
+
+    def _use_field_fallback(self) -> bool:
+        """「取词是否用于批量/离线打标」——**执行时直接读 meta**（2026-09-16 批次 12-2）。
+
+        为什么不在内存里缓存：该开关与「设置 → 标签与词表」页共用同一 meta 键，
+        两处任一改动都应在下一次预演/执行立即生效（单一真源 = meta）。
+        """
+        try:
+            return self.db.get_meta(config.META_FALLBACK_BATCH) == "1"
+        except Exception:
+            return False
+
+    def _on_fallback_toggle(self) -> None:
+        """勾选/取消「⑦ 取词用于批量打标」→ 立即写 meta，并作废已有预演结果。"""
+        try:
+            self.db.set_meta(config.META_FALLBACK_BATCH,
+                             "1" if self.var_fallback.get() else "0")
+        except Exception:
+            pass
+        self._invalidate()
+        _on = self._use_field_fallback()
+        self.status.configure(
+            text=("✅ 已开启「取词用于批量打标」——请重新预演后再执行"
+                  if _on else "✅ 已关闭「取词用于批量打标」——请重新预演后再执行"),
+            text_color=("#C77700" if _on else "#5b6b7c"))
 
     # ------------------------------------------------------------------ #
     # 目标库（2026-09-14 新增）：当前库 / 其他库文件
@@ -309,7 +403,7 @@ class BatchTagDialog(ctk.CTkToplevel):
                           text_color="#5b6b7c")
         else:
             lbl.configure(text="⚠ 目标：其他库文件　%s" % self._target_path,
-                          text_color="#D9534F")
+                          text_color=_C_DANGER)
 
     def _on_target_change(self, value: str) -> None:
         """切换目标库；选"其他库文件…"时弹文件选择并**校验是否为合法库**。"""
@@ -474,7 +568,7 @@ class BatchTagDialog(ctk.CTkToplevel):
     def _invalidate(self) -> None:
         """选项变化 → 之前的预演结果作废。"""
         self._plan = None
-        self.status.configure(text="选项已变化，请重新预演。", text_color="#E08A00")
+        self.status.configure(text="选项已变化，请重新预演。", text_color=_C_WARN)
 
     def _set_text(self, text: str) -> None:
         self.txt.configure(state="normal")
@@ -560,6 +654,13 @@ class BatchTagDialog(ctk.CTkToplevel):
         exclude = [d for d, v in self._dim_vars.items() if not v.get()]
         max_tags = int(self.om_tags.get())
         dict_data = self._load_target_dict()          # 目标库词表（无则用当前软件词表）
+        # 2026-09-16（批次 12-2，用户要求 2）：取词是否用于**批量打标**（读 meta，与设置页同一开关）
+        _use_fb = self._use_field_fallback()
+        _hot = []
+        try:
+            _hot = self.db.list_hotwords()            # 取词命中校验也认"热点词"
+        except Exception:
+            _hot = []
         assignments, items, samples = {}, [], []
         freq, dims_used, domains = {}, {}, {}
         zero = 0
@@ -569,7 +670,8 @@ class BatchTagDialog(ctk.CTkToplevel):
             res = tagger_engine.suggest(
                 texts, dict_data,
                 tagger.entry_context_names(index, e.get("category_id")),
-                max_tags=max_tags, exclude_dims=exclude)
+                max_tags=max_tags, exclude_dims=exclude,
+                field_fallback=_use_fb, hotwords=_hot)
             names = tagger_engine.tag_names(res)
             before = list(before_map.get(e["id"]) or [])
             after = before + [n for n in names if n not in before] \
@@ -638,14 +740,14 @@ class BatchTagDialog(ctk.CTkToplevel):
         try:
             plan = self._build_plan()
         except Exception as exc:
-            self.status.configure(text=f"⚠ 预演失败：{exc}", text_color="#D9534F")
+            self.status.configure(text=f"⚠ 预演失败：{exc}", text_color=_C_DANGER)
             return
         self._plan = plan
         self._render_plan(plan)
         self.status.configure(
             text="✅ 预演完成：将处理 %d 条、写入 %d 个标签关联（尚未写入任何数据）"
                  % (plan["stats"]["处理"], plan["stats"]["写入标签关联"]),
-            text_color="#2E8B57")
+            text_color=_C_OK)
 
     def _on_execute(self) -> None:
         if self._plan is None:
@@ -681,11 +783,11 @@ class BatchTagDialog(ctk.CTkToplevel):
             messagebox.showwarning("已中止",
                                    f"打标前备份失败：{snap.get('error')}\n\n未写入任何数据。",
                                    parent=self)
-            self.status.configure(text="⚠ 备份失败，已中止（未写入）", text_color="#D9534F")
+            self.status.configure(text="⚠ 备份失败，已中止（未写入）", text_color=_C_DANGER)
             return
         # —— 写入（单事务；写入期间窗口短暂无响应，与既有行为一致）——
         mode = "append" if self.seg_write.get().startswith("追加") else "replace"
-        self.status.configure(text="正在写入…（请稍候，勿关闭窗口）", text_color="#E08A00")
+        self.status.configure(text="正在写入…（请稍候，勿关闭窗口）", text_color=_C_WARN)
         try:
             self.update_idletasks()
         except Exception:
@@ -695,7 +797,7 @@ class BatchTagDialog(ctk.CTkToplevel):
                                                       touch_updated=True)
         except Exception as exc:
             messagebox.showwarning("执行失败", str(exc), parent=self)
-            self.status.configure(text=f"⚠ 执行失败：{exc}", text_color="#D9534F")
+            self.status.configure(text=f"⚠ 执行失败：{exc}", text_color=_C_DANGER)
             return
         # —— 记录批次（供精确撤销；含目标库路径）——
         batch = tagger_batch.new_batch(self._opts(), db_path=self._target_path)
@@ -711,7 +813,7 @@ class BatchTagDialog(ctk.CTkToplevel):
                f"新建标签 {res.get('tags_created', 0)} 个。\n"
                f"备份：{os.path.basename(snap.get('path') or '')}\n"
                f"批次明细：{os.path.basename(self._last_batch_path or '（未记录）')}")
-        self.status.configure(text=msg.split("\n")[0], text_color="#2E8B57")
+        self.status.configure(text=msg.split("\n")[0], text_color=_C_OK)
         self._set_text(msg + "\n\n（如需回退，点「↩ 撤销本次打标」）")
         self._plan = None
         # 同步主窗口的标签页面计数与条目区标签显示（**仅当打标的就是当前库**）
@@ -739,7 +841,7 @@ class BatchTagDialog(ctk.CTkToplevel):
         res = self._undo_batch_by_path(self._last_batch_path)
         if res.get("ok"):
             self.status.configure(text=f"✅ 已撤销：还原 {res['restored']} 条"
-                                       f"（跳过 {res['skipped']} 条）", text_color="#2E8B57")
+                                       f"（跳过 {res['skipped']} 条）", text_color=_C_OK)
             self._set_text("已撤销本次打标：还原 %d 条，跳过 %d 条。"
                            % (res["restored"], res["skipped"]))
             self.btn_undo.configure(state="disabled")

@@ -36,7 +36,15 @@ from typing import Optional
 from ..database import Database, GLOBAL_TAG_NS  # 2026-08-18（P1-1）：内容判重键；2026-09-13：标签命名空间
 from ..models import Entry
 
-JSON_VERSION = 5  # 2026-09-13（4-a）：四层路径 + field_defs；v2/v3/v4 文件仍兼容导入
+# 导入导出格式版本（当前）：
+#   v5（2026-09-13，4-a）：四层分类路径 + field_defs 随包；
+#   **v6（2026-09-17，FR-93/FR-94）：每条例目携带稳定 ID（`uuid`）；
+#     多位置条目导出只写一次、位置清单写入 `locations`（导入时重建关联）。**
+#   兼容策略：**v2~v5 老文件导入路径完全不变**（无 uuid ⇒ 走原"内容键"匹配）；
+#   裁剪说明：v6 只增键、不改既有键语义 ⇒ 老版本软件读 v6 包会忽略 uuid/locations
+#   （但**库结构已是 schema v5**，回退旧版 EXE 仍需同时恢复数据库备份）。
+JSON_VERSION = 6
+JSON_VERSION_V5 = 5   # 上一版（保留常量，便于对照与判断"是否携带 uuid"）
 
 
 # ---------------------------------------------------------------------- #
@@ -148,11 +156,58 @@ def _field_defs_payload(db) -> list:
     return out
 
 
-def _entry_payload(db, e) -> dict:
+def _entry_locations(db, e, allowed_cat_ids=None) -> list:
+    """该条目的**位置清单**（每项为分类名链 list）；2026-09-17（FR-94）新增。
+
+    - `allowed_cat_ids` 非空（子树导出）⇒ 只保留落在该范围内的位置；
+    - 主挂靠（`entries.category_id`）与"关联位置"（`entry_links`）一并取并集；
+    - 去重保序；无位置返回空列表。
+    """
+    try:
+        _ids = list(db.list_entry_locations(e["id"]) or [])
+    except Exception:
+        _ids = []
+    if not _ids and e.get("category_id"):
+        _ids = [e["category_id"]]
+    out = []
+    for cid in _ids:
+        if not cid:
+            continue
+        if allowed_cat_ids is not None and cid not in allowed_cat_ids:
+            continue
+        _chain = _chain_names(db, cid)
+        if _chain and _chain not in out:
+            out.append(_chain)
+    return out
+
+
+def _entry_payload(db, e, locations=None) -> dict:
     payload = {k: e[k] for k in ("name", "intro", "origin", "features", "scenes", "works",
                                  "image_desc", "prompt_cn", "prompt_en", "image_plan",
                                  "is_favorite")}
     payload["path"] = _chain_names(db, e["category_id"]) if e["category_id"] else []
+    # 2026-09-17（FR-93，JSON v6）：随包携带**稳定 ID**（跨机器认人）。
+    #   为空则不写该键 —— 保持与旧格式一致、文件不膨胀（旧包无该键 ⇒ 走原"内容键"匹配）。
+    try:
+        _uuid = str(e["uuid"] or "").strip() if "uuid" in e.keys() else ""
+    except Exception:
+        _uuid = ""
+    if _uuid:
+        payload["uuid"] = _uuid
+    # 2026-09-17（FR-94，JSON v6）：**多位置条目**的位置清单（仅在多于 1 个位置时写）。
+    #   子树导出时本条目只出现一次，靠本数组保留"1 条 + N 位置"的关联关系。
+    if locations and len(locations) > 1:
+        payload["locations"] = [list(x) for x in locations]
+    # 2026-09-16（批次 11-7，用户要求 3）：随包携带**条目的创建时间**，导出→导入 / 换机后不丢。
+    #   注意：**不携带 `updated_at`**（导入时仍取当前时间）——`updated_at` 驱动"当日变更包"的
+    #   采集语义（`list_entries_updated_since`），若保留旧值会导致刚导入的条目不再进当日变更包。
+    #   为空则不写该键，保持与旧格式一致、文件不膨胀（旧文件无该键 ⇒ 导入时按导入时刻）。
+    try:
+        _ca = str(e["created_at"] or "").strip() if "created_at" in e.keys() else ""
+    except Exception:
+        _ca = ""
+    if _ca:
+        payload["created_at"] = _ca
     # 2026-09-13（1-A-5 第 3 步·下）：自定义字段取值（为空则**不写**该键，保持与旧格式一致、文件不膨胀）
     try:
         cf = {r["field_key"]: r["value_text"] for r in db.list_entry_field_values(e["id"])}
@@ -310,10 +365,17 @@ def _restore_pending_images(db, max_id_before: int, pending_imgs: list) -> int:
 # 导出
 # ---------------------------------------------------------------------- #
 def export_json(db, path, category_id=None, computer_code=None, day=None) -> int:
-    """导出全部（或指定分类子树）为 JSON（v3，含项目类别归属）；返回导出的条目数。
+    """导出全部（或指定分类子树）为 JSON（**v6**：含稳定 ID 与多位置清单）；返回导出的条目数。
 
     computer_code/day：增量备份场景补充来源信息（电脑代号/日期）；普通导出可省略。
+
+    2026-09-17（FR-93/FR-94，v6）两处行为变化：
+      ① 每条例目携带 `uuid`（稳定 ID，跨机器认人）；
+      ② **子树导出时多位置条目只写一次**（原先每个位置各写一行 ⇒ 再导入会变成多份副本），
+         各位置写入 `locations` 数组，导入时据此重建关联（"1 条 + N 位置"）。
+         因此 `summary.add_entries` 由"位置行数"变为**唯一条目数**（更准确）。
     """
+    _scope_ids = None      # 子树导出时的位置范围（None = 全库，不限制位置）
     if category_id is None:
         export_cats = _gather_categories(db)
         export_entries = db.list_all_entries()
@@ -326,7 +388,15 @@ def export_json(db, path, category_id=None, computer_code=None, day=None) -> int
                 seen.add(c["id"])
                 export_cats.append(c)
         cat_ids = [c["id"] for c in subtree]
-        export_entries = [e for cid in cat_ids for e in db.list_entries(cid)]
+        # 2026-09-17（FR-94）：按**条目 id 去重**——多位置条目在子树内只出现一次
+        _seen_e, export_entries = set(), []
+        for _cid in cat_ids:
+            for _e in db.list_entries(_cid):
+                if _e["id"] in _seen_e:
+                    continue
+                _seen_e.add(_e["id"])
+                export_entries.append(_e)
+        _scope_ids = set(cat_ids)
 
     projects = db.list_projects()
     p_by_id = {p["id"]: p for p in projects}
@@ -354,7 +424,8 @@ def export_json(db, path, category_id=None, computer_code=None, day=None) -> int
                                    if c["parent_id"] else None),
                         "name": c["name"], "sort_order": c["sort_order"]}
                        for c in export_cats],
-        "entries": [_entry_payload(db, e) for e in export_entries],
+        "entries": [_entry_payload(db, e, _entry_locations(db, e, _scope_ids))
+                    for e in export_entries],
     }
     # 2026-09-13（4-a）：自定义字段定义随包携带（否则换机导入后"字段值有、字段定义无"）
     try:
@@ -454,9 +525,101 @@ def _ensure_chain_categories(db, names, top_links=None) -> Optional[int]:
     return pid
 
 
+# ---------------------------------------------------------------------- #
+# v6（2026-09-17，FR-93/FR-94）：稳定 ID 匹配与多位置重建
+# ---------------------------------------------------------------------- #
+def _extra_location_paths(ep) -> list:
+    """取包内 `locations` 中**除主路径（`path`）之外**的其余位置（2026-09-17，FR-94）。
+
+    用于导入时建立"关联位置"；主路径由 `path` 负责挂靠，避免重复。
+    去重保序；项不是 list/tuple 时跳过（容错）。
+    """
+    _main = list(ep.get("path") or [])
+    out = []
+    for x in (ep.get("locations") or []):
+        if not isinstance(x, (list, tuple)):
+            continue
+        x = list(x)
+        if x and x != _main and x not in out:
+            out.append(x)
+    return out
+
+
+def _link_extra_locations(db, entry_id: int, cat_path: dict, ep) -> int:
+    """把 `locations` 中的额外位置解析为分类并建立关联；返回成功建立的个数（容错，不抛）。"""
+    n = 0
+    for paths in _extra_location_paths(ep):
+        cid = _resolve_category_by_path(cat_path, paths)
+        if cid is None:
+            continue
+        try:
+            db.link_entry(entry_id, cid)   # 已是主挂靠/已关联 ⇒ 内部忽略
+            n += 1
+        except Exception:
+            pass
+    return n
+
+
+def _apply_v6_aux(db, entry_id: int, ep) -> None:
+    """v6「更新（修改）」附带的字段处理（2026-09-17，用户确认口径）。
+
+    - `tags`         **有该键则整体替换**（忠实还原来源端）；
+    - `custom_fields`**有该键则整体替换**（先清空该条目的全部自定义字段取值，再写入包内值）；
+    - `images`       **并入（追加）**——JSON 不携带图片文件本体，整体替换会让目标库
+                     已有的本地图片引用丢失，故只追加、不删除；
+    - **键缺失时一律不动**（源端未提供 ≠ 源端为空）。
+    所有子步骤单独 try/except：任一失败不影响整包导入。
+    """
+    if "tags" in ep:
+        try:
+            db.set_entry_tags(entry_id,
+                              [str(x) for x in (ep.get("tags") or []) if str(x or "").strip()])
+        except Exception:
+            pass
+    if "custom_fields" in ep:
+        try:
+            _cf = ep.get("custom_fields") or {}
+            _cfj = ep.get("custom_fields_json") or {}
+            for _r in db.list_entry_field_values(entry_id):
+                db.delete_entry_field_value(entry_id, _r["field_key"])
+            for _fk, _v in _cf.items():
+                db.set_entry_field_value(entry_id, _fk, _v or "", _cfj.get(_fk) or "")
+        except Exception:
+            pass
+    for _im in (ep.get("images") or []):
+        try:
+            db.add_entry_image(entry_id, _im.get("kind") or "local",
+                               _im.get("path") or "", _im.get("source_url") or "",
+                               _im.get("caption") or "")
+        except Exception:
+            pass
+
+
+def _link_pending_locations(db, max_id_before: int, pending: list, pending_loc: list) -> int:
+    """批量插入后，按"id 递增＝插入顺序"为新条目建立额外位置关联；返回建立的关联数。
+
+    与 `_restore_pending_*` 同一策略：**仅当新增 id 数量与 pending 完全对应时才写**，
+    否则宁可不写（避免把位置关联挂到错误的条目上）。
+    """
+    if not pending_loc or not any(pending_loc):
+        return 0
+    ids = _pending_ids(db, max_id_before, len(pending))
+    if not ids:
+        return 0
+    out = 0
+    for _e, _locs in zip(ids, pending_loc):
+        for _cid in (_locs or []):
+            try:
+                db.link_entry(_e, _cid)
+                out += 1
+            except Exception:
+                pass
+    return out
+
+
 def import_json(db, path, progress_cb=None, deletion_mode="apply",
                 apply_additions=True, field_defs_resolver=None) -> dict:
-    """导入 JSON 备份/变更包（v2/v3/v4 兼容）：重建项目类别/全局分类树/领域关联/条目；返回统计。
+    """导入 JSON 备份/变更包（v2~**v6** 兼容）：重建项目类别/全局分类树/领域关联/条目；返回统计。
 
     deletion_mode（2026-09-08 V1.7.0）：
       - "apply"：应用文件内 deleted_* 删除清单（同步删除，先进回收站可恢复）；
@@ -467,11 +630,20 @@ def import_json(db, path, progress_cb=None, deletion_mode="apply",
     （对应导入向导"② 仅应用删除"）。
     field_defs_resolver（2026-09-13）：随包 `field_defs` 的"逐项确认"回调
     （`fn(diff_rows) -> {field_key: "add"/"overwrite"/"skip"}`）；不传则按 key 全量合并。
+
+    **v6 匹配策略（2026-09-17，FR-93/FR-94）——三步**：
+      ① 包内条目带 `uuid` 且目标库已存在同 uuid ⇒ 判定为**同一条目**，走「更新」路径
+         （更新 ①~⑩ 内容字段与收藏；标签/自定义字段"有则整体替换"；图集"并入"）；
+      ② 无 uuid（v2~v5 老包）或 uuid 未命中 ⇒ **回退现有的"内容键"判重**（行为与改造前完全一致）；
+      ③ 两者都不命中 ⇒ 新增（沿用包内 uuid，无则分配新的）。
+    另：v6 包的 `locations`（多位置清单）会在导入时为该条目**建立关联位置**，
+    从而实现"多位置条目导出→导入仍是 1 条 + N 位置"（FR-94）。
+    返回统计新增 `updated`（按 uuid 命中并更新的条数）。
     """
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
     ver = data.get("version", 1)
-    if ver not in (2, 3, 4, 5):
+    if ver not in (2, 3, 4, 5, 6):
         raise ValueError("JSON 版本不兼容，请使用本软件导出的备份文件")
 
     add_entries = data.get("entries", [])
@@ -558,12 +730,15 @@ def import_json(db, path, progress_cb=None, deletion_mode="apply",
                 db.link_domain_category(did, cid)
 
     # 5. 条目（2026-08-18：P2-4 批量插入；P1-1 详情内容去重——内容相同才跳过）
-    done, skipped, processed = 0, 0, 0
+    #    2026-09-17（FR-93/FR-94，v6）：**稳定 ID 优先**——命中同 uuid ⇒ 更新同一条目、不新建；
+    #    并处理 `locations`（多位置）。旧包（无 uuid）完全走原路径，行为不变。
+    done, skipped, processed, updated = 0, 0, 0, 0
     pending = []
     pending_cf = []   # 2026-09-13：与 pending 一一对应的自定义字段取值（导入后写回）
     pending_cfj = []  # 2026-09-13（3-b）：同序的结构化取值（目录层级型的 令牌+快照名）
     pending_tags = []  # 2026-09-13（1-C-4）：与 pending 一一对应的标签名列表（导入后写回）
     pending_img = []   # 2026-09-13（2-d）：与 pending 一一对应的图集（导入后写回）
+    pending_loc = []   # 2026-09-17（FR-94）：与 pending 一一对应的"额外位置"分类 id 列表
     seen_by_cat = {}  # category_id(None=未分类) -> 现有条目"详情内容"键集合
     for ep in add_entries:
         p = ep.get("path") or []
@@ -574,13 +749,35 @@ def import_json(db, path, progress_cb=None, deletion_mode="apply",
                   works=ep.get("works", ""), image_desc=ep.get("image_desc", ""),
                   prompt_cn=ep.get("prompt_cn", ""), prompt_en=ep.get("prompt_en", ""),
                   image_plan=ep.get("image_plan", ""),
-                  is_favorite=int(ep.get("is_favorite", 0)))
+                  is_favorite=int(ep.get("is_favorite", 0)),
+                  created_at=str(ep.get("created_at") or ""))   # 2026-09-16（11-7）：保留原创建时间
+        processed += 1
+        # ---- v6 第 ① 步：稳定 ID 命中 ⇒ 更新同一条目（"修改"同步的真正落地）----
+        _uuid = str(ep.get("uuid") or "").strip()
+        _hit = db.get_entry_by_uuid(_uuid) if _uuid else None
+        if _hit is not None:
+            _upd = Entry(id=_hit["id"],
+                         # 路径解析失败（目标库缺该分类）时**保留原分类**，避免把条目打成"未分类"
+                         category_id=(cid if cid is not None else _hit.get("category_id")),
+                         name=e.name, intro=e.intro, origin=e.origin, features=e.features,
+                         scenes=e.scenes, works=e.works, image_desc=e.image_desc,
+                         prompt_cn=e.prompt_cn, prompt_en=e.prompt_en,
+                         image_plan=e.image_plan, is_favorite=e.is_favorite)
+            db.update_entry(_upd)
+            _apply_v6_aux(db, _hit["id"], ep)                       # 标签/字段替换、图集并入
+            _link_extra_locations(db, _hit["id"], cat_path, ep)     # FR-94：多位置
+            updated += 1
+            if progress_cb:
+                progress_cb(processed, total, f"{e.name}（更新）")
+            continue
+        # ---- v6 第 ③ 步：新增时**沿用包内稳定 ID**（无则 Entry.uuid 留空 ⇒ 自动分配）----
+        if _uuid:
+            e.uuid = _uuid
         keys = seen_by_cat.setdefault(cid, set())
         if not keys:
             existing = db.list_uncategorized() if cid is None else db.list_entries(cid)
             keys.update(Database.content_key(x) for x in existing)
         key = Database.content_key(e)
-        processed += 1
         if key in keys:
             skipped += 1
             if progress_cb:
@@ -592,6 +789,10 @@ def import_json(db, path, progress_cb=None, deletion_mode="apply",
         pending_cfj.append(ep.get("custom_fields_json") or {})  # 3-b：结构化取值
         pending_tags.append(ep.get("tags") or [])          # 2026-09-13（1-C-4）：标签
         pending_img.append(ep.get("images") or [])         # 2026-09-13（2-d）：图集
+        # 2026-09-17（FR-94）：额外位置——此处先解析为分类 id，批量插入后按序建立关联
+        pending_loc.append([_c for _c in (
+            _resolve_category_by_path(cat_path, _x) for _x in _extra_location_paths(ep))
+            if _c is not None])
         done += 1
         if progress_cb:
             progress_cb(processed, total, e.name)
@@ -625,7 +826,11 @@ def import_json(db, path, progress_cb=None, deletion_mode="apply",
                       works=sn.get("works", ""), image_desc=sn.get("image_desc", ""),
                       prompt_cn=sn.get("prompt_cn", ""), prompt_en=sn.get("prompt_en", ""),
                       image_plan=sn.get("image_plan", ""),
-                      is_favorite=int(sn.get("is_favorite", 0)))
+                      is_favorite=int(sn.get("is_favorite", 0)),
+                      created_at=str(sn.get("created_at") or ""),   # 2026-09-16（11-7）：保留原创建时间
+                      # 2026-09-17（FR-93）：逆向恢复**沿用快照的稳定 ID**（恢复后仍是同一条目）；
+                      # 快照无 uuid（v5 之前）⇒ 留空，由 add_entries_batch 自动分配。
+                      uuid=str(sn.get("uuid") or de.get("uuid") or "").strip())
             keys = seen_by_cat.setdefault(cid, set())
             if not keys:
                 existing = db.list_uncategorized() if cid is None else db.list_entries(cid)
@@ -641,6 +846,7 @@ def import_json(db, path, progress_cb=None, deletion_mode="apply",
             pending_cfj.append(sn.get("custom_fields_json") or {})  # 3-b：快照中的结构化取值
             pending_tags.append(sn.get("tags") or [])          # 2026-09-13（1-C-4）：快照中的标签
             pending_img.append(sn.get("images") or [])         # 2026-09-13（2-d）：快照中的图集
+            pending_loc.append([])      # 2026-09-17：逆向恢复不带 locations（保持与 pending 对齐）
             recovered += 1
             if progress_cb:
                 progress_cb(base + i + 1, total, f"逆向恢复条目：{e.name}")
@@ -653,6 +859,7 @@ def import_json(db, path, progress_cb=None, deletion_mode="apply",
         _restore_pending_custom_fields(db, _max_id_before, pending_cf, pending_cfj)
         _restore_pending_tags(db, _max_id_before, pending_tags)   # 2026-09-13（1-C-4）：标签写回
         _restore_pending_images(db, _max_id_before, pending_img)  # 2026-09-13（2-d）：图集写回
+        _link_pending_locations(db, _max_id_before, pending, pending_loc)  # 2026-09-17（FR-94）：多位置
 
     # 6. 删除同步（2026-08-29 增量备份增强 / 2026-09-08 V1.7.0 加固）：
     #    - 仅 deletion_mode="apply" 时执行；
@@ -697,6 +904,21 @@ def import_json(db, path, progress_cb=None, deletion_mode="apply",
             subtree_cache = {}
             hit_ids = []
             for i, de in enumerate(del_entries):
+                # 2026-09-17（FR-93）：包内删除项**带稳定 ID** ⇒ 按 uuid 精确删除。
+                #   命中即止（不再走内容键）——避免"同内容的其他条目"被误删；
+                #   未命中（目标库没有该条目）⇒ 视为"无需删除"，跳过。
+                _du = str(de.get("uuid") or "").strip()
+                if _du:
+                    _dh = db.get_entry_by_uuid(_du)
+                    if _dh is not None:
+                        hit_ids.append(_dh["id"])
+                        if progress_cb:
+                            progress_cb(base + i + 1, total,
+                                        f"同步删除条目（按稳定 ID）：{de.get('name','')}")
+                    elif progress_cb:
+                        progress_cb(base + i + 1, total,
+                                    f"（按稳定 ID 未命中，跳过）{de.get('name','')}")
+                    continue
                 chain = de.get("chain") or []
                 cid = db.find_category_by_chain(chain) if chain else None
                 cand = key_index.get(de.get("content_key", ""), ())
@@ -726,6 +948,8 @@ def import_json(db, path, progress_cb=None, deletion_mode="apply",
                 progress_cb(base + i + 1, total, f"同步删除根目录：{dd.get('name','')}")
 
     return {"entries": done, "skipped": skipped,
+            # 2026-09-17（FR-93，v6）：按稳定 ID 命中并**更新**的条数（旧包恒为 0）
+            "updated": updated,
             "categories": len(data.get("categories", [])),
             "deleted": deleted, "mode": deletion_mode,
             "recovered": recovered}
@@ -771,7 +995,11 @@ def _json_v5_selftest() -> None:
         finally:
             db.close()
         data = _json.load(open(out, encoding="utf-8"))
-        assert data["version"] == JSON_VERSION == 5
+        assert data["version"] == JSON_VERSION == 6
+        # 2026-09-17（FR-93，v6）：每条例目都应携带 32 位稳定 ID
+        assert all(len(str(e.get("uuid") or "")) == 32 for e in data["entries"]), \
+            [e.get("uuid") for e in data["entries"]]
+        print("[JSON v6] 导出携带 uuid 通过")
         names = [c["name"] for c in data["categories"]]
         assert names.index("一级A") < names.index("二级B") \
             < names.index("三级C") < names.index("四级D"), "分类须父先子后"
@@ -809,9 +1037,11 @@ def _json_v5_selftest() -> None:
             assert _json.loads(rows[key]["value_json"])[0]["value"] == f"cat:{c1}"
             assert db2.list_entry_tag_names(eid4) == ["标签甲"]
             assert len(db2.list_entry_images(eid4)) == 1
-            # 判重幂等：重复导入全部跳过
+            # 幂等：**重复导入同一 v6 包**不新增条目——按稳定 ID 命中 ⇒ 走「更新」路径
+            #   （2026-09-17 FR-93：v6 起重复导入是"幂等更新"，count 不变、内容一致；
+            #    旧包场景仍表现为"跳过"，见本节 C 段与 incremental_backup 自测）
             st2 = import_json(db2, out)
-            assert st2["entries"] == 0 and st2["skipped"] == 4
+            assert st2["entries"] == 0 and st2["updated"] == 4 and st2["skipped"] == 0, st2
         finally:
             db2.close()
 
@@ -855,8 +1085,53 @@ def _json_v5_selftest() -> None:
         finally:
             db4.close()
 
+        # ---------- E. 创建时间随包（2026-09-16 批次 11-7，用户要求 3）---------- #
+        #   导出带上 entries[].created_at ⇒ 再导入时**保留原创建时间**；
+        #   旧文件无该键 ⇒ 回退"导入时刻"（向后兼容，不报错）。
+        ca_src = _os.path.join(tmp, "created_src.db")
+        db5 = Database(ca_src)
+        _ca_keep = "2003-03-03 03:03:03"
+        try:
+            _d5 = db5.add_domain("CA根")
+            _c5 = db5.add_category("CA类", domain_id=_d5)
+            db5.add_entry(Entry(category_id=_c5, name="时间条目", created_at=_ca_keep))
+        finally:
+            db5.close()
+        ca_json = _os.path.join(tmp, "created.json")
+        db5 = Database(ca_src)
+        try:
+            export_json(db5, ca_json)
+        finally:
+            db5.close()
+        with open(ca_json, "r", encoding="utf-8") as f:
+            _doc5 = _json.load(f)
+        assert (_doc5["entries"][0].get("created_at") or "") == _ca_keep, _doc5["entries"][0]
+        ca_dst = _os.path.join(tmp, "created_dst.db")
+        db6 = Database(ca_dst)
+        try:
+            import_json(db6, ca_json)
+            _got5 = [x for x in db6.list_all_entries() if x["name"] == "时间条目"]
+            assert _got5 and _got5[0]["created_at"] == _ca_keep, _got5
+        finally:
+            db6.close()
+        # 旧文件（无 created_at）导入不报错，且取导入时刻
+        legacy = _os.path.join(tmp, "legacy_no_ca.json")
+        with open(legacy, "w", encoding="utf-8") as f:
+            _json.dump({"version": 5, "domains": [{"name": "LX", "sort_order": 0}],
+                        "domain_links": {"LX": ["LX类"]},
+                        "categories": [{"parent": None, "name": "LX类", "sort_order": 0}],
+                        "entries": [{"name": "旧格式条目", "path": ["LX类"]}]},
+                       f, ensure_ascii=False)
+        db7 = Database(_os.path.join(tmp, "legacy.db"))
+        try:
+            import_json(db7, legacy)
+            _got7 = [x for x in db7.list_all_entries() if x["name"] == "旧格式条目"]
+            assert _got7 and _got7[0]["created_at"], "旧文件导入须回退为导入时刻"
+        finally:
+            db7.close()
+
         print("[JSON] v5 四层路径（分类父先子后·条目按最长路径落位·缺失回退）/字段定义随包"
-              "（含 list 配置与内置改名）/标签·图集随包/判重幂等/旧版 v2 兼容 通过")
+              "（含 list 配置与内置改名）/标签·图集随包/判重幂等/旧版 v2 兼容/创建时间随包 通过")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

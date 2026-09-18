@@ -28,50 +28,13 @@ from .ui_common import ADD_BTN_STYLE as _ADD_STYLE
 from .ui_common import SEL_BTN_STYLE as _SEL_STYLE
 from .ui_common import install_edit_capability as _enable_text_undo  # 2026-09-09：文本框撤销/重做
 from .ui_common import tag_color as _tag_color  # 2026-09-14（阶段 3）：标签配色（与主窗口共用）
-
-
-class _Tip:
-    """轻量悬停提示（2026-08-29：窄列长名称查看完整内容，与主窗口一致）"""
-
-    def __init__(self, widget, text: str):
-        self.widget = widget
-        self.text = text
-        self._tip = None
-        widget.bind("<Enter>", self._show, add="+")
-        widget.bind("<Leave>", self._hide, add="+")
-
-    def _show(self, _e=None):
-        if self._tip is not None:
-            return
-        self._tip = tk.Toplevel(self.widget)
-        self._tip.wm_overrideredirect(True)
-        tk.Label(self._tip, text=self.text, justify="left", bg="#ffffe0",
-                 relief="solid", borderwidth=1, wraplength=420, padx=8, pady=6,
-                 font=("Microsoft YaHei", 10)).pack()
-        self._tip.update_idletasks()
-        w, h = self._tip.winfo_reqwidth(), self._tip.winfo_reqheight()
-        sw, sh = self.widget.winfo_screenwidth(), self.widget.winfo_screenheight()
-        x = self.widget.winfo_rootx() + 16
-        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
-        if x + w > sw:
-            x = max(sw - w - 8, 0)
-        if y + h > sh:
-            y = max(self.widget.winfo_rooty() - h - 4, 0)
-        self._tip.wm_geometry(f"+{x}+{y}")
-
-    def _hide(self, _e=None):
-        if self._tip is not None:
-            try:
-                self._tip.destroy()
-            except Exception:
-                pass
-            self._tip = None
-
-
-def _maybe_tooltip(btn, name: str, budget: int) -> None:
-    """长名称悬停提示：名称长度超过列宽预算时附加提示（与主窗口 _attach_nav_tooltip 一致）"""
-    if len(name) > budget:
-        _Tip(btn, name)
+# 2026-09-17（审核 R-1/R-3/R-6）：悬停提示与"文本框自适应高度"的实现统一到 ui_common，
+#   本窗口不再各写一份（原先此处有 `class _Tip` 与 `_content_fit_height` 的副本）。
+from .ui_common import Tooltip as _Tip
+from .ui_common import content_fit_height as _cfh_common
+from .ui_common import fit_prompt_box as _fit_prompt_box_common
+from .ui_common import maybe_tooltip as _maybe_tooltip
+from .ui_common import C_TAG as _C_TAG, C_OK as _C_OK, C_WARN as _C_WARN, C_DANGER as _C_DANGER  # 2026-09-17（U-2）：主色常量
 
 # ⑧/⑨ 提示词文本框（2026-08-19）：空时默认 6 行（120px）可见；输入内容后按实际行数自适应；
 # 无内容时恢复 6 行。CTkTextbox.height 单位为像素，120px ≈ 6 行完整可见。
@@ -245,7 +208,7 @@ class QuickAddWindow(ctk.CTkToplevel):
                      anchor="w").pack(fill="x", padx=8, pady=(6, 0))
         _tag_row = ctk.CTkFrame(form, fg_color="transparent")
         _tag_row.pack(fill="x", padx=8, pady=(0, 2))
-        ctk.CTkButton(_tag_row, text="✨ 推荐标签", width=104, height=24, fg_color="#7A4FBF",
+        ctk.CTkButton(_tag_row, text="✨ 推荐标签", width=104, height=24, fg_color=_C_TAG,
                       font=("Microsoft YaHei", 11), command=self._suggest_tags
                       ).pack(side="left")
         self._tag_entry = ctk.CTkEntry(_tag_row, placeholder_text="输入标签，回车添加")
@@ -292,7 +255,7 @@ class QuickAddWindow(ctk.CTkToplevel):
         # 底部按钮区：固定不随输入区滚动
         footer = ctk.CTkFrame(form_root, fg_color="transparent")
         footer.grid(row=1, column=0, sticky="ew")
-        ctk.CTkButton(footer, text="💾 保存", width=110, fg_color="#2E8B57",
+        ctk.CTkButton(footer, text="💾 保存", width=110, fg_color=_C_OK,
                       command=self._save).pack(side="left", padx=8, pady=8)
         ctk.CTkButton(footer, text="清空表单", width=100,
                       command=self._clear_form).pack(side="left", padx=4, pady=8)
@@ -364,7 +327,7 @@ class QuickAddWindow(ctk.CTkToplevel):
         """渲染项目类别列（含新增按钮、"未分配"虚拟项），并按当前项目加载根目录列"""
         self._clear(self.p_frame)
         self._clear_nav_btns("p")
-        ctk.CTkButton(self.p_frame, text="➕ 新增项目类别", height=28, **_ADD_STYLE,
+        ctk.CTkButton(self.p_frame, text="✚ 新增项目类别", height=28, **_ADD_STYLE,
                       command=self._add_project).pack(fill="x", padx=6, pady=2)
         if not self._project_ready:   # 首次默认：存在未分配根目录则停留"未分配"，否则选第一个项目
             self._project_ready = True
@@ -426,7 +389,7 @@ class QuickAddWindow(ctk.CTkToplevel):
         """渲染根目录列（当前项目类别下；"未分配"视图显示无归属根目录）"""
         self._clear(self.l0_frame)
         self._clear_nav_btns("l0")
-        ctk.CTkButton(self.l0_frame, text="➕ 新增根目录", height=28, **_ADD_STYLE,
+        ctk.CTkButton(self.l0_frame, text="✚ 新增根目录", height=28, **_ADD_STYLE,
                       command=self._add_domain).pack(fill="x", padx=6, pady=2)
         domains = (self.db.list_unassigned_domains() if self._project_id is None
                    else self.db.list_domains(project_id=self._project_id))
@@ -454,7 +417,7 @@ class QuickAddWindow(ctk.CTkToplevel):
         self._clear(self.l2_frame)
         self._clear_nav_btns("l1")
         self._clear_nav_btns("l2")
-        ctk.CTkButton(self.l1_frame, text="➕ 新增一级分类", height=28, **_ADD_STYLE,
+        ctk.CTkButton(self.l1_frame, text="✚ 新增一级分类", height=28, **_ADD_STYLE,
                       command=self._add_l1).pack(fill="x", padx=6, pady=2)
         cats = self.db.list_categories(domain_id=domain_id, parent_id=None)
         if not cats:
@@ -490,7 +453,7 @@ class QuickAddWindow(ctk.CTkToplevel):
         children = self.db.list_categories(parent_id=cat_id)
         self._clear(self.l2_frame)
         self._clear_nav_btns("l2")
-        ctk.CTkButton(self.l2_frame, text="➕ 新增二级分类", height=28, **_ADD_STYLE,
+        ctk.CTkButton(self.l2_frame, text="✚ 新增二级分类", height=28, **_ADD_STYLE,
                       command=self._add_l2).pack(fill="x", padx=6, pady=2)
         if not children:  # 无子分类 → 悬停即锁定
             self._lock(cat_id)
@@ -515,7 +478,7 @@ class QuickAddWindow(ctk.CTkToplevel):
         self._cat_id = cat_id
         self._uncat_locked = False  # 2026-08-19：锁定具体分类即归入选中链路
         name = note or self.db.get_category(cat_id)["name"]
-        self.lock_label.configure(text=f"✔ 已锁定：{name}", text_color="#2E8B57")
+        self.lock_label.configure(text=f"✔ 已锁定：{name}", text_color=_C_OK)
         self._apply_chain_highlight()  # 2026-08-19：锁定后高亮整条选中链路
         self.name_entry.focus_set()
         self._cancel_hover()
@@ -607,7 +570,7 @@ class QuickAddWindow(ctk.CTkToplevel):
         self._saved_count += 1
         self.master.refresh_domains(silent=True)  # 2026-08-18（P1-2）：静默刷新，不打断主窗口连续录入
         self.lock_label.configure(
-            text=f"✅ 已保存 {self._saved_count} 条（最后：{name}）", text_color="#2E8B57")
+            text=f"✅ 已保存 {self._saved_count} 条（最后：{name}）", text_color=_C_OK)
         self._clear_form()
         self.name_entry.focus_set()
 
@@ -628,41 +591,69 @@ class QuickAddWindow(ctk.CTkToplevel):
         except Exception:
             return []
 
-    def _suggest_tags(self) -> None:
-        """✨ 按当前表单内容自动推荐标签并**并入**已选。"""
+    def _suggest_tags(self, from_auto: bool = False) -> None:
+        """✨ 按当前表单内容自动推荐标签并**并入**已选。
+
+        from_auto（2026-09-16 批次 12-3）：是否来自 T2 防抖自动推荐——用于「智能自动取词词库」的
+        采集范围判断（默认只采集"用户主动点按钮"路径）。
+        """
         texts = {"name": self.name_entry.get().strip()}
         for k in ("intro", "features", "image_desc", "prompt_cn", "prompt_en"):
             texts[k] = self._box(k)
         if not any((texts.get(k) or "").strip() for k in texts):
             messagebox.showinfo("提示", "请先填写① 风格名称或提示词，再点「✨ 推荐标签」", parent=self)
             return
+        # 2026-09-17（审核 R-2）：与主窗口**共用** `tagger.run_ui_suggest` 的公共流程
+        #   （读词表 → 调引擎 → 取词采集 → 来源标注）；口径不变：本窗口属"UI 单条推荐"，
+        #   仍启用"全词典兜底 + 字段取词"并传入用户配置的推荐策略顺序与热点词清单。
+        #   注：本窗口的取词采集回调少一个 dict_data 参数，故用 lambda 适配。
         try:
-            # 2026-09-15 18:15（批次 8-B，用户确认）：本窗口属"UI 单条推荐" ⇒ 启用全词典兜底
-            res = tagger_engine.suggest(texts, tagger.load_dict(self.db),
-                                        self._suggest_ctx_names(),
-                                        fallback_global=True)
+            _r = tagger.run_ui_suggest(
+                self.db, texts, self._suggest_ctx_names(), from_auto=from_auto,
+                collect=lambda _t, _d, _fa: self._collect_auto_words(_t, _fa))
         except Exception as exc:
             messagebox.showwarning("推荐失败", str(exc), parent=self)
             return
-        names = tagger_engine.tag_names(res)
-        _note = ""
-        if names:
-            # 2026-09-15 19:30（批次 10）：来源标注——取词优先于词典兜底显示
-            _sources = {t.get("source") for t in res.get("tags") or []}
-            if "标题/提示词" in _sources:
-                _note = "（来源：标题/提示词）"
-            elif "词典兜底" in _sources:
-                _note = "（来源：词典兜底）"
+        names = _r["names"]
+        _auto_note, _note = _r["auto_note"], _r["source_note"]
         added = [n for n in names if n not in self._tag_names]
         for n in added:
             self._tag_names.append(n)
         self._refresh_tag_chips()
         if names:
-            self.lock_label.configure(text=f"✨ 已推荐 {len(names)} 个标签{_note}（新增 {len(added)} 个）",
-                                      text_color="#7A4FBF")
+            self.lock_label.configure(text=f"✨ 已推荐 {len(names)} 个标签{_note}（新增 {len(added)} 个）{_auto_note}",
+                                      text_color=_C_TAG)
         else:
-            self.lock_label.configure(text="⚠ 未推荐出标签，可补充名称/提示词后再试",
-                                      text_color="#E08A00")
+            self.lock_label.configure(text="⚠ 未推荐出标签，可补充名称/提示词后再试%s" % _auto_note,
+                                      text_color=_C_WARN)
+
+    def _collect_auto_words(self, texts, from_auto: bool = False) -> str:
+        """把"未命中词表/热点词"的取词候选记入自动取词词库（2026-09-16 批次 12-3）。
+
+        与主窗口 `MainWindow._collect_auto_words` 同一逻辑（两处均为"UI 单条推荐"路径）；
+        返回追加到提示语末尾的一句话；**任何异常都不影响推荐主流程**。
+        """
+        try:
+            from .. import auto_words
+            cfg = auto_words.load_cfg(self.db)
+            if not cfg.get("enabled") or (from_auto and not cfg.get("include_t2")):
+                return ""
+            _cands = tagger_engine.field_candidates(
+                texts, ("name", "prompt_cn", "prompt_en"), 24,
+                tagger_engine.build_vocab(tagger.load_dict(self.db)),
+                self.db.list_hotwords())
+            if not _cands:
+                return ""
+            _res = auto_words.record(self.db,
+                                     [(c["word"], c["field"]) for c in _cands],
+                                     entry_id=None)
+            if _res.get("hot"):
+                return "；🧠 自动取词 %d 词已升热点词" % len(_res["hot"])
+            if _res.get("ready_tag"):
+                return "；🧠 %d 词待审核加入词表" % len(_res["ready_tag"])
+            return ""
+        except Exception:
+            return ""
 
     def _on_name_committed(self, _event=None) -> None:
         """①名称框回车/失焦 → 自动推荐一次（T1；同名不重复推荐）。"""
@@ -696,7 +687,7 @@ class QuickAddWindow(ctk.CTkToplevel):
                 return
         except Exception:
             return
-        self._suggest_tags()
+        self._suggest_tags(from_auto=True)   # 2026-09-16（批次 12-3）：标记来源为 T2 自动推荐
 
     def _pick_tags_dialog(self) -> None:
         """「📋 选择…」：从候选池（已用标签 ∪ 词表 ∪ 热点词）多选/新建标签并并入已选。
@@ -786,39 +777,17 @@ class QuickAddWindow(ctk.CTkToplevel):
     def _content_fit_height(box) -> int:
         """文本框恰好显示全部内容的像素高度（含自动换行；最少 1 行）。
 
-        2026-08-19：与主界面同一套算法——用字体测量估算 wrap 后的实际显示行数，
-        不依赖控件布局时机（displaylines 在未布局时不可靠）。
+        2026-08-19 新增；2026-09-17（审核 R-1）：实现统一到 `ui_common.content_fit_height`
+        （与主窗口共用同一份），此处仅保留方法名以兼容既有调用点。
         """
-        try:
-            import tkinter.font as tkfont
-            font = tkfont.Font(root=box._textbox, font=box._textbox.cget("font"))
-            line_h = font.metrics("linespace") or 20
-            text = box._textbox.get("1.0", "end-1c")
-            # 文本可用宽度：控件宽扣除内边距/边框/右侧滚动条余量（取偏小值→行数略多，保证不遮挡）
-            avail = max(box._textbox.winfo_width() - 14, 80)
-            lines = 0
-            for para in text.split("\n"):
-                w = font.measure(para)
-                lines += max(1, -(-w // avail))  # 向上取整：该段落自动换行后的显示行数
-            n = max(int(lines), 1)
-        except Exception:
-            try:  # 兜底：按逻辑行数估算
-                n = max(box._textbox.get("1.0", "end-1c").count("\n") + 1, 1)
-            except Exception:
-                n = 6
-            line_h = 20
-        return n * line_h + 8  # 8px 余量：上下内边距与边框，确保最后一行完整可见
+        return _cfh_common(box)
 
     def _fit_prompt_box(self, box) -> None:
         """⑧/⑨ 提示词文本框自适应高度：有内容按实际显示行数；无内容恢复 6 行（120px）。
 
-        2026-08-19：输入内容后有多少行就显示多少行；清空后依然显示 6 行。
+        2026-08-19 新增；2026-09-17（审核 R-1）：实现统一到 `ui_common.fit_prompt_box`。
         """
-        if not box:
-            return
-        has_content = bool(box._textbox.get("1.0", "end-1c").strip())
-        box.configure(height=self._content_fit_height(box) if has_content
-                      else _PROMPT_EMPTY_H)
+        _fit_prompt_box_common(box, _PROMPT_EMPTY_H)
 
     def _open_image_plan(self, box) -> None:
         """打开"⑩图像获取方案"文本框中的链接（2026-08-19，与主界面一致）。
@@ -833,7 +802,7 @@ class QuickAddWindow(ctk.CTkToplevel):
         else:
             try:
                 self.master.toast("未找到链接（请输入 http:// 或 https:// 开头网址）",
-                                  color="#D9534F")
+                                  color=_C_DANGER)
             except Exception:
                 messagebox.showinfo("提示", "未找到链接（请输入 http:// 或 https:// 开头网址）")
 

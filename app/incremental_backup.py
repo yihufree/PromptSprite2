@@ -29,7 +29,8 @@ from .parser import json_io
 
 
 def _now() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    """2026-09-17（审核 R-4）：统一到 `config.now_str()`。"""
+    return config.now_str()
 
 
 def _sanitize_code(code: str) -> str:
@@ -103,9 +104,23 @@ def collect_daily_changes(db, day_start: str) -> dict:
     for log in db.list_deletions_since(day_start):
         chain = json.loads(log["chain"] or "[]")
         if log["kind"] == "entry":
-            deleted_entries.append({"name": log["name"], "chain": chain,
-                                    "content_key": log["content_key"],
-                                    "payload": log.get("payload") or ""})
+            _it = {"name": log["name"], "chain": chain,
+                   "content_key": log["content_key"],
+                   "payload": log.get("payload") or ""}
+            # 2026-09-17（FR-93）：删除清单**携带稳定 ID**（取自删除时的完整快照 payload）。
+            #   接收端优先按 uuid 精确删除，避免"靠内容键猜"的歧义；
+            #   老日志（v5 之前写入的快照无 uuid）不写该键 ⇒ 接收端回退原"内容键"逻辑。
+            #   注：`list_deletions_since` 返回的是 **sqlite3.Row**（无 `.get()`），故按下标取列，
+            #   并容错"老库缺 payload 列"（IndexError）。
+            _u = ""
+            try:
+                _pl = json.loads(log["payload"] or "{}")
+                _u = str(_pl.get("uuid") or "").strip() if isinstance(_pl, dict) else ""
+            except Exception:
+                _u = ""
+            if _u:
+                _it["uuid"] = _u
+            deleted_entries.append(_it)
         elif log["kind"] == "category":
             deleted_categories.append({"name": log["name"], "chain": chain})
         elif log["kind"] == "domain":
@@ -113,13 +128,23 @@ def collect_daily_changes(db, day_start: str) -> dict:
     # 2026-09-09（审核 P0-2 修复）：剔除"当前库仍存在同内容条目"的删除项——
     # 覆盖"回收站恢复后当日删除日志未清"与"当日删除后又重建同内容"两种场景，
     # 避免换机导入时把恢复/重建的条目再次删除同步。
+    # 2026-09-17（FR-93）：**有稳定 ID 时改用 uuid 判据**——只要该 uuid 仍在库中
+    #   （即已恢复或被重建），就不列入删除清单；uuid 更精确，不再因"另有同内容条目"而误留。
     if deleted_entries:
         from .database import Database
         try:
-            existing_keys = {Database.content_key(e)
-                             for e in db.list_all_entries()}
-            deleted_entries = [d for d in deleted_entries
-                               if d.get("content_key") not in existing_keys]
+            _rows = db.list_all_entries()
+            existing_keys = {Database.content_key(e) for e in _rows}
+            existing_uuids = {str(e.get("uuid") or "").strip() for e in _rows}
+            _keep = []
+            for d in deleted_entries:
+                _u = str(d.get("uuid") or "").strip()
+                if _u:
+                    if _u not in existing_uuids:
+                        _keep.append(d)
+                elif d.get("content_key") not in existing_keys:
+                    _keep.append(d)
+            deleted_entries = _keep
         except Exception:
             pass  # 过滤失败时保留原清单，尽力而为
     return {
@@ -161,6 +186,11 @@ def build_json_v4(db, changes: dict, computer_code: str, day: str,
     for de in changes["deleted_entries"]:
         item = {"name": de["name"], "chain": de["chain"],
                 "content_key": de["content_key"]}
+        # 2026-09-17（FR-93）：删除项**透传稳定 ID** —— 接收端据此精确删除，不靠内容键猜；
+        #   无 uuid（v5 之前的老删除日志）则不写该键，接收端回退原逻辑。
+        _u = str(de.get("uuid") or "").strip()
+        if _u:
+            item["uuid"] = _u
         if include_snapshot and de.get("payload"):
             try:
                 snap = json.loads(de["payload"])
@@ -355,7 +385,10 @@ def _selftest() -> None:
             assert os.path.isfile(path)
             assert os.path.basename(path).endswith("_add_1_del_0.json"), os.path.basename(path)
             data = json.load(open(path, encoding="utf-8"))
-            assert data["version"] == json_io.JSON_VERSION
+            # 2026-09-17（FR-93）：变更包升到 **v6**（新增条目带 uuid、删除项带 uuid）
+            assert data["version"] == json_io.JSON_VERSION == 6
+            assert all(str(e.get("uuid") or "").strip() for e in data["entries"]), \
+                "v6 变更包内条目应携带稳定 ID"
             assert data["type"] == "change"
             assert data["summary"]["add_entries"] == 1
             assert data["summary"]["del_entries"] == 0
@@ -373,13 +406,16 @@ def _selftest() -> None:
             data3 = json.load(open(r3["path"], encoding="utf-8"))
             assert len(data3["entries"]) == 2
             print("[2] 变更包更新(当日全集+当日单文件) OK")
-            # 5. 换机导入合并（判重）：新库导入 → 2 条；再导入 → 全跳过
+            # 5. 换机导入合并（判重）：新库导入 → 2 条；再导入 → 不新增
+            #    2026-09-17（FR-93/v6）：变更包已携带稳定 ID，重复导入按 uuid 命中 ⇒
+            #    表现为**幂等更新**（count 不变、内容一致），而非"跳过"。
             db2 = Database(os.path.join(tmp, "t2.db"))
             try:
                 st = json_io.import_json(db2, r3["path"])
                 assert st["entries"] == 2, st
                 st2 = json_io.import_json(db2, r3["path"])
-                assert st2["entries"] == 0 and st2["skipped"] == 2, st2
+                assert st2["entries"] == 0 and st2["updated"] == 2, st2
+                assert db2.conn.execute("SELECT COUNT(*) FROM entries").fetchone()[0] == 2
                 print("[3] 换机导入合并+判重 OK")
             finally:
                 db2.close()

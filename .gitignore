@@ -25,6 +25,11 @@ build/PromptSprite/   # PyInstaller 中间产物目录（build.py --clean 会重
 
 # ===== 测试残留 =====
 _selftest_out.txt
+# 2026-09-17（用户确认 C-2/C-3）：测试数据副本与历史测试脚本目录**保留在本地但不入库**
+#   · datatest/      —— 含真实数据副本（prompts*.db，约 24MB），不宜入库
+#   · test_file_bak/ —— 历史一次性测试脚本（25 个）
+datatest/
+test_file_bak/
 
 # ===== 系统文件 =====
 Thumbs.db

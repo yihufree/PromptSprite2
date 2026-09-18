@@ -25,6 +25,8 @@ _MODULES = [
     ("app.parser.hierarchy_import", "层级导入器自测"),  # 2026-09-13（4-b）：源解析 + 层级结构化 + 载荷
     ("app.parser.fetcher", "联网抓取层自测"),        # 2026-09-14（5-a）：本地 HTTP 服务 + 注入假响应
     ("app.parser.md_parser", "MD 解析器自测"),
+    # 2026-09-17（新问题 A/B 修复）：存量"垃圾标签"清理（扫描 / A 类删除 / B 类重命名合并 / 幂等）
+    ("app.tag_cleanup", "标签清理模块自测"),
 ]
 
 
