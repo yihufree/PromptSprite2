@@ -4,16 +4,26 @@ import_wizard_dialog.py - T1 离线"网上资源结构化"向导（第 4 期 4-c
 创建日期：2026-09-13
 
 三步向导（模态）：
-  第 1 步 选择源：粘贴文本（自动探测分隔符）/ 本地 CSV·TSV·TXT / HTML 表格 / Markdown 表格；
-  第 2 步 映射：**4 列层级映射**（项目类别/根目录/一级/二级，空单元格继承上一行，允许跳层）
-               + **字段映射**（内置 10 字段 / 自定义字段 / 标签，标签列可多值）；
+  第 1 步 选择源：粘贴文本（自动探测分隔符）/ 本地 CSV·TSV·TXT / HTML 表格 / Markdown 表格 / JSON；
+  第 2 步 映射：**「目标为主」一张表，四列＝目标位｜取值｜选项名（可改名）｜示例**
+               （固定枚举全部目标位：4 层级 + 10 个内置条目字段 + 🏷 标签 + 自定义字段；
+                每行反填"取自哪个源列 / 整层固定为某名称 / 忽略"）；
+               层级行还可直接选已有选项或输入新名称（＝整层固定 / 新建该选项）；
+               层级行"取自源列"后，第三列「选项名」可把源列里不合适的值**逐值改名**
+               （如把 "1.act" 改成 "AI生图提示词大全"；改成已有选项名即合并复用）——
+               界面层预处理源数据副本，数据层 hierarchy_import.py 零改动；
+               表下方另有「源中未安置的列」，可对杂项列就地新建自定义字段并安置；
   第 3 步 预览与出口：树预览 + 新增/复用/判重统计 + 警告 →
                「保存数据文件（JSON v5）」/「保存并导入」（导入前自动快照 + 失败可一键回滚）。
+
+2026-09-20 14:20 改造：① 本地 JSON 源；② 层级映射与字段映射合并为一张「源 → 目标」表，
+  层级目标可"选已有选项 / 新建"；③ 删除误加在固定高标题行上的 weight（原字段映射行被遮盖）。
 
 数据层全部复用 `app/parser/hierarchy_import.py`（结构化）与 `app/parser/json_io.py`（导入），
 本文件只负责界面与流程编排。
 """
 import os
+import re
 import shutil
 import tempfile
 from datetime import datetime
@@ -22,6 +32,7 @@ import customtkinter as ctk
 from tkinter import filedialog, messagebox
 
 from .. import backup
+from .. import config            # 2026-09-20 14:20：② 项目类别"已有选项"含出厂预置
 from ..database import Database
 from ..parser import excel_io
 from ..parser import hierarchy_import as himp
@@ -33,7 +44,20 @@ from .progress_dialog import ProgressDialog
 from .ui_common import C_OK as _C_OK, C_DANGER as _C_DANGER  # 2026-09-17（U-2）：主色常量
 
 _IGNORE = himp.IGNORE_TARGET
-_NO_MAP = "（不映射）"
+# 2026-09-20：第 2 步改为「目标为主」表（目标位｜取值｜示例）后，取值列用到的三个标签
+_IGNORE_LABEL = "（忽略）"        # 取值列：该目标位不取值
+_IGNORE_LAYER_LABEL = "（忽略 → 用兜底名）"   # 取值列（层级行）：该层不由源列提供，按兜底名补齐
+_COL_PREFIX = "用源列："          # 取值列：取自某个源列（后接"序号. 列名"）
+# 2026-09-20：映射表四列的固定最小宽度（表头与每个数据行共用同一套 → 跨行/跨表头对齐）
+_COL_MINSIZE = (136, 296, 190)    # 目标位｜取值｜选项名；第 4 列「示例」吸收剩余宽度
+# 2026-09-20 18:30：本程序运行于浅色主题，原行/表头底色硬编码为深色（#262d36/#20262d/#2f3944）
+#   导致「深底 + 深字」糊成黑块、无法辨认；统一改为浅蓝系（隔行浅蓝 + 细框线 + 浅蓝表头）。
+_ROW_BG_ALT = "#e8f0fb"           # 隔行底色（浅蓝）
+_ROW_BG_BASE = "#f7fafd"          # 另一行底色（近白）：不写 "transparent"，因滚动区默认底为
+                                  #   gray78（#C7C7C7 中灰），继承后与浅蓝混搭会发脏、对比模糊
+_ROW_BORDER = "#cfd9e6"           # 行细框线（浅灰蓝）
+_HEAD_BG = "#d6e4f7"              # 表头底色（浅蓝）
+_HEAD_FG = "#1c3d63"              # 表头文字（深蓝）
 
 _LAYER_HINTS = (("project", ("项目类别", "项目", "类别")),
                 ("domain", ("根目录", "领域", "目录")),
@@ -178,6 +202,88 @@ class _L2RulesDialog(ctk.CTkToplevel):
         _place_top_centered(self)
 
 
+class _RenameOptionsDialog(ctk.CTkToplevel):
+    """层级行「选项名改名」（逐值）：列出该层从源列取到的全部不同取值，逐个填新名。
+
+    2026-09-20 新增：`result` = {原值: 新名}（仅含真正改了的项，可为空 dict）或 None（取消）。
+    改名只影响本次导入的落库选项名；填成已有选项名即与其合并复用（不会产生重复选项）。
+    """
+
+    def __init__(self, master, layer_label: str, col_name: str,
+                 items: list, current: dict) -> None:
+        super().__init__(master)
+        self.result = None
+        self.title("选项名改名")
+        self.geometry("720x540")
+        self.minsize(620, 420)
+        self.transient(master)
+        self.grab_set()
+
+        pad = 16
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(3, weight=1)
+
+        ctk.CTkLabel(self, text=f"『{layer_label}』选项名改名（逐值）",
+                     font=("Microsoft YaHei", 14, "bold"), anchor="w"
+                     ).grid(row=0, column=0, sticky="ew", padx=pad, pady=(14, 2))
+        ctk.CTkLabel(self, text=f"来源列：{col_name}　共 {len(items)} 个不同取值。"
+                                "在右侧填新名（留空＝不改）；填成已有选项名即与其合并复用。",
+                     text_color="gray", font=("Microsoft YaHei", 11), anchor="w",
+                     justify="left", wraplength=660
+                     ).grid(row=1, column=0, sticky="ew", padx=pad)
+        # 2026-09-20 18:30：表头改浅蓝底 + 深蓝字（原 #2f3944 深底在浅色主题下像黑块）
+        head = ctk.CTkFrame(self, fg_color=_HEAD_BG, corner_radius=4)
+        head.grid(row=2, column=0, sticky="ew", padx=pad, pady=(8, 2))
+        head.grid_columnconfigure(0, minsize=300)
+        head.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(head, text="源列取值（出现行数）", anchor="w", text_color=_HEAD_FG,
+                     font=("Microsoft YaHei", 11, "bold")
+                     ).grid(row=0, column=0, sticky="w", padx=(6, 0), pady=4)
+        ctk.CTkLabel(head, text="改名为（留空＝不改）", anchor="w", text_color=_HEAD_FG,
+                     font=("Microsoft YaHei", 11, "bold")
+                     ).grid(row=0, column=1, sticky="w", padx=(6, 0), pady=4)
+
+        box = ctk.CTkScrollableFrame(self)
+        box.grid(row=3, column=0, sticky="nsew", padx=pad, pady=(2, 4))
+        self._entries = {}
+        for n, (val, cnt) in enumerate(items):
+            # 2026-09-20 18:30：隔行底色改浅蓝 + 加细框线（原深色在浅色主题下糊成黑块）
+            r = ctk.CTkFrame(box, corner_radius=3,
+                             fg_color=_ROW_BG_ALT if n % 2 == 0 else _ROW_BG_BASE,
+                             border_width=1, border_color=_ROW_BORDER)
+            r.pack(fill="x", pady=1)
+            r.grid_columnconfigure(0, minsize=300)
+            r.grid_columnconfigure(1, weight=1)
+            shown = val.replace("\n", " ")
+            ctk.CTkLabel(r, text=f"{shown[:40]}{'…' if len(shown) > 40 else ''}（{cnt} 行）",
+                         anchor="w", font=("Microsoft YaHei", 11)
+                         ).grid(row=0, column=0, sticky="w", padx=(6, 0), pady=3)
+            e = ctk.CTkEntry(r, placeholder_text="（不改）")
+            e.grid(row=0, column=1, sticky="ew", padx=(6, 6), pady=3)
+            if current.get(val):
+                e.insert(0, current[val])
+            self._entries[val] = e
+
+        foot = ctk.CTkFrame(self, fg_color="transparent")
+        foot.grid(row=4, column=0, sticky="ew", padx=pad, pady=(4, 14))
+        ctk.CTkButton(foot, text="取消", width=88, command=self.destroy).pack(side="right")
+        ctk.CTkButton(foot, text="保存", width=88, fg_color=_C_OK,
+                      command=self._ok).pack(side="right", padx=(0, 8))
+
+        from .field_manager_dialog import _place_top_centered
+        _place_top_centered(self)
+
+    def _ok(self) -> None:
+        """收集改名（只收"填了且与原值不同"的项）"""
+        out = {}
+        for val, e in self._entries.items():
+            new = e.get().strip()
+            if new and new != val:
+                out[val] = new
+        self.result = out
+        self.destroy()
+
+
 class ImportWizardDialog(ctk.CTkToplevel):
     """离线"网上资源结构化"向导（模态）。"""
 
@@ -191,7 +297,16 @@ class ImportWizardDialog(ctk.CTkToplevel):
         # 状态
         self.source = {}          # {headers, rows, delimiter, total_rows, kind, tables_found}
         self.layer_map = {"project": None, "domain": None, "l1": None, "l2": None}
-        self.field_map = {}       # {列下标: 目标}
+        # 2026-09-20：「目标为主」表的主状态（只此一份，其余皆由它派生）
+        # 目标位 → 取值文本：
+        #   ""／"（忽略）"／"（忽略 → 用兜底名）" ＝ 不取该目标位的值；
+        #   "用源列：N. 列名"                     ＝ 取自第 N 个源列；
+        #   其它文本（仅层级行）                   ＝ 该层整层固定为该名称（选已有选项 / 直接输入＝新建）
+        self.tgt_val = {}
+        self.unused_ignored = set()   # 「源中未安置的列」里被点过「忽略」的源列下标
+        # 2026-09-20：层级"选项名改名"（第三列）——{层级: {源列原值: 新名}}，仅"取自源列"的层生效
+        self.layer_rename = {}
+        self.field_map = {}       # 派生态：{列下标: 目标}（由 tgt_val 推出，第 3 步载荷生成用）
         self.payload = None
         self.warnings = []
         self._step = 1
@@ -274,7 +389,7 @@ class ImportWizardDialog(ctk.CTkToplevel):
         ctk.CTkRadioButton(row, text="粘贴文本", variable=self.src_mode,
                            value="paste", command=self._on_src_mode,
                            font=("Microsoft YaHei", 12)).pack(side="left")
-        ctk.CTkRadioButton(row, text="本地文件（CSV / TSV / TXT / HTML / MD）",
+        ctk.CTkRadioButton(row, text="本地文件（CSV / TSV / TXT / HTML / MD / JSON）",
                            variable=self.src_mode, value="file", command=self._on_src_mode,
                            font=("Microsoft YaHei", 12)).pack(side="left", padx=(14, 0))
         ctk.CTkRadioButton(row, text="网址（网页 / GitHub 文件 / GitHub 目录批量）",
@@ -418,7 +533,7 @@ class ImportWizardDialog(ctk.CTkToplevel):
     def _pick_file(self) -> None:
         path = filedialog.askopenfilename(
             title="选择源文件", parent=self,
-            filetypes=[("表格/文本", "*.csv *.tsv *.txt *.html *.htm *.md"),
+            filetypes=[("表格/文本/JSON", "*.csv *.tsv *.txt *.html *.htm *.md *.json"),
                        ("全部文件", "*.*")])
         if not path:
             return
@@ -739,6 +854,8 @@ class ImportWizardDialog(ctk.CTkToplevel):
             detail += f"，分隔符＝{shown}"
         if src.get("kind") in ("html", "md"):
             detail += f"，共找到 {src.get('tables_found', 1)} 张表（取最大一张）"
+        elif src.get("kind") == "json":     # 2026-09-20 14:20：本地 JSON 源解析提示
+            detail += "，来源＝JSON（对象数组 / 二维数组 / 嵌套对象已按规则拍平）"
         self.parse_lbl.configure(text="✅ 解析结果：" + detail)
         self._fill_preview(src["rows"])
         self._autofill_mapping()
@@ -761,49 +878,65 @@ class ImportWizardDialog(ctk.CTkToplevel):
     def _build_step2(self) -> None:
         f = self.frame2
         f.grid_columnconfigure(0, weight=1)
-        f.grid_rowconfigure(2, weight=1)
+        # 2026-09-20：整段改为「目标为主」表——固定枚举全部目标位为行，逐行反填"取自哪个源列 /
+        # 整层固定为某名称 / 忽略"；不再以源列为行主键（与旧「源 → 目标」表是转置关系）。
+        # 注意：固定高标题行不要加 weight（曾因争空间被压成 1px → 内容被遮盖）。
 
-        ctk.CTkLabel(f, text="① 层级映射：把源列指到四个层级（未映射的层自动按兜底名补齐；"
-                            "空单元格继承上一行）",
+        # ---- ① 「目标 → 源」一张表 ----
+        ctk.CTkLabel(f, text="① 映射表（目标位｜取值｜选项名）：为每个「目标位」指定取值来源；"
+                            "层级行可选已有选项 / 输入新名称＝新建；"
+                            "取自源列后可在「选项名」列逐值改名",
                      font=("Microsoft YaHei", 12, "bold"), anchor="w"
                      ).grid(row=0, column=0, sticky="ew")
-        lay = ctk.CTkFrame(f)
-        lay.grid(row=1, column=0, sticky="ew", pady=(4, 8))
-        self._layer_menus = {}
-        for i, key in enumerate(himp.LAYER_KEYS):
-            ctk.CTkLabel(lay, text=himp.LAYER_LABELS[key], font=("Microsoft YaHei", 12)
-                         ).grid(row=0, column=i * 2, padx=(10 if i == 0 else 4, 4), pady=6)
-            var = ctk.StringVar(value=_NO_MAP)
-            om = ctk.CTkOptionMenu(lay, width=150, variable=var, values=[_NO_MAP])
-            om.grid(row=0, column=i * 2 + 1, padx=(0, 6), pady=6)
-            self._layer_menus[key] = (var, om)
-        fb = ctk.CTkFrame(lay, fg_color="transparent")
-        fb.grid(row=1, column=0, columnspan=8, sticky="ew", padx=10, pady=(0, 8))
-        ctk.CTkLabel(fb, text="跳层兜底名：", font=("Microsoft YaHei", 11),
+        bar = ctk.CTkFrame(f, fg_color="transparent")
+        bar.grid(row=1, column=0, sticky="ew", pady=(4, 2))
+        self.map_stat_lbl = ctk.CTkLabel(bar, text="", text_color="gray",
+                                         font=("Microsoft YaHei", 11))
+        self.map_stat_lbl.pack(side="left")
+        ctk.CTkButton(bar, text="全部忽略", width=84, height=26, fg_color="#8a94a6",
+                      command=self._ignore_all).pack(side="right")
+        ctk.CTkButton(bar, text="＋ 新建字段…", width=104, height=26, fg_color="#2f6fb0",
+                      command=self._new_field).pack(side="right", padx=(0, 8))
+        self.only_unset_var = ctk.StringVar(value="0")
+        ctk.CTkCheckBox(bar, text="只看未指定", width=98, variable=self.only_unset_var,
+                        onvalue="1", offvalue="0", command=self._render_target_rows,
+                        font=("Microsoft YaHei", 11)).pack(side="right", padx=(0, 12))
+
+        # 2026-09-20：表头改为四列（与数据行共用 _COL_MINSIZE → 列对齐），并加底色区分
+        # 2026-09-20 18:30：表头改浅蓝底 + 深蓝字（原 #2f3944 深底在浅色主题下像黑块）
+        head = ctk.CTkFrame(f, fg_color=_HEAD_BG, corner_radius=4)
+        head.grid(row=2, column=0, sticky="ew")
+        self._grid_cols(head)
+        for _c, _t in enumerate(("目标位", "取值（取自源列 / 整层固定 / 忽略）",
+                                 "显示名", "示例")):   # 2026-09-20：第三列表头「选项名」→「显示名」（进入目标后的名称）
+            ctk.CTkLabel(head, text=_t, anchor="w", text_color=_HEAD_FG,
+                         font=("Microsoft YaHei", 11, "bold")
+                         ).grid(row=0, column=_c, sticky="w", padx=(6, 0), pady=4)
+
+        self.map_scroll = ctk.CTkScrollableFrame(f, height=250)
+        self.map_scroll.grid(row=3, column=0, sticky="nsew", pady=(2, 0))
+        f.grid_rowconfigure(3, weight=1)
+
+        # ---- ② 未取到值时的兜底名（某层没取到值时用哪个固定名补齐）----
+        fb = ctk.CTkFrame(f, fg_color="transparent")
+        fb.grid(row=4, column=0, sticky="ew", pady=(6, 0))
+        ctk.CTkLabel(fb, text="未取到值时的兜底名：", font=("Microsoft YaHei", 11),
                      text_color="gray").pack(side="left")
         self.fb_vars = {}
         for key, default in (("project", himp.DEFAULT_FALLBACK_PROJECT),
                              ("domain", himp.DEFAULT_FALLBACK_DOMAIN),
-                             ("l1", himp.DEFAULT_FALLBACK_L1)):
+                             ("l1", himp.DEFAULT_FALLBACK_L1),
+                             # 2026-09-20：补『二级分类』兜底名（原缺此项，选「忽略 → 用兜底名」时无处填写）
+                             ("l2", himp.DEFAULT_FALLBACK_L2)):
             ctk.CTkLabel(fb, text=himp.LAYER_LABELS[key], font=("Microsoft YaHei", 11)
                          ).pack(side="left", padx=(10, 2))
             v = ctk.StringVar(value=default)
             ctk.CTkEntry(fb, width=120, textvariable=v).pack(side="left")
             self.fb_vars[key] = v
 
-        head = ctk.CTkFrame(f, fg_color="transparent")
-        head.grid(row=2, column=0, sticky="ew", pady=(4, 0))
-        ctk.CTkLabel(head, text="② 字段映射：每个源列对应到内置字段 / 自定义字段 / 标签"
-                                "（默认已按表头猜测，可改）",
-                     font=("Microsoft YaHei", 12, "bold")).pack(side="left")
-        ctk.CTkButton(head, text="全部忽略", width=84, height=26, fg_color="#8a94a6",
-                      command=self._ignore_all).pack(side="right")
-        ctk.CTkButton(head, text="＋ 新建字段…", width=104, height=26, fg_color="#2f6fb0",
-                      command=self._new_field).pack(side="right", padx=(0, 8))
-
         # 2026-09-14（5-b）：链接补全开关（网址来源时默认开；其它来源无基准 URL，自动禁用）
         link_row = ctk.CTkFrame(f, fg_color="transparent")
-        link_row.grid(row=4, column=0, sticky="ew", pady=(4, 0))
+        link_row.grid(row=5, column=0, sticky="ew", pady=(4, 0))
         self.link_fix_var = ctk.StringVar(value="1")
         self.link_fix_chk = ctk.CTkCheckBox(
             link_row, text="自动补全相对链接（映射到 ⑩ 获取方案 / ③ 溯源 的\"像链接\"值补成绝对 URL）",
@@ -817,9 +950,9 @@ class ImportWizardDialog(ctk.CTkToplevel):
         # 2026-09-14（5-d）：增强三件套（行筛选 / 关键词规则分二级 / 中英提示词分流）
         ctk.CTkLabel(f, text="③ 可选增强（5-d）：行筛选 / 关键词规则分二级 / 中英提示词分流",
                      font=("Microsoft YaHei", 12, "bold"), anchor="w"
-                     ).grid(row=5, column=0, sticky="ew", pady=(8, 0))
+                     ).grid(row=6, column=0, sticky="ew", pady=(8, 0))
         enh = ctk.CTkFrame(f)
-        enh.grid(row=6, column=0, sticky="ew", pady=(2, 0))
+        enh.grid(row=7, column=0, sticky="ew", pady=(2, 0))
         r1 = ctk.CTkFrame(enh, fg_color="transparent")
         r1.pack(fill="x", padx=8, pady=(8, 2))
         ctk.CTkLabel(r1, text="行筛选：包含", font=("Microsoft YaHei", 11)).pack(side="left")
@@ -852,27 +985,203 @@ class ImportWizardDialog(ctk.CTkToplevel):
         ctk.CTkCheckBox(r3, text="提示词自动分流中/英（映射到 ⑧ 的列若判定『以英文为主』 → 写入 ⑨）",
                         variable=self.split_lang_var, onvalue="1", offvalue="0",
                         font=("Microsoft YaHei", 11)).pack(side="left")
+        # 2026-09-20 14:20：删除原函数尾部的旧 map_scroll（与上方 row2 的重复定义）
 
-        self.map_scroll = ctk.CTkScrollableFrame(f, height=300)
-        self.map_scroll.grid(row=3, column=0, sticky="nsew", pady=(4, 0))
-        f.grid_rowconfigure(3, weight=1)
+    # ---- 2026-09-20：「目标为主」表的行定义与取值解析 ---------------- #
+    def _row_specs(self) -> list:
+        """表的行定义：[(目标位, 类型, 分组标题 或 None), ...]
 
-    def _target_options(self) -> list:
-        opts = [("（忽略）", _IGNORE)]
-        for k in himp.BUILTIN_ENTRY_KEYS:
-            opts.append((himp.BUILTIN_LABELS[k], k))
-        opts.append(("🏷 标签（可多值：逗号/顿号/分号分隔）", himp.TAG_TARGET))
+        类型："layer"＝层级（可整层固定 / 新建）/"field"＝条目字段（含自定义）/"tag"＝标签。
+        """
+        out = []
+        for i, k in enumerate(himp.LAYER_KEYS):
+            out.append((k, "layer",
+                        "▣ 层级（分类）　取值：取自源列 / 选已有选项 / 直接输入新名称＝新建"
+                        if i == 0 else None))
+        for i, k in enumerate(himp.BUILTIN_ENTRY_KEYS):
+            out.append((k, "field", "▣ 条目字段　取值：取自源列" if i == 0 else None))
+        out.append((himp.TAG_TARGET, "tag", None))
         try:
             for d in self.db.list_field_defs():
                 if not d.get("is_builtin"):
-                    opts.append((f"自定义：{d['display_name']}", d["field_key"]))
-        except Exception:
+                    out.append((d["field_key"], "field", None))
+        except Exception:                                  # noqa: BLE001
             pass
-        return opts
+        return out
 
-    def _layer_values(self) -> list:
+    def _target_label(self, key: str) -> str:
+        """目标位在表里的显示名（层级 / 条目字段 / 标签 / 自定义字段）"""
+        if key in himp.LAYER_LABELS:
+            return himp.LAYER_LABELS[key]
+        if key == himp.TAG_TARGET:
+            return "🏷 标签"
+        if key in himp.BUILTIN_LABELS:
+            return himp.BUILTIN_LABELS[key]
+        try:
+            for d in self.db.list_field_defs():
+                if d["field_key"] == key:
+                    return f"自定义：{d['display_name']}"
+        except Exception:                                  # noqa: BLE001
+            pass
+        return key
+
+    def _col_options(self, hdr: list) -> list:
+        """取值候选里的「取自源列」各项（以序号定位，列名变化也不影响解析）"""
+        return [f"{_COL_PREFIX}{i + 1}. {h}" for i, h in enumerate(hdr)]
+
+    # ---- 2026-09-20：映射表列对齐 + 层级"选项名逐值改名" ----------------- #
+    @staticmethod
+    def _grid_cols(box) -> None:
+        """给表头 / 某个数据行设置同一套固定列宽（各行是独立 Frame，靠 minsize 跨行对齐）"""
+        for i, w in enumerate(_COL_MINSIZE):
+            box.grid_columnconfigure(i, minsize=w)
+        box.grid_columnconfigure(len(_COL_MINSIZE), weight=1)   # 第 4 列「示例」吸收剩余
+
+    def _layer_col_values(self, key: str) -> list:
+        """该层级当前取自源列时，该列出现过的不同取值（首次出现顺序）+ 出现行数。
+
+        2026-09-20 新增：供第三列显示"共几个选项"、以及改名弹窗列清单用。
+        非"取自源列"（忽略 / 整层固定）→ 返回空列表。
+        """
+        col = self._src_col_of_key(key)
+        if col is None:
+            return []
+        order, cnt = [], {}
+        for r in (self.source.get("rows") or []):
+            v = ((r[col] or "").strip() if col < len(r) else "")
+            if not v:
+                continue
+            if v not in cnt:
+                cnt[v] = 0
+                order.append(v)
+            cnt[v] += 1
+        return [(v, cnt[v]) for v in order]
+
+    def _edit_layer_rename(self, key: str) -> None:
+        """打开"选项名改名"弹窗并把结果写回 self.layer_rename[key]（逐值改名）"""
         hdr = self.source.get("headers") or []
-        return [_NO_MAP] + [f"{i + 1}. {h}" for i, h in enumerate(hdr)]
+        col = self._src_col_of_key(key)
+        if col is None:
+            return
+        dlg = _RenameOptionsDialog(self, self._target_label(key), f"{col + 1}. {hdr[col]}",
+                                   self._layer_col_values(key),
+                                   dict(self.layer_rename.get(key) or {}))
+        try:
+            self.wait_window(dlg)
+        except Exception:                                  # noqa: BLE001
+            pass
+        if dlg.result is None:
+            return
+        self.layer_rename[key] = dict(dlg.result)
+        n = len(dlg.result)
+        self.toast(f"『{self._target_label(key)}』选项名已改 {n} 项" if n
+                   else f"『{self._target_label(key)}』已清除全部改名")
+        self.after(30, self._render_target_rows)
+
+    def _apply_layer_rename(self, rows: list) -> list:
+        """把「层级选项名改名」应用到源数据副本（界面层预处理，数据层零改动）。
+
+        2026-09-20 新增：只对"取自源列"的层级生效——该列单元格值命中改名表 → 换为新名；
+        无改名或该层非取自源列 → 原样返回（不拷贝，零开销零副作用）；
+        命中行才做浅拷贝，绝不改动 self.source["rows"] 原数据。
+        """
+        plan = {}
+        for key in himp.LAYER_KEYS:
+            mp = self.layer_rename.get(key) or {}
+            col = self._src_col_of_key(key)
+            if mp and col is not None:
+                plan[col] = mp
+        if not plan:
+            return rows
+        out = []
+        for r in (rows or []):
+            r2 = list(r)
+            hit = False
+            for col, mp in plan.items():
+                if col < len(r2):
+                    v = (r2[col] or "").strip()
+                    if v in mp:
+                        r2[col] = mp[v]
+                        hit = True
+            out.append(r2 if hit else r)
+        return out
+
+    def _src_col_of_key(self, key: str):
+        """该目标位当前取自哪个源列（未取源列 → None）"""
+        v = (self.tgt_val.get(key) or "").strip()
+        m = re.match(r"^" + re.escape(_COL_PREFIX) + r"(\d+)\.", v)
+        if not m:
+            return None
+        i = int(m.group(1)) - 1
+        hdr = self.source.get("headers") or []
+        return i if 0 <= i < len(hdr) else None
+
+    def _used_cols(self) -> set:
+        """已被某个目标位取用的源列下标集合"""
+        return {c for c in (self._src_col_of_key(k) for k in list(self.tgt_val))
+                if c is not None}
+
+    def _unused_cols(self) -> list:
+        """「源中未安置的列」：既未被目标位取用、也未被用户忽略的源列下标
+
+        2026-09-20 14:21 新增：单点定义——第 2 步「源中未安置的列」区与第 3 步质量自检汇总共用同一口径。
+        """
+        hdr = self.source.get("headers") or []
+        used = self._used_cols()
+        return [i for i in range(len(hdr))
+                if i not in used and i not in self.unused_ignored]
+
+    def _ignore_label(self, key: str) -> str:
+        """该行「忽略」的显示文本（层级行带「用兜底名」提示）"""
+        return _IGNORE_LAYER_LABEL if key in himp.LAYER_LABELS else _IGNORE_LABEL
+
+    def _layer_fixed_name(self, key: str) -> str:
+        """该层级被指定的固定名称（未指定 / 取自源列 → 空串）"""
+        v = (self.tgt_val.get(key) or "").strip()
+        if not v or v == _IGNORE_LAYER_LABEL or v.startswith(_COL_PREFIX):
+            return ""
+        return v
+
+    def _layer_has_src_hint(self, key: str) -> bool:
+        """源表头里是否存在"看起来属于该层级"的列（供情形 3b 的轻量提示判断）
+
+        2026-09-20 新增：情形 3b＝源里没有该级对应的列，也没有合适的已有选项可选，
+        此时唯一出路是"直接输入新名称＝新建该级"。第三列就地给出这一提示。
+        """
+        return any(self._guess_layer(h) == key for h in (self.source.get("headers") or []))
+
+    def _layer_existing(self, key: str) -> list:
+        """该层级"已有选项"名称列表；父级能确定时按父级级联过滤（父级取自源列 → 不过滤）"""
+        def names(items) -> list:
+            return [it["name"] for it in items]
+
+        try:
+            if key == "project":
+                out = names(self.db.list_projects())
+                for n in config.PROJECT_PRESETS:      # 出厂预置（尚未落库也列出）
+                    if n not in out:
+                        out.append(n)
+                return out
+            if key == "domain":
+                p = self.db.get_project_by_name(self._layer_fixed_name("project"))
+                return names(self.db.list_domains(project_id=(p["id"] if p else None)))
+            if key == "l1":
+                did = None
+                for d in self.db.list_domains():
+                    if d["name"] == self._layer_fixed_name("domain"):
+                        did = d["id"]
+                        break
+                return names(self.db.list_categories(domain_id=did))
+            if key == "l2":
+                pid = None
+                for c in self.db.list_categories():
+                    if c["name"] == self._layer_fixed_name("l1"):
+                        pid = c["id"]
+                        break
+                return names(self.db.list_categories(parent_id=pid))
+        except Exception:                                  # noqa: BLE001
+            return []
+        return []
 
     @staticmethod
     def _guess_layer(header: str):
@@ -895,23 +1204,28 @@ class ImportWizardDialog(ctk.CTkToplevel):
         return _IGNORE
 
     def _autofill_mapping(self) -> None:
-        """按表头名自动预填层级映射与字段映射（用户可在界面上改）"""
+        """按表头名自动预填（目标位 → 取哪个源列），用户可在第 2 步逐行改"""
         hdr = self.source.get("headers") or []
-        self._refresh_step2()
-        for i, h in enumerate(hdr):
+        self.tgt_val = {}
+        self.unused_ignored = set()
+        used = set()
+        for i, h in enumerate(hdr):        # 先按层级关键词占位（每层只取第一个命中的源列）
             key = self._guess_layer(h)
-            if key and self._layer_menus[key][0].get() == _NO_MAP:
-                self._layer_menus[key][0].set(f"{i + 1}. {h}")
-        for i, h in enumerate(hdr):
-            self.field_map[i] = self._guess_field(h)
-        self._render_field_rows()
+            if key and key not in self.tgt_val:
+                self.tgt_val[key] = f"{_COL_PREFIX}{i + 1}. {h}"
+                used.add(i)
+        for i, h in enumerate(hdr):        # 再按条目字段关键词占位
+            if i in used:
+                continue
+            tgt = self._guess_field(h)
+            if tgt != _IGNORE and tgt not in self.tgt_val:
+                self.tgt_val[tgt] = f"{_COL_PREFIX}{i + 1}. {h}"
+                used.add(i)
+        self._refresh_step2()
+        self._render_target_rows()
 
     def _refresh_step2(self) -> None:
-        vals = self._layer_values()
-        for key, (var, om) in self._layer_menus.items():
-            om.configure(values=vals)
-            if var.get() not in vals:
-                var.set(_NO_MAP)
+        """进入第 2 步时的刷新（链接补全开关；表格由 _render_target_rows 渲染）"""
         # 2026-09-14（5-b）：链接补全（仅网址来源有基准 URL）
         if self._fetch_base:
             self.link_base_lbl.configure(text=f"基准：{self._fetch_base}")
@@ -920,50 +1234,248 @@ class ImportWizardDialog(ctk.CTkToplevel):
             self.link_base_lbl.configure(text="（非网址来源：无基准 URL，本项不生效）")
             self.link_fix_chk.configure(state="disabled")
 
-    def _render_field_rows(self) -> None:
+    # ---- 2026-09-20：「目标 → 源」表的渲染与逐行交互 ---------------- #
+    def _is_unset(self, key: str) -> bool:
+        """该目标位是否尚未指定取值（空 / 忽略 → 未指定）"""
+        v = (self.tgt_val.get(key) or "").strip()
+        return (not v) or v == self._ignore_label(key)
+
+    def _sample_of_col(self, col: int) -> str:
+        """某源列的首个非空示例文本（供「示例」列 / 未安置列区显示）"""
+        rows = self.source.get("rows") or []
+        for r in rows:
+            if col < len(r) and (r[col] or "").strip():
+                return "示例：" + (r[col] or "").strip().replace("\n", " ")[:22]
+        return "（该列无内容）"
+
+    def _sample_of(self, key: str) -> str:
+        """该目标位当前取值对应的示例（仅"取自源列"时才有；整层固定 / 忽略 → 空）
+
+        2026-09-20：层级行若已「改名」，示例显示**改名后**的值（与最终入库一致）。
+        """
+        col = self._src_col_of_key(key)
+        if col is None:
+            return ""
+        mp = self.layer_rename.get(key) or {}
+        for r in (self.source.get("rows") or []):
+            v = ((r[col] or "").strip() if col < len(r) else "")
+            if not v:
+                continue
+            v = mp.get(v, v)   # 2026-09-20：命中改名表 → 显示改名后的值
+            return "示例：" + v.replace("\n", " ")[:22]
+        return "（该列无内容）"
+
+    def _update_map_stat(self) -> None:
+        """更新工具条上的「已安置 x / y 个源列」"""
+        hdr = self.source.get("headers") or []
+        self.map_stat_lbl.configure(text=f"已安置 {len(self._used_cols())} / {len(hdr)} 个源列")
+
+    def _render_target_rows(self) -> None:
+        """渲染「目标 → 源」表：固定枚举全部目标位为行，逐行指定取值来源"""
         for w in self.map_scroll.winfo_children():
             w.destroy()
+        self._row_sample = {}
+        self._row_vars = {}          # 2026-09-20：登记各「取值」输入框变量（供点「下一步」时自动收割手输名称）
+        self._unused_box = None
         hdr = self.source.get("headers") or []
-        rows = self.source.get("rows") or []
-        opts = self._target_options()
-        labels = [lbl for lbl, _k in opts]
-        key_of = {lbl: k for lbl, k in opts}
-        self._field_vars = {}
         if not hdr:
             ctk.CTkLabel(self.map_scroll, text="（请先在第 1 步解析源数据）",
                          text_color="#9aa4b1", font=("Microsoft YaHei", 11)).pack(anchor="w")
+            self.map_stat_lbl.configure(text="")
             return
-        for i, h in enumerate(hdr):
-            row = ctk.CTkFrame(self.map_scroll, fg_color="transparent")
-            row.pack(fill="x", pady=2)
-            sample = ""
-            for r in rows:
-                if i < len(r) and (r[i] or "").strip():
-                    sample = (r[i] or "").strip().replace("\n", " ")[:18]
-                    break
-            ctk.CTkLabel(row, text=f"{i + 1}. {h}", width=200, anchor="w",
-                         font=("Microsoft YaHei", 12)).pack(side="left")
-            ctk.CTkLabel(row, text=(f"示例：{sample}" if sample else "（空）"),
-                         text_color="gray", width=180, anchor="w",
-                         font=("Microsoft YaHei", 10)).pack(side="left")
-            cur = self.field_map.get(i, _IGNORE)
-            lbl = next((l for l, k in opts if k == cur), "（忽略）")
-            var = ctk.StringVar(value=lbl)
-            ctk.CTkOptionMenu(row, width=250, variable=var, values=labels,
-                              command=lambda v, idx=i: self._set_field(idx, key_of.get(v, _IGNORE))
-                              ).pack(side="left")
-            self._field_vars[i] = var
+        only_unset = (self.only_unset_var.get() == "1")
+        specs = self._row_specs()
+        # 分组标题：某组在（「只看未指定」过滤后）一行都不剩时，标题也不显示
+        gid, gids, titles = 0, [], {}
+        for _key, _kind, group in specs:
+            if group:
+                gid += 1
+                titles[gid] = group
+            gids.append(gid)
+        vis = [i for i, (key, _k, _g) in enumerate(specs)
+               if (not only_unset) or self._is_unset(key)]
+        vset, vgids = set(vis), {gids[i] for i in vis}
+        col_opts = self._col_options(hdr)
+        ln = 0                                             # 2026-09-20：数据行序号（隔行底色用）
+        for i, (key, kind, group) in enumerate(specs):
+            if group and gids[i] in vgids:
+                ctk.CTkLabel(self.map_scroll, text=group, anchor="w", text_color="#5aa0e0",
+                             font=("Microsoft YaHei", 11, "bold")).pack(fill="x", pady=(6, 0))
+            if i not in vset:
+                continue
+            ln += 1
+            # 2026-09-20：数据行改 grid + 与表头共用 _COL_MINSIZE（列对齐）＋ 隔行底色（行区分）
+            # 2026-09-20 18:30：隔行底色改浅蓝 + 加细框线（原深色 #262d36/#20262d 在浅色主题下糊成黑块）
+            row = ctk.CTkFrame(self.map_scroll, corner_radius=3,
+                               fg_color=_ROW_BG_ALT if ln % 2 else _ROW_BG_BASE,
+                               border_width=1, border_color=_ROW_BORDER)
+            row.pack(fill="x", pady=1)
+            self._grid_cols(row)
+            ctk.CTkLabel(row, text=self._target_label(key), anchor="w",
+                         font=("Microsoft YaHei", 12)
+                         ).grid(row=0, column=0, sticky="w", padx=(6, 0), pady=3)
+            cur = (self.tgt_val.get(key) or "").strip() or self._ignore_label(key)
+            var = ctk.StringVar(value=cur)
+            if kind == "layer":       # 层级行：取自源列 / 选已有选项 / 直接输入新名称＝新建
+                w = ctk.CTkComboBox(row, variable=var,
+                                    values=[self._ignore_label(key)] + col_opts
+                                           + self._layer_existing(key),
+                                    font=("Microsoft YaHei", 11),
+                                    command=lambda v, k=key: self._set_tgt_val(k, v))
+                w.bind("<Return>", lambda _e, k=key, sv=var: self._set_tgt_val(k, sv.get()))
+                self._row_vars[key] = var   # 2026-09-20：登记（手输新名称＝整层固定，点「下一步」时自动收割）
+            else:                     # 条目字段 / 标签行：只能"取自源列"或"忽略"
+                w = ctk.CTkOptionMenu(row, variable=var,
+                                      values=[self._ignore_label(key)] + col_opts,
+                                      font=("Microsoft YaHei", 11),
+                                      command=lambda v, k=key: self._set_tgt_val(k, v))
+            w.grid(row=0, column=1, sticky="ew", pady=3)
+            # 第三列「显示名」：2026-09-20 新增——
+            #   层级行且取自源列 → 「改名…」按钮（逐值改名，显示已改/总个数）；
+            #   层级行但整层固定 → 只读显示该固定选项名；其它行不适用 → 「—」
+            # 2026-09-20：按钮文案带「层级 · 源列」标识（原来只有「改名…（n 个）」，
+            #   多行同名按钮时分不清改的是哪一层、哪一列）
+            if kind == "layer" and self._src_col_of_key(key) is not None:
+                _n = len(self._layer_col_values(key))
+                _nren = len(self.layer_rename.get(key) or {})
+                _ci = self._src_col_of_key(key)
+                _cn = f"{_ci + 1}. {hdr[_ci]}" if _ci < len(hdr) else ""
+                _txt = (f"改名…（{self._target_label(key)} · {_cn}｜已改 {_nren}/{_n}）" if _nren
+                        else f"改名…（{self._target_label(key)} · {_cn}｜{_n} 个）")
+                ctk.CTkButton(row, text=_txt,
+                              height=24, fg_color="#2f6fb0", font=("Microsoft YaHei", 11),
+                              command=lambda k=key: self._edit_layer_rename(k)
+                              ).grid(row=0, column=2, sticky="ew", padx=(6, 6), pady=3)
+            elif kind == "layer":
+                _fx = self._layer_fixed_name(key)
+                if _fx:
+                    _t3, _tc = f"固定：{_fx}", "gray"
+                elif not self._layer_has_src_hint(key):
+                    # 2026-09-20：情形 3b 轻量提示——源里没有该级对应的列时，就地告知可新建
+                    _t3, _tc = "—（源中无此级列 → 可直接输入新名称新建）", "#9aa4b1"
+                else:
+                    _t3, _tc = "—", "#6d7683"
+                ctk.CTkLabel(row, text=_t3, anchor="w",
+                             text_color=_tc, font=("Microsoft YaHei", 11)
+                             ).grid(row=0, column=2, sticky="w", padx=(6, 0), pady=3)
+            else:
+                ctk.CTkLabel(row, text="—", anchor="w", text_color="#6d7683",
+                             font=("Microsoft YaHei", 11)
+                             ).grid(row=0, column=2, sticky="w", padx=(6, 0), pady=3)
+            smp = ctk.CTkLabel(row, text=self._sample_of(key), text_color="gray", anchor="w",
+                               font=("Microsoft YaHei", 10))
+            smp.grid(row=0, column=3, sticky="w", padx=(8, 6), pady=3)
+            self._row_sample[key] = smp
+        self._update_map_stat()
+        self._render_unused(hdr)
 
-    def _set_field(self, idx: int, target: str) -> None:
-        self.field_map[idx] = target
+    def _render_unused(self, hdr: list) -> None:
+        """「源中未安置的列」区：对未被任何目标位取用、且未被忽略的源列就地处置
+
+        ——「＋ 新建字段…」＝新建一个自定义字段并把该列安置到它（避免"字段溢出"）；
+        ——「忽略」＝只不再提示该列，不影响已有映射。
+        """
+        parent = getattr(self, "map_scroll", None)
+        if parent is None or not parent.winfo_exists():
+            return
+        old = getattr(self, "_unused_box", None)
+        if old is not None and old.winfo_exists():
+            old.destroy()
+        # 2026-09-20 14:21：改用单点定义 _unused_cols()（与第 3 步自检同一口径，行为不变）
+        rest = self._unused_cols()
+        box = ctk.CTkFrame(parent, fg_color="transparent")
+        box.pack(fill="x", pady=(10, 0))
+        self._unused_box = box
+        ctk.CTkLabel(box, text=f"▣ 源中未安置的列（{len(rest)}）：可「＋ 新建字段」安置，"
+                               "或「忽略」不再提示",
+                     anchor="w", text_color="#d0a85a",
+                     font=("Microsoft YaHei", 11, "bold")).pack(fill="x")
+        if not rest:
+            ctk.CTkLabel(box, text="（无：所有源列都已安置或已忽略）", text_color="gray",
+                         anchor="w", font=("Microsoft YaHei", 10)).pack(fill="x")
+            return
+        for n, i in enumerate(rest):
+            # 2026-09-20：改用 grid + 与主表相同的列宽（列对齐）＋ 隔行底色（行区分）
+            # 2026-09-20 18:30：隔行底色改浅蓝 + 加细框线（同主表，浅色主题下可辨认）
+            r = ctk.CTkFrame(box, corner_radius=3,
+                             fg_color=_ROW_BG_ALT if n % 2 == 0 else _ROW_BG_BASE,
+                             border_width=1, border_color=_ROW_BORDER)
+            r.pack(fill="x", pady=1)
+            self._grid_cols(r)
+            ctk.CTkLabel(r, text=f"{i + 1}. {hdr[i]}", anchor="w",
+                         font=("Microsoft YaHei", 11)
+                         ).grid(row=0, column=0, sticky="w", padx=(6, 0), pady=3)
+            ctk.CTkLabel(r, text=self._sample_of_col(i), text_color="gray", anchor="w",
+                         font=("Microsoft YaHei", 10)
+                         ).grid(row=0, column=1, sticky="w", padx=(6, 0), pady=3)
+            btns = ctk.CTkFrame(r, fg_color="transparent")
+            btns.grid(row=0, column=3, sticky="e", padx=(0, 6), pady=3)
+            ctk.CTkButton(btns, text="＋ 新建字段…", width=104, height=24, fg_color="#2f6fb0",
+                          command=lambda idx=i: self._new_field(idx)).pack(side="left",
+                                                                          padx=(0, 6))
+            ctk.CTkButton(btns, text="忽略", width=56, height=24, fg_color="#8a94a6",
+                          command=lambda idx=i: self._ignore_unused(idx)).pack(side="left")
+
+    def _ignore_unused(self, col: int) -> None:
+        """在「源中未安置的列」里忽略某列（只是不再提示该列，不影响已有映射）"""
+        self.unused_ignored.add(col)
+        self._render_unused(self.source.get("headers") or [])
+
+    def _set_tgt_val(self, key: str, label: str) -> None:
+        """把某目标位的取值改为 label；同一源列只允许一个目标位取用（后取者占，前者让出）"""
+        label = (label or "").strip()
+        old_col = self._src_col_of_key(key)     # 2026-09-20：改前的源列（用于判断是否换了源列）
+        old_label = (self.tgt_val.get(key) or "").strip()   # 2026-09-20：改前的取值文本（用于判断取值是否变化）
+        new_label = "" if label in ("", self._ignore_label(key)) else label
+        self.tgt_val[key] = new_label
+        col = self._src_col_of_key(key)
+        if col != old_col:
+            # 2026-09-20：换了源列（或不再取自源列）→ 旧"选项名改名"映射已失效，一并清除
+            self.layer_rename.pop(key, None)
+        # 2026-09-20：取值文本变化也要重绘（否则第三列「显示名」停留旧状态：按钮不出现 / 改忽略后按钮残留）
+        redraw = (new_label != old_label)
+        if col is not None:
+            for other in list(self.tgt_val):
+                if other != key and self._src_col_of_key(other) == col:
+                    self.tgt_val[other] = ""      # 让出该源列（回到「忽略」）
+                    self.layer_rename.pop(other, None)   # 2026-09-20：其改名映射同步失效
+                    redraw = True
+        if redraw:
+            self.after(30, self._render_target_rows)   # 延迟重绘（避免销毁正在回调的下拉）
+            return
+        smp = getattr(self, "_row_sample", {}).get(key)
+        if smp is not None and smp.winfo_exists():
+            smp.configure(text=self._sample_of(key))
+        self._update_map_stat()
+        self._render_unused(self.source.get("headers") or [])
+
+    def _harvest_row_inputs(self) -> None:
+        """把层级行「取值」列里手输但未回车的新名称收割进映射（点「下一步」时自动提交）
+
+        2026-09-20：原设计必须按回车才生效（隐性操作），改为点「下一步」也自动生效。
+        仅处理**层级行且文本确有变化**的情况；「（忽略 → 用兜底名）」项已在 _set_tgt_val 里
+        被折算为空串，这里按忽略标签跳过，避免把忽略标签误当作新选项名。
+        """
+        for key, var in list(getattr(self, "_row_vars", {}).items()):
+            try:
+                txt = (var.get() or "").strip()
+            except Exception:                      # noqa: BLE001
+                continue
+            if not txt or txt == self._ignore_label(key):
+                continue                           # 空 / 下拉选的「忽略」→ 无需收割
+            if txt == (self.tgt_val.get(key) or "").strip():
+                continue                           # 取值未变化 → 不重复提交
+            self._set_tgt_val(key, txt)
 
     def _ignore_all(self) -> None:
-        for i in list(self.field_map):
-            self.field_map[i] = _IGNORE
-        self._render_field_rows()
+        """全部忽略：清空所有目标位的取值与「未安置列」的忽略状态（表回到初始未指定）"""
+        self.tgt_val = {}
+        self.unused_ignored = set()
+        self.layer_rename = {}          # 2026-09-20：改名映射一并清空（回到初始态）
+        self._render_target_rows()
 
-    def _new_field(self) -> None:
-        """新建一个自定义字段定义（建好后立即出现在各列的"目标"下拉里，供选用）"""
+    def _new_field(self, col=None) -> None:
+        """新建一个自定义字段；col 为源列下标时（来自「未安置的列」），建好后立即安置该列"""
         dlg = _NewFieldDialog(self)
         try:
             self.wait_window(dlg)
@@ -977,9 +1489,14 @@ class ImportWizardDialog(ctk.CTkToplevel):
         except Exception as exc:
             messagebox.showerror("新建字段失败", str(exc), parent=self)
             return
-        self._render_field_rows()      # 选项列表刷新（各列已选目标保持不变）
-        self.toast(f"已新建自定义字段：{name}（请在下方把目标改选为它）")
-        self._last_new_key = key
+        hdr = self.source.get("headers") or []
+        if col is not None and 0 <= col < len(hdr):
+            self.tgt_val[key] = f"{_COL_PREFIX}{col + 1}. {hdr[col]}"
+            self.unused_ignored.discard(col)
+            self.toast(f"已新建自定义字段：{name}，并把源列「{hdr[col]}」安置到它")
+        else:
+            self.toast(f"已新建自定义字段：{name}（请在表里把某行取值改选为它）")
+        self.after(30, self._render_target_rows)   # 表体刷新（新增行 / 安置列需重新渲染）
 
     # ---- 5-d-1：关键词规则 → 二级分类 ---- #
     def _edit_l2_rules(self) -> None:
@@ -1009,18 +1526,27 @@ class ImportWizardDialog(ctk.CTkToplevel):
         return rules or None
 
     def _collect_layer_map(self) -> dict:
-        hdr = self.source.get("headers") or []
+        """由「目标 → 源」表反推 {层级: 源列下标 或 None}（同一层只取一个；整层固定 → None）"""
+        return {k: self._src_col_of_key(k) for k in himp.LAYER_KEYS}
+
+    def _collect_field_map(self) -> dict:
+        """由「目标 → 源」表反推 {源列下标: 目标位}（供第 3 步 build_v5_payload 沿用）"""
         out = {}
-        for key, (var, _om) in self._layer_menus.items():
-            v = var.get()
-            out[key] = None
-            if v and v != _NO_MAP:
-                try:
-                    out[key] = int(v.split(".", 1)[0]) - 1
-                except Exception:
-                    out[key] = None
-                if out[key] is not None and not (0 <= out[key] < len(hdr)):
-                    out[key] = None
+        for key in list(self.tgt_val):
+            if key in himp.LAYER_LABELS:            # 层级由 layer_map/consts 承担，不进字段映射
+                continue
+            col = self._src_col_of_key(key)
+            if col is not None:
+                out[col] = key
+        return out
+
+    def _collect_consts(self) -> dict:
+        """被指定为固定名称的层 → {层级: 名称}（整层固定，优先于源列）"""
+        out = {}
+        for key in himp.LAYER_KEYS:
+            name = self._layer_fixed_name(key)
+            if name:
+                out[key] = name
         return out
 
     # ------------------------------------------------------------------ #
@@ -1090,12 +1616,15 @@ class ImportWizardDialog(ctk.CTkToplevel):
     def _show_step(self, step: int) -> None:
         self._step = step
         titles = {1: "第 1 / 3 步　选择源",
-                  2: "第 2 / 3 步　层级映射 与 字段映射",
+                  2: "第 2 / 3 步　目标 → 源 映射",
                   3: "第 3 / 3 步　预览与出口"}
-        hints = {1: "支持粘贴文本、CSV/TSV/TXT、HTML 表格、Markdown 表格、网址"
+        hints = {1: "支持粘贴文本、CSV/TSV/TXT、HTML 表格、Markdown 表格、JSON、网址"
                     "（网页 / GitHub 文件 / GitHub 目录批量）；"
                     "抓文档仓库建议先抓索引页小样确认结构",
-                 2: "空单元格继承上一行；允许跳层（按兜底名补齐）",
+                 2: "为左侧每个「目标位」指定取值来源：选一个源列（同一源列只能给一个目标位）；"
+                    "层级行还可选该层『已有选项』或直接输入新名称（＝新建该选项）；"
+                    "源中没安置的列在表下方可就地「＋ 新建字段」或忽略；"
+                    "空单元格继承上一行，允许跳层（按兜底名补齐）",
                  3: "先保存 JSON v5 数据文件（同时导出一份 Excel），再选择是否导入该 JSON"}
         self.step_lbl.configure(text=titles[step])
         self.hint_lbl.configure(text=hints[step])
@@ -1126,10 +1655,11 @@ class ImportWizardDialog(ctk.CTkToplevel):
                 messagebox.showwarning("提示", "请先解析源数据（点「解析」）。", parent=self)
                 return
             self._refresh_step2()
-            self._render_field_rows()
+            self._render_target_rows()
             self._show_step(2)
             return
         if self._step == 2:
+            self._harvest_row_inputs()   # 2026-09-20：先收割「取值」列手输的新名称（免回车），再校验/生成载荷
             if not self._build_payload():
                 return
             self._show_step(3)
@@ -1137,9 +1667,18 @@ class ImportWizardDialog(ctk.CTkToplevel):
     def _build_payload(self) -> bool:
         """按当前映射生成载荷并统计（失败返回 False）"""
         self.layer_map = self._collect_layer_map()
-        if self.layer_map.get("l1") is None and self.layer_map.get("l2") is None:
+        self.field_map = self._collect_field_map()   # 派生态：由「目标 → 源」表反推
+        consts = self._collect_consts()     # 2026-09-20：整层固定（已有选项 / 新建名称）
+        if (self.layer_map.get("l1") is None and self.layer_map.get("l2") is None
+                and not consts.get("l1") and not consts.get("l2")):
+            # 2026-09-20：文案改进——明确「兜底名不能替代层级取值」（校验口径不变）
             messagebox.showwarning("提示",
-                                   "请至少映射『一级分类』或『二级分类』（否则条目无处安放）。",
+                                   "条目必须能归入『一级分类』或『二级分类』，"
+                                   "请至少给其中之一指定取值：\n"
+                                   "　① 选一个源列（取自源列的层级列）；\n"
+                                   "　② 或在层级行选一个已有选项 / 直接输入新名称（＝新建）。\n\n"
+                                   "注意：下方「未取到值时的兜底名」只在某行该层为空时补齐，"
+                                   "不能替代这里的层级取值。",
                                    parent=self)
             return False
         fallbacks = {k: v.get().strip() for k, v in self.fb_vars.items()}
@@ -1150,11 +1689,13 @@ class ImportWizardDialog(ctk.CTkToplevel):
                 rows_all, self.filter_inc.get().strip(), self.filter_exc.get().strip())
         except Exception:                              # noqa: BLE001
             rows, self.filter_stat = rows_all, {}
+        # 2026-09-20：层级「选项名逐值改名」＝界面层预处理（只改源数据副本，数据层零改动）
+        rows = self._apply_layer_rename(rows)
         # 5-d-1 关键词规则：对**整行文本**匹配（名称、分类、各字段值任一命中即可）
         l2_rules = self._l2_rules()
         try:
             records, warns = himp.structure_rows(
-                rows, self.layer_map, True, fallbacks, l2_rules=l2_rules)
+                rows, self.layer_map, True, fallbacks, l2_rules=l2_rules, consts=consts)
         except Exception as exc:
             messagebox.showerror("结构化失败", str(exc), parent=self)
             return False
@@ -1199,9 +1740,21 @@ class ImportWizardDialog(ctk.CTkToplevel):
                                  stats=self.stats, link_stat=self.link_stat,
                                  filter_stat=self.filter_stat, split_stat=self.split_stat,
                                  l2_rule_on=bool(l2_rules))
+        qtext = himp.format_quality_report(rep, custom_names)
+        # 2026-09-20 14:21：第 3 步自检新增「⑧ 源中未安置的列」汇总
+        # （纯界面层：取向导已有的 _unused_cols()，未改 hierarchy_import.py 一行）
+        rest = self._unused_cols()
+        if rest:
+            hdr_all = self.source.get("headers") or []
+            shown = "、".join(f"{i + 1}. {hdr_all[i]}" for i in rest[:6])
+            qtext += (f"\n⑧ 源中未安置的列：{len(rest)}（{shown}"
+                      f"{'…' if len(rest) > 6 else ''}）→ 建议回第 2 步处置"
+                      "（「＋ 新建字段」安置 或「忽略」）")
+        else:
+            qtext += "\n⑧ 源中未安置的列：无 ✅（所有源列都已安置或已忽略）"
         self.quality_box.configure(state="normal")
         self.quality_box.delete("1.0", "end")
-        self.quality_box.insert("end", himp.format_quality_report(rep, custom_names))
+        self.quality_box.insert("end", qtext)
         self.quality_box.configure(state="disabled")
         self.warn_box.configure(state="normal")
         self.warn_box.delete("1.0", "end")

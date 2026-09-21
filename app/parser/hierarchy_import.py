@@ -15,6 +15,7 @@ hierarchy_import.py - 层级资源结构化（第 4 期 T1 离线"网上资源�
 设计约束：只用标准库；不改数据库结构；导入动作复用既有 `json_io.import_json`（判重/进度/事务一致）。
 """
 import csv
+import json
 import os
 import re
 from html.parser import HTMLParser
@@ -32,6 +33,8 @@ LAYER_LABELS = {"project": "项目类别", "domain": "根目录",
 DEFAULT_FALLBACK_PROJECT = "网上资源收集"    # 与 config.PROJECT_PRESETS 之一一致
 DEFAULT_FALLBACK_DOMAIN = "资源导入"
 DEFAULT_FALLBACK_L1 = "未分组"
+# 2026-09-20：二级分类兜底名默认留空＝不补齐（缺二级分类时条目直接挂一级下，保持原行为）
+DEFAULT_FALLBACK_L2 = ""
 
 # 内置 10 字段中可作为"映射目标"的载荷键（①条目标题即 name）
 BUILTIN_ENTRY_KEYS = ("name", "intro", "origin", "features", "scenes", "works",
@@ -50,6 +53,7 @@ LINK_TARGETS = ("image_plan", "origin")
 _SOURCE_EXTS = {
     ".csv": "delimited", ".tsv": "delimited", ".txt": "delimited",
     ".html": "html", ".htm": "html", ".md": "md", ".markdown": "md",
+    ".json": "json",      # 2026-09-20 11:30：本地 JSON 源（含非本软件导出的第三方 JSON）
 }
 
 
@@ -168,6 +172,78 @@ def parse_md_tables(text: str) -> List[List[List[str]]]:
     return tables
 
 
+# ---- JSON 源解析（2026-09-20 09:40）---- #
+# 背景：用户要求"本地 JSON 文件（非本软件导出）"也纳入第 1 步"选择源"的本地文件支持类型。
+# 口径（用户确认的推荐方案）：对象数组取 key 并集 / 二维数组首行作表头 /
+#                            嵌套对象拍平为点号路径 / 列表值合成一格。
+def _json_cell(val) -> str:
+    """JSON 叶子值 → 单元格文本（列表合成一格；布尔转 true/false）"""
+    if val is None:
+        return ""
+    if isinstance(val, bool):
+        return "true" if val else "false"
+    if isinstance(val, (int, float, str)):
+        return str(val)
+    if isinstance(val, list):
+        return "、".join(x for x in (_json_cell(v) for v in val) if x)
+    return json.dumps(val, ensure_ascii=False)
+
+
+def _json_flatten(obj: dict, prefix: str = "") -> dict:
+    """把嵌套对象拍平成 `a.b` 点号路径（列表/标量作为叶子）"""
+    out = {}
+    for k, v in (obj or {}).items():
+        key = f"{prefix}{k}"
+        if isinstance(v, dict) and v:
+            out.update(_json_flatten(v, key + "."))
+        else:
+            out[key] = _json_cell(v)
+    return out
+
+
+def parse_json_records(text: str) -> dict:
+    """JSON 文本 → {headers, rows, delimiter, total_rows}（容错解析，2026-09-20 09:40）
+
+    - 顶层为数组元素是对象 → 表头 = 各对象键的**并集**（按首次出现顺序）；
+      嵌套对象拍平为 `a.b`；列表值合成一格（"、"连接）；
+    - 顶层为二维数组 → **首行作表头**，其余作数据（短行右侧补空）；
+    - 顶层为对象 → 取其中**最长的数组值**再按上两条解析（如 {"data": [...]}）；
+      无数组值则视为"单行对象"；
+    - 无法构成 ≥2 列的表格时报 ValueError（界面会原样提示）。
+    """
+    try:
+        data = json.loads(text or "")
+    except Exception as exc:                       # noqa: BLE001
+        raise ValueError(f"JSON 解析失败：{exc}")
+    if isinstance(data, dict):
+        lists = [v for v in data.values() if isinstance(v, list) and v]
+        data = max(lists, key=len) if lists else [data]
+    if not isinstance(data, list) or not data:
+        raise ValueError("JSON 结构无法作为表格：顶层需为非空数组（或含数组的对象）")
+    if all(isinstance(x, list) for x in data):
+        rows = [[_json_cell(c) for c in r] for r in data]
+        ncol = max((len(r) for r in rows), default=0)
+        if ncol < 2:
+            raise ValueError("JSON 为二维数组但不足 2 列（需首行作表头、至少 2 列）")
+        rows = [r + [""] * (ncol - len(r)) for r in rows]
+        headers = [rows[0][i] or f"列{i + 1}" for i in range(ncol)]
+        body = rows[1:]
+    else:
+        objs = [_json_flatten(x) for x in data if isinstance(x, dict)]
+        if not objs:
+            raise ValueError("JSON 数组元素既非对象也非数组，无法转为表格")
+        headers = []
+        for o in objs:
+            for k in o:
+                if k not in headers:
+                    headers.append(k)
+        if len(headers) < 2:
+            raise ValueError(f"JSON 仅解析出 {len(headers)} 个可用字段，"
+                             "无法作为表格（至少需 2 列）")
+        body = [[o.get(h, "") for h in headers] for o in objs]
+    return {"headers": headers, "rows": body, "delimiter": "", "total_rows": len(body)}
+
+
 def _table_to_source(table: List[List[str]], min_cols: int = 2) -> Optional[dict]:
     """二维表 → {headers, rows}（不足 min_cols 列的表视为无效）"""
     rows = [r for r in (table or []) if any((c or "").strip() for c in r)]
@@ -265,20 +341,26 @@ def merge_batch_parts(parts: List[dict], header_fmt: str = "# 来源：{name}") 
 
 
 def parse_file(path: str) -> dict:
-    """解析源文件（CSV/TSV/TXT / HTML / Markdown）→ {headers, rows, …}
+    """解析源文件（CSV/TSV/TXT / HTML / Markdown / JSON）→ {headers, rows, …}
 
-    HTML/Markdown 取"列数最多、其次行数最多"的那张表；同时返回 tables_found 供界面提示。
+    HTML/Markdown 取"列数最多、其次行数最多"的那张表；JSON 走容错解析（见 parse_json_records）；
+    同时返回 tables_found 供界面提示。
     """
     ext = os.path.splitext(path or "")[1].lower()
     kind = _SOURCE_EXTS.get(ext)
     if kind is None:
         raise ValueError(f"不支持的源文件类型：{ext or '（无扩展名）'}"
-                         "（支持 .csv/.tsv/.txt/.html/.htm/.md）")
+                         "（支持 .csv/.tsv/.txt/.html/.htm/.md/.json）")
     text = _read_text(path)
     if kind == "delimited":
         out = split_delimited(text, "\t" if ext == ".tsv" else None)
         out["tables_found"] = 1
         out["kind"] = "delimited"
+        return out
+    if kind == "json":                     # 2026-09-20 09:40：本地 JSON 源（含第三方 JSON）
+        out = parse_json_records(text)
+        out["tables_found"] = 1
+        out["kind"] = "json"
         return out
     tables = parse_html_tables(text) if kind == "html" else parse_md_tables(text)
     cands = [t for t in (_table_to_source(tb) for tb in tables) if t]
@@ -298,10 +380,13 @@ def structure_rows(rows: List[list], mapping: dict,
                    fallbacks: Optional[dict] = None,
                    l2_rules: Optional[list] = None,
                    l2_source: Optional[int] = None,
-                   other: str = "其他") -> Tuple[list, list]:
+                   other: str = "其他",
+                   consts: Optional[dict] = None) -> Tuple[list, list]:
     """按层级映射把二维行整理为层级记录。
 
     - mapping：{layer_key: 列下标 或 None}（None=该层未映射，按兜底名补齐）；
+    2026-09-20 14:20：新增 consts（可选，{layer_key: 固定名称}）——该层**整列固定**为该名称，
+      优先级高于 mapping 与 fallbacks；用于向导"该层固定用已有选项 / 新建名称"。
     - inherit：空单元格继承上一行；**上层显式值变化时，清空下层继承值**（合并单元格语义）；
     - l2_rules（2026-09-14，5-d-1）：关键词规则 [(二级分类名, [关键词…])]，启用时**逐行覆盖**二级分类
       （先匹配先得；未命中归 `other`）；规则文本取 `l2_source` 列，未指定则取整行拼接；
@@ -309,14 +394,24 @@ def structure_rows(rows: List[list], mapping: dict,
       `_fallback`（2026-09-14，5-b）标记该层是否用了兜底名，供"质量自检"面板统计。
     """
     fb = {"project": DEFAULT_FALLBACK_PROJECT, "domain": DEFAULT_FALLBACK_DOMAIN,
-          "l1": DEFAULT_FALLBACK_L1, "l2": ""}
+          "l1": DEFAULT_FALLBACK_L1, "l2": DEFAULT_FALLBACK_L2}   # 2026-09-20：l2 改取常量（单一来源）
     fb.update({k: v for k, v in (fallbacks or {}).items() if v is not None})
+    # 2026-09-20 14:20：该层固定值（整列固定，优先级最高；见 docstring）
+    fx = {k: v for k, v in (consts or {}).items() if v}
     last = {k: "" for k in LAYER_KEYS}
     records, warnings = [], []
     for rowno, row in enumerate(rows or [], 1):
         rec = {}
         used_fb = {k: False for k in LAYER_KEYS}
         for pos, key in enumerate(LAYER_KEYS):
+            if fx.get(key):
+                fixed = fx[key]
+                if last.get(key, "") != fixed:
+                    for lower in LAYER_KEYS[pos + 1:]:
+                        last[lower] = ""      # 上层变了 → 下层继承值作废
+                last[key] = fixed
+                rec[key] = fixed
+                continue
             col = mapping.get(key)
             raw = ""
             if col is not None and isinstance(col, int) and 0 <= col < len(row):
@@ -344,6 +439,11 @@ def structure_rows(rows: List[list], mapping: dict,
             rec["l1"] = fb["l1"]
             used_fb["l1"] = True
             warnings.append(f"第 {rowno} 行：缺『一级分类』→ 归入『{fb['l1']}』")
+        # 2026-09-20：补『二级分类』兜底（原实现无此分支；fb["l2"] 默认为空＝不补齐，保持原行为）
+        if not rec["l2"] and fb["l2"]:
+            rec["l2"] = fb["l2"]
+            used_fb["l2"] = True
+            warnings.append(f"第 {rowno} 行：缺『二级分类』→ 归入『{fb['l2']}』")
         if not rec["domain"]:
             rec["domain"] = fb["domain"]
             used_fb["domain"] = True
@@ -681,7 +781,7 @@ def quality_report(db, payload: dict, *, records: Optional[list] = None,
     duplicates = [{"path": list(p), "name": n, "count": c}
                   for (p, n), c in seen.items() if c > 1]
     duplicates.sort(key=lambda d: -d["count"])
-    fb_counts = {"project": 0, "domain": 0, "l1": 0}
+    fb_counts = {"project": 0, "domain": 0, "l1": 0, "l2": 0}   # 2026-09-20：补 l2（兜底统计）
     l2_other = 0
     if records:
         for item in records:
