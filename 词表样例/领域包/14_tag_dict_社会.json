@@ -1,0 +1,204 @@
+{
+  "version": 1,
+  "updated_at": "2026-09-17 22:26:46",
+  "universal": {
+    "领域": {
+      "社会": [
+        "社会",
+        "社会现象",
+        "社会调查",
+        "社群",
+        "公共议题"
+      ]
+    },
+    "用途": {
+      "素材": [
+        "素材",
+        "图库",
+        "参考图",
+        "素材库",
+        "collect"
+      ],
+      "教程": [
+        "教程",
+        "教学",
+        "入门",
+        "指南",
+        "步骤",
+        "how to",
+        "tutorial"
+      ],
+      "模板": [
+        "模板",
+        "套用",
+        "可替换",
+        "template",
+        "preset"
+      ],
+      "案例": [
+        "案例",
+        "示例",
+        "样例",
+        "展示",
+        "case",
+        "demo"
+      ],
+      "工具": [
+        "工具",
+        "插件",
+        "软件",
+        "平台",
+        "workflow",
+        "pipeline"
+      ],
+      "参考": [
+        "参考",
+        "速查",
+        "手册",
+        "清单",
+        "对照表",
+        "cheatsheet"
+      ],
+      "灵感": [
+        "灵感",
+        "创意",
+        "脑洞",
+        "启发",
+        "inspiration"
+      ],
+      "报告": [
+        "报告",
+        "总结",
+        "复盘",
+        "分析",
+        "结论"
+      ]
+    }
+  },
+  "domains": {
+    "社会": {
+      "分支社会学": {
+        "家庭社会学": [
+          "家庭社会学",
+          "sociology of family"
+        ],
+        "城市社会学": [
+          "城市社会学",
+          "urban sociology"
+        ],
+        "农村社会学": [
+          "农村社会学",
+          "rural sociology"
+        ],
+        "教育社会学": [
+          "教育社会学",
+          "sociology of education"
+        ],
+        "劳动社会学": [
+          "劳动社会学",
+          "sociology of work"
+        ],
+        "消费社会学": [
+          "消费社会学",
+          "sociology of consumption"
+        ],
+        "环境社会学": [
+          "环境社会学",
+          "environmental sociology"
+        ],
+        "网络社会学": [
+          "网络社会学",
+          "digital sociology"
+        ],
+        "老年社会学": [
+          "老年社会学",
+          "aging society"
+        ],
+        "移民社会学": [
+          "移民社会学",
+          "migration studies"
+        ]
+      },
+      "研究议题": {
+        "社会分层": [
+          "社会分层",
+          "social stratification"
+        ],
+        "社会流动": [
+          "社会流动",
+          "social mobility"
+        ],
+        "社会资本": [
+          "社会资本",
+          "social capital"
+        ],
+        "社会网络": [
+          "社会网络",
+          "social network"
+        ],
+        "社会变迁": [
+          "社会变迁",
+          "social change"
+        ],
+        "社会治理": [
+          "社会治理",
+          "social governance"
+        ]
+      },
+      "研究方法": {
+        "社会调查": [
+          "社会调查",
+          "survey"
+        ],
+        "问卷": [
+          "问卷",
+          "量表",
+          "questionnaire"
+        ],
+        "深度访谈": [
+          "深度访谈",
+          "访谈",
+          "interview"
+        ],
+        "田野调查": [
+          "田野调查",
+          "fieldwork"
+        ],
+        "参与观察": [
+          "参与观察",
+          "participant observation"
+        ],
+        "抽样": [
+          "抽样",
+          "样本",
+          "sampling"
+        ]
+      },
+      "理论视角": {
+        "功能主义": [
+          "功能主义",
+          "functionalism"
+        ],
+        "冲突论": [
+          "冲突论",
+          "conflict theory"
+        ],
+        "符号互动论": [
+          "符号互动论",
+          "symbolic interactionism"
+        ],
+        "社会建构": [
+          "社会建构",
+          "social construction"
+        ]
+      }
+    }
+  },
+  "domain_map": {
+    "社会": [
+      "社会",
+      "社会现象",
+      "社会调查"
+    ]
+  }
+}
