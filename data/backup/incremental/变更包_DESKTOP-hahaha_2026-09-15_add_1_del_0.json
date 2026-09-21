@@ -1,0 +1,152 @@
+{
+  "version": 5,
+  "type": "change",
+  "exported_at": "2026-09-15 18:44:13",
+  "computer_code": "DESKTOP-hahaha",
+  "day": "2026-09-15",
+  "summary": {
+    "add_entries": 1,
+    "add_categories": 0,
+    "add_domains": 0,
+    "del_entries": 0,
+    "del_categories": 0,
+    "del_domains": 0,
+    "deleted_snapshots": 0
+  },
+  "projects": [
+    {
+      "name": "日常学习记录",
+      "sort_order": 0
+    },
+    {
+      "name": "网上资源收集",
+      "sort_order": 1
+    },
+    {
+      "name": "本人创作作品",
+      "sort_order": 3
+    },
+    {
+      "name": "个人经验总结",
+      "sort_order": 4
+    }
+  ],
+  "domain_projects": {},
+  "domains": [],
+  "domain_links": {},
+  "categories": [],
+  "entries": [
+    {
+      "name": "人和一生有多磨难吉吉是一个好同志，你要喜爱她第致命",
+      "intro": "",
+      "origin": "",
+      "features": "",
+      "scenes": "",
+      "works": "",
+      "image_desc": "",
+      "prompt_cn": "人和一生有多磨难吉吉是一个好同志，你要喜爱她第致命中国人欧洲小说视频视觉把人的一生放在更长的历史维度去看，我们并没有多么伟大。只是一个小动物罢了，你要喜爱她第致命",
+      "prompt_en": "",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [],
+      "tags": [
+        "人生"
+      ]
+    }
+  ],
+  "deleted_entries": [],
+  "deleted_categories": [],
+  "deleted_domains": [],
+  "field_defs": [
+    {
+      "field_key": "name",
+      "display_name": "① 条目名称",
+      "field_type": "text",
+      "is_builtin": 1,
+      "sort_order": 0,
+      "config_json": "",
+      "archived": 0
+    },
+    {
+      "field_key": "intro",
+      "display_name": "② 介绍",
+      "field_type": "textarea",
+      "is_builtin": 1,
+      "sort_order": 1,
+      "config_json": "",
+      "archived": 0
+    },
+    {
+      "field_key": "origin",
+      "display_name": "③ 溯源",
+      "field_type": "textarea",
+      "is_builtin": 1,
+      "sort_order": 2,
+      "config_json": "",
+      "archived": 0
+    },
+    {
+      "field_key": "features",
+      "display_name": "④ 核心特征",
+      "field_type": "textarea",
+      "is_builtin": 1,
+      "sort_order": 3,
+      "config_json": "",
+      "archived": 0
+    },
+    {
+      "field_key": "scenes",
+      "display_name": "⑤ 应用场景",
+      "field_type": "textarea",
+      "is_builtin": 1,
+      "sort_order": 4,
+      "config_json": "",
+      "archived": 0
+    },
+    {
+      "field_key": "works",
+      "display_name": "⑥ 代表作",
+      "field_type": "textarea",
+      "is_builtin": 1,
+      "sort_order": 5,
+      "config_json": "",
+      "archived": 0
+    },
+    {
+      "field_key": "image_desc",
+      "display_name": "⑦ 代表高清配图",
+      "field_type": "textarea",
+      "is_builtin": 1,
+      "sort_order": 6,
+      "config_json": "",
+      "archived": 0
+    },
+    {
+      "field_key": "prompt_cn",
+      "display_name": "⑧ 中文版提示词",
+      "field_type": "textarea",
+      "is_builtin": 1,
+      "sort_order": 7,
+      "config_json": "",
+      "archived": 0
+    },
+    {
+      "field_key": "prompt_en",
+      "display_name": "⑨ 英文版提示词",
+      "field_type": "textarea",
+      "is_builtin": 1,
+      "sort_order": 8,
+      "config_json": "",
+      "archived": 0
+    },
+    {
+      "field_key": "image_plan",
+      "display_name": "⑩ 图像获取方案",
+      "field_type": "link",
+      "is_builtin": 1,
+      "sort_order": 9,
+      "config_json": "",
+      "archived": 0
+    }
+  ]
+}

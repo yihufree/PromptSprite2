@@ -1,0 +1,1733 @@
+{
+  "version": 3,
+  "exported_at": "2026-08-29 22:07:19",
+  "computer_code": "DESKTOP-hahaha",
+  "day": "2026-08-29",
+  "projects": [
+    {
+      "name": "日常学习记录",
+      "sort_order": 0
+    },
+    {
+      "name": "网上资源收集",
+      "sort_order": 1
+    },
+    {
+      "name": "个人梳理资源",
+      "sort_order": 2
+    },
+    {
+      "name": "本人创作作品",
+      "sort_order": 3
+    },
+    {
+      "name": "个人经验总结",
+      "sort_order": 4
+    }
+  ],
+  "domain_projects": {
+    "动画电影视觉风格全息图谱": "个人梳理资源"
+  },
+  "domains": [
+    {
+      "name": "动画电影视觉风格全息图谱",
+      "sort_order": 13
+    }
+  ],
+  "domain_links": {
+    "动画电影视觉风格全息图谱": [
+      "第一大类：按技术工艺分类",
+      "第二大类：按视觉美学风格分类",
+      "第三大类：按地域国别分类",
+      "第四大类：按其他分类标准"
+    ]
+  },
+  "categories": [
+    {
+      "parent": null,
+      "name": "第一大类：按技术工艺分类",
+      "sort_order": 116
+    },
+    {
+      "parent": "第一大类：按技术工艺分类",
+      "name": "中类1：传统手绘动画",
+      "sort_order": 0
+    },
+    {
+      "parent": "第一大类：按技术工艺分类",
+      "name": "中类2：2D数字动画",
+      "sort_order": 1
+    },
+    {
+      "parent": "第一大类：按技术工艺分类",
+      "name": "中类3：3D计算机动画",
+      "sort_order": 2
+    },
+    {
+      "parent": "第一大类：按技术工艺分类",
+      "name": "中类4：定格动画",
+      "sort_order": 3
+    },
+    {
+      "parent": null,
+      "name": "第二大类：按视觉美学风格分类",
+      "sort_order": 117
+    },
+    {
+      "parent": "第二大类：按视觉美学风格分类",
+      "name": "中类1：美式商业动画风格",
+      "sort_order": 0
+    },
+    {
+      "parent": "第二大类：按视觉美学风格分类",
+      "name": "中类2：日本动画风格",
+      "sort_order": 1
+    },
+    {
+      "parent": "第二大类：按视觉美学风格分类",
+      "name": "中类3：中国特有美术风格",
+      "sort_order": 2
+    },
+    {
+      "parent": "第二大类：按视觉美学风格分类",
+      "name": "中类4：欧洲艺术动画风格",
+      "sort_order": 3
+    },
+    {
+      "parent": "第二大类：按视觉美学风格分类",
+      "name": "中类5：通用艺术流派",
+      "sort_order": 4
+    },
+    {
+      "parent": null,
+      "name": "第三大类：按地域国别分类",
+      "sort_order": 118
+    },
+    {
+      "parent": "第三大类：按地域国别分类",
+      "name": "中类1：美国动画",
+      "sort_order": 0
+    },
+    {
+      "parent": "第三大类：按地域国别分类",
+      "name": "中类2：日本动画",
+      "sort_order": 1
+    },
+    {
+      "parent": "第三大类：按地域国别分类",
+      "name": "中类3：韩国动画",
+      "sort_order": 2
+    },
+    {
+      "parent": "第三大类：按地域国别分类",
+      "name": "中类4：中国动画",
+      "sort_order": 3
+    },
+    {
+      "parent": "第三大类：按地域国别分类",
+      "name": "中类5：欧洲动画",
+      "sort_order": 4
+    },
+    {
+      "parent": null,
+      "name": "第四大类：按其他分类标准",
+      "sort_order": 119
+    },
+    {
+      "parent": "第四大类：按其他分类标准",
+      "name": "中类1：按受众定位分类",
+      "sort_order": 0
+    },
+    {
+      "parent": "第四大类：按其他分类标准",
+      "name": "中类2：按播出形式分类",
+      "sort_order": 1
+    }
+  ],
+  "entries": [
+    {
+      "name": "小类1.1：赛璐珞手绘风格",
+      "intro": "逐帧手绘上色于赛璐珞胶片；色彩厚实、立体感强、大色块平涂；强对比、弱过渡。",
+      "origin": "早期迪士尼、早期东映动画 / 美国、日本",
+      "features": "",
+      "scenes": "复古童话、经典迪士尼公主、80-90年代日式动画",
+      "works": "迪士尼——《白雪公主》(1937)、《木偶奇遇记》(1940)、《睡美人》(1959)、《小美人鱼》(1989)、《狮子王》(1994)；日本东映——《龙珠》《美少女战士》《数码兽》等",
+      "image_desc": "",
+      "prompt_cn": "赛璐珞手绘动画风格，逐帧手绘厚涂质感，大色块平涂，复古经典动画感",
+      "prompt_en": "Cel Animation Hand-drawn Style, frame-by-frame hand-painted thick texture, flat color blocks, classic retro animation look",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第一大类：按技术工艺分类",
+        "中类1：传统手绘动画"
+      ]
+    },
+    {
+      "name": "小类1.2：吉卜力全手绘风格",
+      "intro": "坚持全手绘制作；画面清新自然，细节精致，善用高级灰与高饱和度色彩；充满奇幻与怀旧氛围。",
+      "origin": "吉卜力工作室（Studio Ghibli） / 日本",
+      "features": "",
+      "scenes": "奇幻冒险、治愈成长、环保主题、少女故事、人文反思",
+      "works": "《风之谷》(1984)、《天空之城》(1986)、《龙猫》(1988)、《幽灵公主》(1997)、《千与千寻》(2001)、《哈尔的移动城堡》(2004)、《崖上的波妞》(2008)、《起风了》(2013)、《辉夜姬物语》(2013)",
+      "image_desc": "",
+      "prompt_cn": "吉卜力全手绘动画风格，日式手绘水彩感，清新自然的画面，通透光影，精致细节",
+      "prompt_en": "Ghibli Full Hand-drawn Style, Japanese hand-drawn watercolor look, fresh and natural visuals, luminous lighting, exquisite details",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第一大类：按技术工艺分类",
+        "中类1：传统手绘动画"
+      ]
+    },
+    {
+      "name": "小类1.3：卡通沙龙手绘风格",
+      "intro": "繁复精致的手绘风格、极致的绘本/装饰画美感；构图设色繁琐但唯美；融合爱尔兰民族线条与几何装饰。",
+      "origin": "卡通沙龙工作室（Cartoon Saloon） / 爱尔兰",
+      "features": "",
+      "scenes": "凯尔特神话、民族传说、成长治愈、历史文化题材",
+      "works": "《凯尔经的秘密》(2009)、《海洋之歌》(2014)、《养家之人》(2017)、《狼行者》(2020)",
+      "image_desc": "",
+      "prompt_cn": "卡通沙龙手绘风格，繁复精致的手绘绘本风，爱尔兰民族装饰线条，唯美装饰画美感",
+      "prompt_en": "Cartoon Saloon Hand-drawn Style, intricate hand-drawn picture book aesthetic, Irish ornamental lines, beautiful decorative artistry",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第一大类：按技术工艺分类",
+        "中类1：传统手绘动画"
+      ]
+    },
+    {
+      "name": "小类2.1：乐一通数字2D风格",
+      "intro": "数字绘制的2D动画；节奏极快、动作夸张变形、弹性十足；无厘头幽默。",
+      "origin": "华纳兄弟动画（Warner Bros. Animation） / 美国",
+      "features": "",
+      "scenes": "无厘头喜剧、恶搞、合家欢喜剧、怀旧复古动画",
+      "works": "《兔八哥》系列、《乐一通大电影：地球爆炸之日》(2025)等",
+      "image_desc": "",
+      "prompt_cn": "乐一通数字2D动画风格，美式经典2D画风，节奏极快动作夸张，无厘头幽默",
+      "prompt_en": "Looney Tunes Digital 2D Style, American classic 2D animation, fast-paced exaggerated action, slapstick humor",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第一大类：按技术工艺分类",
+        "中类2：2D数字动画"
+      ]
+    },
+    {
+      "name": "小类2.2：SHAFT数字风格",
+      "intro": "大量使用数码技术；独特的“SHAFT角度”（45度侧头动作）；强烈的几何构图、光影对比与节奏剪接。",
+      "origin": "SHAFT / 日本",
+      "features": "",
+      "scenes": "悬疑奇幻、青春物语、实验性叙事",
+      "works": "《化物语》(2009)、《魔法少女小圆》(2011)、《绝望先生》(2007)、《3月的狮子》(2016)",
+      "image_desc": "",
+      "prompt_cn": "SHAFT数字动画风格，几何构图与光影对比，45度侧头角度，冷冽诗意的视觉语言",
+      "prompt_en": "SHAFT Digital Style, geometric composition with light-shadow contrast, 45-degree head tilt, cold and poetic visual language",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第一大类：按技术工艺分类",
+        "中类2：2D数字动画"
+      ]
+    },
+    {
+      "name": "小类3.1：影视级写实3D风格",
+      "intro": "三维建模渲染，追求照片级真实感；立体感强，镜头自由；光线与材质模拟物理真实。",
+      "origin": "皮克斯、迪士尼、梦工厂、照明娱乐、蓝天工作室 / 美国",
+      "features": "",
+      "scenes": "各类主流商业动画电影",
+      "works": "见各工作室详细列表",
+      "image_desc": "",
+      "prompt_cn": "影视级写实3D动画风格，照片级真实渲染，电影级光影，立体感强",
+      "prompt_en": "Cinematic Realistic 3D Style, photorealistic rendering, cinematic lighting, strong dimensional depth",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第一大类：按技术工艺分类",
+        "中类3：3D计算机动画"
+      ]
+    },
+    {
+      "name": "小类3.2：风格化3D风格",
+      "intro": "三维建模但追求独特美术风格；不追求写实，而是夸张、变形、平面化等艺术处理。",
+      "origin": "索尼动画、梦工厂、华纳兄弟 / 美国",
+      "features": "",
+      "scenes": "风格化叙事、漫画改编、艺术探索",
+      "works": "《蜘蛛侠：平行宇宙》(2018)、《乐高大电影》(2014)、《穿靴子的猫2》(2022)",
+      "image_desc": "",
+      "prompt_cn": "风格化3D动画，三维建模艺术化处理，独特美术风格，非写实渲染",
+      "prompt_en": "Stylized 3D Animation, 3D modeled with artistic treatment, unique art style, non-photorealistic rendering",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第一大类：按技术工艺分类",
+        "中类3：3D计算机动画"
+      ]
+    },
+    {
+      "name": "小类3.3：三渲二风格",
+      "intro": "3D建模后用2D方式渲染；保留3D立体感同时呈现2D手绘质感。",
+      "origin": "多元（东映动画、SPA Studios、索尼动画等） / 全球",
+      "features": "",
+      "scenes": "动作场面、漫画改编、风格化叙事",
+      "works": "《灌篮高手》(2022)、《克劳斯：圣诞节的秘密》(2019)、《穿靴子的猫2》(2022)、《宝石之国》(2017)",
+      "image_desc": "",
+      "prompt_cn": "三渲二风格，3D建模2D渲染，手绘质感与立体感结合，流畅动画",
+      "prompt_en": "Cel-Shaded Style, 3D modeled with 2D rendering, hand-drawn texture with dimensional depth, smooth animation",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第一大类：按技术工艺分类",
+        "中类3：3D计算机动画"
+      ]
+    },
+    {
+      "name": "小类4.1：黏土定格风格",
+      "intro": "黏土实物逐格拍摄；粗粝手工质感；夸张微表情；英式幽默。",
+      "origin": "阿德曼动画（Aardman Animations） / 英国",
+      "features": "",
+      "scenes": "英式喜剧、动物故事、家庭幽默",
+      "works": "《超级无敌掌门狗》系列、《小鸡快跑》(2000)、《小羊肖恩》系列、《早期人类》(2018)",
+      "image_desc": "",
+      "prompt_cn": "黏土定格动画风格，英式幽默，黏土质感，夸张表情，手工感画面",
+      "prompt_en": "Claymation Style, British humor, clay texture, exaggerated expressions, handmade feel",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第一大类：按技术工艺分类",
+        "中类4：定格动画"
+      ]
+    },
+    {
+      "name": "小类4.2：暗黑哥特定格风格",
+      "intro": "暗黑哥特式童话；玩偶定格动画；色调阴冷、画风清奇、童趣怪诞。",
+      "origin": "莱卡工作室（Laika Studios） / 美国",
+      "features": "",
+      "scenes": "暗黑奇幻、惊悚童话、成长冒险",
+      "works": "《鬼妈妈》(2009)、《通灵男孩诺曼》(2012)、《盒子怪》(2014)、《久保与二弦琴》(2016)",
+      "image_desc": "",
+      "prompt_cn": "暗黑哥特定格动画风格，阴冷色调，玩偶定格动画，怪诞童趣",
+      "prompt_en": "Gothic Stop-Motion Style, dark and cold tones, puppet stop-motion animation, whimsical and eerie",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第一大类：按技术工艺分类",
+        "中类4：定格动画"
+      ]
+    },
+    {
+      "name": "小类4.3：中国木偶/布偶定格风格",
+      "intro": "木偶/布偶实物逐格拍摄；立体手工质感；民族服饰与场景。",
+      "origin": "上海美术电影制片厂 / 中国",
+      "features": "",
+      "scenes": "民间故事、儿童教育、传统寓言",
+      "works": "《神笔》(1955)、《阿凡提》(1979)",
+      "image_desc": "",
+      "prompt_cn": "中国木偶定格动画风格，木偶实物拍摄，立体手工质感，民族传统服饰",
+      "prompt_en": "Chinese Puppet Stop-Motion Style, puppet object animation, dimensional handmade texture, traditional ethnic costumes",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第一大类：按技术工艺分类",
+        "中类4：定格动画"
+      ]
+    },
+    {
+      "name": "小类1.1：迪士尼梦幻古典风",
+      "intro": "梦幻、华丽、理想化角色；高饱和色彩；场景宏大精致，有“舞台剧”般的古典美感。",
+      "origin": "华特迪士尼动画工作室 / 美国",
+      "features": "",
+      "scenes": "童话冒险、公主故事、经典英雄旅程",
+      "works": "《魔发奇缘》(2010)、《冰雪奇缘》(2013)、《疯狂动物城》(2016)、《海洋奇缘》(2016)、《魔法满屋》(2021)",
+      "image_desc": "",
+      "prompt_cn": "迪士尼梦幻古典风格，华丽童话氛围，理想化角色，高饱和色彩，舞台剧式精致场景",
+      "prompt_en": "Disney Dreamy Classic Style, magnificent fairy tale atmosphere, idealized characters, high-saturation colors, stage-like exquisite scenes",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类1：美式商业动画风格"
+      ]
+    },
+    {
+      "name": "小类1.2：皮克斯真实温情风",
+      "intro": "温暖、圆润、质感真实；角色设计服务于个性与情感；光线与材质模拟物理真实。",
+      "origin": "皮克斯动画工作室 / 美国",
+      "features": "",
+      "scenes": "温情成长、家庭关系、内心冒险",
+      "works": "《玩具总动员》(1995)、《机器人总动员》(2008)、《飞屋环游记》(2009)、《寻梦环游记》(2017)、《心灵奇旅》(2020)",
+      "image_desc": "",
+      "prompt_cn": "皮克斯真实温情风格，温暖圆润角色，真实质感光影，情感细腻画面",
+      "prompt_en": "Pixar Warm Realistic Style, warm and rounded characters, realistic texture and lighting, emotionally rich visuals",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类1：美式商业动画风格"
+      ]
+    },
+    {
+      "name": "小类1.3：梦工厂颠覆卡通风",
+      "intro": "夸张、快节奏、漫画感；角色常不完美甚至丑陋；颠覆传统童话。",
+      "origin": "梦工厂动画 / 美国",
+      "features": "",
+      "scenes": "反传统喜剧、恶搞童话、英雄成长",
+      "works": "《怪物史瑞克》(2001)、《功夫熊猫》(2008)、《驯龙高手》(2010)、《疯狂原始人》(2013)、《坏蛋联盟》(2022)",
+      "image_desc": "",
+      "prompt_cn": "梦工厂颠覆卡通风格，夸张漫画感角色，大胆颠覆视觉，快节奏动作",
+      "prompt_en": "DreamWorks Subversive Cartoon Style, exaggerated comic characters, bold subversive visuals, fast-paced action",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类1：美式商业动画风格"
+      ]
+    },
+    {
+      "name": "小类1.4：照明娱乐萌系风",
+      "intro": "极简、低多边形、Q弹萌系；色彩明亮干净；角色造型简洁圆润。",
+      "origin": "照明娱乐 / 美国",
+      "features": "",
+      "scenes": "儿童喜剧、萌宠故事、轻松合家欢",
+      "works": "《神偷奶爸》(2010)、《小黄人大眼萌》(2015)、《爱宠大机密》(2016)、《超级马力欧兄弟大电影》(2023)",
+      "image_desc": "",
+      "prompt_cn": "照明娱乐萌系风格，极简Q弹萌系角色，明亮干净色彩",
+      "prompt_en": "Illumination Cute Style, minimalist and bouncy cute characters, bright and clean colors",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类1：美式商业动画风格"
+      ]
+    },
+    {
+      "name": "小类1.5：华纳2.5D混合风",
+      "intro": "风格化2D动画与CG动画的结合；在不同世界中变换风格，追求“手工制作的美学”。",
+      "origin": "华纳兄弟动画 / 美国",
+      "features": "",
+      "scenes": "奇幻冒险、风格化叙事、跨次元故事",
+      "works": "《雪怪大冒险》(2018)、《逗鸟外传：萌宝满天飞》(2016)、《史酷比狗》(2020)",
+      "image_desc": "",
+      "prompt_cn": "华纳2.5D混合动画风格，2D与CG结合，风格化手绘质感，奇幻冒险氛围",
+      "prompt_en": "Warner 2.5D Hybrid Style, 2D and CG combination, stylized hand-drawn texture, fantasy adventure atmosphere",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类1：美式商业动画风格"
+      ]
+    },
+    {
+      "name": "小类1.6：暗黑装饰风",
+      "intro": "融合装饰艺术（Art Deco）的优雅线条与德国表现主义及黑色电影的厚重阴影；深沉、优雅而阴郁。",
+      "origin": "华纳兄弟动画，布鲁斯·蒂姆与埃里克·拉多姆斯基首创 / 美国",
+      "features": "",
+      "scenes": "超级英雄暗黑故事、黑色电影风格、悬疑",
+      "works": "《蝙蝠侠：动画系列》(1992-1995)、《蝙蝠侠大战幻影人》(1993)",
+      "image_desc": "",
+      "prompt_cn": "暗黑装饰风动画，装饰艺术线条与黑色电影阴影结合，深沉优雅暗色调，哥谭都市氛围",
+      "prompt_en": "Dark Deco Style, Art Deco lines combined with film noir shadows, deep and elegant dark tones, Gotham city atmosphere",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类1：美式商业动画风格"
+      ]
+    },
+    {
+      "name": "小类1.7：乐高积木风",
+      "intro": "三维CG模拟乐高积木质感；动作模仿定格动画的“顿挫感”；马赛克积木独特视觉。",
+      "origin": "华纳兄弟动画 + Animal Logic / 美国/澳大利亚",
+      "features": "",
+      "scenes": "积木世界冒险、玩具主题、幽默动作",
+      "works": "《乐高大电影》(2014)、《乐高蝙蝠侠大电影》(2017)、《乐高大电影2》(2019)",
+      "image_desc": "",
+      "prompt_cn": "乐高积木动画风格，CG模拟乐高质感，积木马赛克画面，顿挫定格动画感",
+      "prompt_en": "Lego Brick Film Style, CG simulated Lego texture, brick mosaic visuals, choppy stop-motion feel",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类1：美式商业动画风格"
+      ]
+    },
+    {
+      "name": "小类1.8：索尼蜘蛛侠平行宇宙风",
+      "intro": "三渲二手法还原漫画线条；抽帧、网点印刷、漫画分镜；每个宇宙有独特视觉风格。",
+      "origin": "索尼动画 / 美国",
+      "features": "",
+      "scenes": "超级英雄、多元宇宙、青春成长",
+      "works": "《蜘蛛侠：平行宇宙》(2018)、《蜘蛛侠：纵横宇宙》(2023)",
+      "image_desc": "",
+      "prompt_cn": "蜘蛛侠平行宇宙风格，三渲二漫画质感，抽帧效果，网点印刷，多元宇宙视觉",
+      "prompt_en": "Spider-Verse Style, cel-shaded comic texture, choppy frame rate, halftone dots, multiverse visuals",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类1：美式商业动画风格"
+      ]
+    },
+    {
+      "name": "小类1.9：蓝天工作室明亮高光风格",
+      "intro": "高光泽、干净明亮、色彩鲜艳；角色毛发与材质质感精致，视觉通透。",
+      "origin": "蓝天工作室（已关闭） / 美国",
+      "features": "",
+      "scenes": "冒险喜剧、动物故事、合家欢",
+      "works": "《冰川时代》系列、《里约大冒险》系列、《公牛历险记》(2017)",
+      "image_desc": "",
+      "prompt_cn": "蓝天工作室风格，高光泽鲜艳色彩，精致材质，明亮通透的画面",
+      "prompt_en": "Blue Sky Studios Style, high-gloss and vibrant colors, exquisite textures, bright and transparent visuals",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类1：美式商业动画风格"
+      ]
+    },
+    {
+      "name": "小类1.10：Netflix CG奇幻风格",
+      "intro": "写实CG风格应用于奇幻世界；融合多种技法（剪纸、定格、2D手绘、3D、混合）；3D技术配合2D构图或卡通渲染。",
+      "origin": "Netflix动画 / 美国",
+      "features": "",
+      "scenes": "奇幻冒险、原创故事、视觉实验",
+      "works": "《克劳斯：圣诞节的秘密》(2019)、《海兽猎人》(2022)、《怪物少女》(2024)",
+      "image_desc": "",
+      "prompt_cn": "Netflix CG奇幻风格，写实CG渲染奇幻世界，混合动画技法，电影级光影",
+      "prompt_en": "Netflix CG Fantasy Style, realistic CG rendering of fantasy worlds, mixed animation techniques, cinematic lighting",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类1：美式商业动画风格"
+      ]
+    },
+    {
+      "name": "小类2.1：吉卜力治愈手绘风",
+      "intro": "全手绘、清新自然、通透光影；厚涂水彩感、怀旧影像质感；画面细节精致，充满奇幻与人文气息。",
+      "origin": "吉卜力工作室 / 日本",
+      "features": "",
+      "scenes": "奇幻冒险、治愈成长、环保主题",
+      "works": "《龙猫》(1988)、《千与千寻》(2001)、《哈尔的移动城堡》(2004)、《崖上的波妞》(2008)",
+      "image_desc": "",
+      "prompt_cn": "吉卜力治愈手绘风格，日式手绘水彩感，清新自然，通透光影，精致细节",
+      "prompt_en": "Ghibli Healing Hand-drawn Style, Japanese hand-drawn watercolor look, fresh and natural, luminous lighting, exquisite details",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类2：日本动画风格"
+      ]
+    },
+    {
+      "name": "小类2.2：新海诚唯美写实风",
+      "intro": "超写实背景+绚烂云彩、光晕；唯美日系青春；晨昏光影细腻，场景如风景明信片。",
+      "origin": "新海诚 / CoMix Wave Films / 日本",
+      "features": "",
+      "scenes": "青春爱情、异地恋、时间与距离主题",
+      "works": "《秒速5厘米》(2007)、《你的名字。》(2016)、《天气之子》(2019)、《铃芽之旅》(2022)",
+      "image_desc": "",
+      "prompt_cn": "新海诚唯美写实风格，超写实唯美背景，绚烂云彩与光晕，细腻光影，青春日系",
+      "prompt_en": "Makoto Shinkai Beautiful Realistic Style, hyper-realistic beautiful backgrounds, radiant clouds and halation, delicate lighting, youthful Japanese aesthetic",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类2：日本动画风格"
+      ]
+    },
+    {
+      "name": "小类2.3：京都动画精致日常风",
+      "intro": "画风精细、情感细腻；标志性“京都脸”（大眼睛和特定脸部线条）；擅长校园、日常、情感题材。",
+      "origin": "京都动画 / 日本",
+      "features": "",
+      "scenes": "校园青春、日常治愈、家庭温情、音乐题材",
+      "works": "《凉宫春日的忧郁》(2006)、《CLANNAD》(2007-2009)、《轻音少女》(2009)、《冰菓》(2012)、《紫罗兰永恒花园》(2018)",
+      "image_desc": "",
+      "prompt_cn": "京都动画精致日常风格，精细画风，大眼睛“京都脸”角色，细腻情感表达，校园日常氛围",
+      "prompt_en": "Kyoto Animation Refined Daily Style, refined art style, big-eyed \"Kyoto face\" characters, delicate emotional expression, school daily atmosphere",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类2：日本动画风格"
+      ]
+    },
+    {
+      "name": "小类2.4：MAPPA硬核战斗风",
+      "intro": "打戏流畅、细节爆炸；大规模群战、能量爆炸、近身格斗；画面华丽，每集如电影特效级。",
+      "origin": "MAPPA / 日本",
+      "features": "",
+      "scenes": "热血战斗、奇幻冒险、运动竞技",
+      "works": "《咒术回战》(2020)、《进击的巨人 The Final Season》(2020-2023)、《链锯人》(2022)",
+      "image_desc": "",
+      "prompt_cn": "MAPPA硬核战斗风格，流畅爆炸的打斗场面，电影级特效，华丽画面，高燃动作",
+      "prompt_en": "MAPPA Intense Action Style, fluid and explosive action scenes, cinematic VFX, magnificent visuals, high-energy action",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类2：日本动画风格"
+      ]
+    },
+    {
+      "name": "小类2.5：骨头社热血原创风",
+      "intro": "坚持原创、打戏作画出众；高燃动作作画被誉为“业界良心”；擅长机甲、奇幻、热血题材。",
+      "origin": "BONES（骨头社） / 日本",
+      "features": "",
+      "scenes": "原创机甲、热血冒险、奇幻战斗",
+      "works": "《钢之炼金术师》(2003/2009)、《交响诗篇》(2005)、《黑之契约者》(2007)、《无皇刃谭》(2007)",
+      "image_desc": "",
+      "prompt_cn": "骨头社热血原创风格，高燃动作作画，原创剧情，机甲与奇幻元素，流畅打斗",
+      "prompt_en": "BONES Passionate Original Style, high-energy action animation, original stories, mecha and fantasy elements, fluid combat",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类2：日本动画风格"
+      ]
+    },
+    {
+      "name": "小类2.6：MADHOUSE多元优质风",
+      "intro": "风格极其多变，从少女漫到暗黑系均有涉猎；高制作水准，产能高。",
+      "origin": "MADHOUSE / 日本",
+      "features": "",
+      "scenes": "各类题材——奇幻、科幻、悬疑、少女、运动",
+      "works": "《死亡笔记》(2006)、《穿越时空的少女》(2006)、《夏日大作战》(2009)、《Overlord》(2015)、《葬送的芙莉莲》(2023)",
+      "image_desc": "",
+      "prompt_cn": "MADHOUSE多元优质风格，风格多变高制作水准，精致画面，题材广泛",
+      "prompt_en": "MADHOUSE Diverse Quality Style, versatile styles with high production quality, refined visuals, wide range of genres",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类2：日本动画风格"
+      ]
+    },
+    {
+      "name": "小类2.7：日昇机甲王国风",
+      "intro": "机甲动画的代名词；风格多元，从写实机器人到搞笑热血均有。",
+      "origin": "SUNRISE（日昇动画） / 日本",
+      "features": "",
+      "scenes": "机甲战斗、科幻战争、偶像音乐",
+      "works": "《机动战士高达》系列、《星际牛仔》(1998)、《叛逆的鲁鲁修》(2006)、《银魂》(2006)、《LoveLive!》系列",
+      "image_desc": "",
+      "prompt_cn": "日昇机甲王国风格，机甲战斗动画，宏大科幻世界观，多元题材",
+      "prompt_en": "SUNRISE Mecha Kingdom Style, mecha battle animation, grand sci-fi worldbuilding, diverse genres",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类2：日本动画风格"
+      ]
+    },
+    {
+      "name": "小类2.8：Production I.G写实运动/科幻风",
+      "intro": "擅长运动题材（流畅运镜、真实动作）与科幻题材（结合2D与3D技术）。",
+      "origin": "Production I.G / 日本",
+      "features": "",
+      "scenes": "运动竞技、科幻悬疑、写实动作",
+      "works": "《攻壳机动队》(1995)、《排球少年！！》(2014)、《心理测量者》(2012)",
+      "image_desc": "",
+      "prompt_cn": "Production I.G写实运动科幻风格，流畅运镜，真实动作，科幻与运动结合，精致作画",
+      "prompt_en": "Production I.G Realistic Sports/Sci-Fi Style, smooth camera work, realistic action, sci-fi and sports fusion, refined animation",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类2：日本动画风格"
+      ]
+    },
+    {
+      "name": "小类2.9：扳机社超燃夸张风",
+      "intro": "美漫风与日漫风相结合；浓郁色彩风格；充满动态美感和画面感染力；机器人、钻头、美少女、燃。",
+      "origin": "TRIGGER（扳机社） / 日本",
+      "features": "",
+      "scenes": "热血战斗、科幻机甲、原创幻想",
+      "works": "《斩服少女》(2013)、《小魔女学园》(2017)、《SSSS.GRIDMAN》(2018)、《赛博朋克：边缘行者》(2022)、《迷宫饭》(2024)",
+      "image_desc": "",
+      "prompt_cn": "扳机社超燃夸张风格，美漫日漫融合，浓郁色彩，夸张动态，热血燃系",
+      "prompt_en": "TRIGGER Hyper-Exaggerated Style, fusion of American and Japanese comics, rich colors, exaggerated dynamics, hot-blooded燃系",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类2：日本动画风格"
+      ]
+    },
+    {
+      "name": "小类2.10：ufotable大片特效风",
+      "intro": "极具风格化的“大片感”；精细粒子特效、宏大场景、魄力战斗；融合3D技术的立体运镜。",
+      "origin": "ufotable（飞碟社） / 日本",
+      "features": "",
+      "scenes": "奇幻战斗、史诗冒险、神话传说",
+      "works": "《空之境界》(2007-2013)、《Fate/Zero》(2011)、《鬼灭之刃》(2019)、《Fate/stay night [UBW]》(2014)",
+      "image_desc": "",
+      "prompt_cn": "ufotable大片特效风格，电影级大片感，精细粒子特效，宏大战斗场面，3D融合运镜",
+      "prompt_en": "ufotable Blockbuster VFX Style, cinematic blockbuster feel,精细 particle effects, grand battle scenes, 3D-integrated camera work",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类2：日本动画风格"
+      ]
+    },
+    {
+      "name": "小类2.11：SHAFT新房风",
+      "intro": "强烈的几何构图、光影对比；“SHAFT角度”（新房45度）；冷冽诗意的视觉语言。",
+      "origin": "SHAFT + 新房昭之 / 日本",
+      "features": "",
+      "scenes": "悬疑奇幻、青春物语、实验性叙事",
+      "works": "《化物语》(2009)、《魔法少女小圆》(2011)、《绝望先生》(2007)",
+      "image_desc": "",
+      "prompt_cn": "SHAFT新房风格，几何构图与光影对比，45度侧头角度，冷冽诗意视觉",
+      "prompt_en": "SHAFT Shinbo Style, geometric composition with light-shadow contrast, 45-degree head tilt, cold poetic visuals",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类2：日本动画风格"
+      ]
+    },
+    {
+      "name": "小类2.12：GAINAX/khara颠覆实验风",
+      "intro": "颠覆传统的动画类型和实验动画；大量戏仿或致敬；原创故事。",
+      "origin": "GAINAX、khara / 日本",
+      "features": "",
+      "scenes": "科幻机甲、心理惊悚、实验动画",
+      "works": "《王立宇宙军》(1987)、《新世纪福音战士》(1995)、《飞跃巅峰》(1988)、《福音战士新剧场版》系列",
+      "image_desc": "",
+      "prompt_cn": "GAINAX khara颠覆实验风格，颠覆传统动画类型，大量戏仿致敬，原创实验性叙事",
+      "prompt_en": "GAINAX khara Subversive Experimental Style, subversive animation genres,大量 parodies and homages, original experimental narratives",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类2：日本动画风格"
+      ]
+    },
+    {
+      "name": "小类2.13：P.A.Works青春写实风",
+      "intro": "以原创动画为特色；生活气息浓重、画面精美、作画精细贴近生活。",
+      "origin": "P.A.Works / 日本",
+      "features": "",
+      "scenes": "青春物语、职场生活、成长故事",
+      "works": "《真实之泪》(2008)、《Angel Beats!》(2010)、《花开伊吕波》(2011)、《白箱》(2014)",
+      "image_desc": "",
+      "prompt_cn": "P.A.Works青春写实风格，生活气息浓重，画面精美贴近生活，青春成长题材",
+      "prompt_en": "P.A.Works Youth Realistic Style, rich in daily life atmosphere, exquisite and life-like visuals, youth and growth themes",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类2：日本动画风格"
+      ]
+    },
+    {
+      "name": "小类2.14：动画工房萌系日常风",
+      "intro": "高质量萌系动画；轻松、搞笑的四格漫画改编为主；画风偏萌系。",
+      "origin": "动画工房 / 日本",
+      "features": "",
+      "scenes": "萌系日常、轻百合、搞笑喜剧",
+      "works": "《摇曳百合》(2011)、《干物妹小埋》(2015)、《NEW GAME!》(2016)、《天使降临到我身边》(2019)",
+      "image_desc": "",
+      "prompt_cn": "动画工房萌系日常风格，萌系画风，轻松搞笑日常，美少女题材",
+      "prompt_en": "Doga Kobo Moe Daily Style, moe art style, light-hearted搞笑 daily life, cute girls题材",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类2：日本动画风格"
+      ]
+    },
+    {
+      "name": "小类2.15：Studio 4°C实验艺术风",
+      "intro": "介于日式商业主流和艺术实验之间；视觉与听觉相互映辉；追求最高密度与质量的动画。",
+      "origin": "Studio 4°C / 日本",
+      "features": "",
+      "scenes": "实验艺术、科幻奇幻、国际视野题材",
+      "works": "《回忆三部曲》(1995)、《黑客帝国动画版》(2003)、《恶童》(2006)、《心灵游戏》(2004)",
+      "image_desc": "",
+      "prompt_cn": "Studio 4°C实验艺术风格，介于商业与实验之间，视觉听觉交融，高密度高质量动画",
+      "prompt_en": "Studio 4°C Experimental Art Style, between commercial and experimental, visual-auditory fusion, high-density high-quality animation",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类2：日本动画风格"
+      ]
+    },
+    {
+      "name": "小类2.16：WIT Studio霸权精致风",
+      "intro": "精致画面和大胆动画表现技法；用色大胆华丽；风格多变。",
+      "origin": "WIT Studio（霸权社） / 日本",
+      "features": "",
+      "scenes": "史诗奇幻、悬疑冒险、动作大片",
+      "works": "《进击的巨人》前三季(2013-2019)、《冰海战记》(2019)、《国王排名》(2021)、《间谍过家家》(2022)",
+      "image_desc": "",
+      "prompt_cn": "WIT Studio霸权精致风格，精致画面，大胆用色，华丽视觉，史诗感",
+      "prompt_en": "WIT Studio Premium精致 Style, refined visuals, bold colors, magnificent aesthetic, epic feel",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类2：日本动画风格"
+      ]
+    },
+    {
+      "name": "小类2.17：东映动画经典长篇风",
+      "intro": "日本动画产业先驱；出品大量长篇连载经典；风格从儿童向到少年向广泛覆盖。",
+      "origin": "东映动画 / 日本",
+      "features": "",
+      "scenes": "少年冒险、魔法少女、长篇连载",
+      "works": "《龙珠》系列、《美少女战士》(1992)、《数码兽》系列、《光之美少女》系列",
+      "image_desc": "",
+      "prompt_cn": "东映动画经典长篇风格，日式经典长篇动画，少年冒险，魔法少女",
+      "prompt_en": "Toei Animation Classic Long-running Style, Japanese classic long-running animation,少年 adventure, magical girls",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类2：日本动画风格"
+      ]
+    },
+    {
+      "name": "小类2.18：A-1 Pictures商业全能风",
+      "intro": "题材广泛——奇幻、推理、后宫、偶像等均有涉猎；善于制造热点。",
+      "origin": "A-1 Pictures / 日本",
+      "features": "",
+      "scenes": "各类商业动画——奇幻、运动、偶像、悬疑",
+      "works": "《刀剑神域》(2012)、《偶像大师》(2011)、《未闻花名》(2011)、《路人女主的养成方法》(2015)",
+      "image_desc": "",
+      "prompt_cn": "A-1 Pictures商业全能风格，题材广泛，商业动画标杆，精致制作",
+      "prompt_en": "A-1 Pictures Commercial All-rounder Style, wide range of genres, commercial animation benchmark, refined production",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类2：日本动画风格"
+      ]
+    },
+    {
+      "name": "小类2.19：J.C.STAFF轻改多面风",
+      "intro": "轻小说改编大户；风格跨度极大——从青春治愈到暗黑重口。",
+      "origin": "J.C.STAFF（节操社） / 日本",
+      "features": "",
+      "scenes": "轻小说改编、青春恋爱、魔幻异能",
+      "works": "《灼眼的夏娜》(2005)、《魔法禁书目录》(2008)、《龙与虎》(2008)、《樱花庄的宠物女孩》(2012)",
+      "image_desc": "",
+      "prompt_cn": "J.C.STAFF轻改多面风格，轻小说改编动画，风格跨度大，青春恋爱与魔幻异能",
+      "prompt_en": "J.C.STAFF Light Novel Versatile Style, light novel adaptations, wide style range,青春 romance and magical fantasy",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类2：日本动画风格"
+      ]
+    },
+    {
+      "name": "小类3.1：中国水墨风格",
+      "intro": "水墨晕染、留白写意；笔触灵动、意境悠远；画面如传统山水画。",
+      "origin": "上海美术电影制片厂 / 中国",
+      "features": "",
+      "scenes": "古典诗词意境、自然哲理、传统故事",
+      "works": "《小蝌蚪找妈妈》(1960)、《牧笛》(1963)、《山水情》(1988)",
+      "image_desc": "",
+      "prompt_cn": "中国水墨动画风格，水墨晕染，留白写意，传统山水画意境",
+      "prompt_en": "Chinese Ink Wash Painting Style, ink diffusion, blank-leaving composition, traditional landscape painting mood",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类3：中国特有美术风格"
+      ]
+    },
+    {
+      "name": "小类3.2：中国剪纸/皮影风格",
+      "intro": "平面镂空、高饱和纯色；戏剧化动作；民族装饰感强。",
+      "origin": "上海美术电影制片厂 / 中国",
+      "features": "",
+      "scenes": "民间传说、神话故事、儿童寓言",
+      "works": "《渔童》(1959)、《猴子捞月》(1981)、《鹬蚌相争》(1983)、《葫芦兄弟》(1986)",
+      "image_desc": "",
+      "prompt_cn": "中国剪纸皮影动画风格，平面镂空造型，高饱和纯色，戏剧化民族风",
+      "prompt_en": "Chinese Paper-cut / Shadow Puppetry Style, flat cut-out shapes, high-saturation solid colors, dramatic ethnic folk art",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类3：中国特有美术风格"
+      ]
+    },
+    {
+      "name": "小类3.3：中国年画风格",
+      "intro": "色彩浓烈、构图饱满；人物造型夸张；具有江南年画的装饰美感。",
+      "origin": "上海美术电影制片厂 / 中国",
+      "features": "",
+      "scenes": "神话英雄、古典名著、民族史诗",
+      "works": "《大闹天宫》(1961-1964)、《哪吒闹海》(1979)",
+      "image_desc": "",
+      "prompt_cn": "中国年画动画风格，浓烈饱满色彩，夸张装饰造型，民族传统美感",
+      "prompt_en": "Chinese New Year Painting Style, rich and full colors, exaggerated decorative shapes, traditional ethnic aesthetic",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类3：中国特有美术风格"
+      ]
+    },
+    {
+      "name": "小类4.1：欧洲独立动画风",
+      "intro": "非主流动画，篇幅短小；简约、怀旧画面；注重哲理性、思想性；关注社会边缘群体。",
+      "origin": "法国、英国、波兰等国独立制作公司 / 法国、英国、波兰等",
+      "features": "",
+      "scenes": "哲理反思、社会议题、实验艺术",
+      "works": "《疯狂约会美丽都》(2003)、《艾特熊和赛娜鼠》(2012)、《西葫芦的生活》(2016)",
+      "image_desc": "",
+      "prompt_cn": "欧洲独立动画风格，简约怀旧画面，哲理深刻，艺术实验性，非主流叙事",
+      "prompt_en": "European Independent Animation Style, minimalist nostalgic visuals, profound philosophical themes, artistic experimentation",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类4：欧洲艺术动画风格"
+      ]
+    },
+    {
+      "name": "小类4.2：法国极简水彩风",
+      "intro": "线条简洁，色彩轻盈如水彩；风格清新，充满艺术感与“手工”感。",
+      "origin": "法国动画工作室 / 法国",
+      "features": "",
+      "scenes": "文艺治愈、儿童故事、诗意叙事",
+      "works": "《猫在巴黎》(2010)、《大坏狐狸的故事》(2017)",
+      "image_desc": "",
+      "prompt_cn": "法国极简水彩动画风格，线条简洁，水彩轻盈质感，清新艺术感",
+      "prompt_en": "French Minimalist Watercolor Style, simple lines, light watercolor texture, fresh artistic feel",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类4：欧洲艺术动画风格"
+      ]
+    },
+    {
+      "name": "小类5.1：赛博朋克/蒸汽波风格",
+      "intro": "霓虹紫蓝、高饱和度荧光色、故障光效；低像素噪点、复古未来感。",
+      "origin": "多元 / 全球",
+      "features": "",
+      "scenes": "科幻反乌托邦、未来都市、叛逆青春",
+      "works": "《阿基拉》(1988)、《攻壳机动队》(1995)、《普罗米亚》(2019)",
+      "image_desc": "",
+      "prompt_cn": "赛博朋克蒸汽波风格，霓虹紫蓝色调，荧光色彩，故障艺术，复古未来感",
+      "prompt_en": "Cyberpunk Vaporwave Style, neon purple-blue tones, fluorescent colors, glitch art, retro-futuristic vibe",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类5：通用艺术流派"
+      ]
+    },
+    {
+      "name": "小类5.2：蒸汽朋克风格",
+      "intro": "维多利亚复古+铜铁机械；齿轮飞艇、暖黄棕色调；工业化幻想美学。",
+      "origin": "多元 / 全球",
+      "features": "",
+      "scenes": "维多利亚奇幻、机械冒险、架空历史",
+      "works": "《天空之城》(1986)、《蒸汽男孩》(2004)、《哈尔的移动城堡》(2004)",
+      "image_desc": "",
+      "prompt_cn": "蒸汽朋克风格，维多利亚复古机械，齿轮与铜铁质感，暖黄棕色调",
+      "prompt_en": "Steampunk Style, Victorian retro machinery, gears and brass textures, warm brown-yellow tones",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类5：通用艺术流派"
+      ]
+    },
+    {
+      "name": "小类5.3：浮世绘风格",
+      "intro": "日式木版画质感；粗线条、平涂色彩；江户时代韵味、装饰性强。",
+      "origin": "多元（如ufotable等日本工作室） / 日本",
+      "features": "",
+      "scenes": "日本古风、武士故事、神话传说",
+      "works": "《鬼灭之刃 无限列车篇》(2020)、《怪化猫》(2007)",
+      "image_desc": "",
+      "prompt_cn": "浮世绘风格，日式木版画质感，粗线条平涂色彩，江户时代古风",
+      "prompt_en": "Ukiyo-e Style, Japanese woodblock print texture, bold lines with flat colors, Edo period aesthetic",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第二大类：按视觉美学风格分类",
+        "中类5：通用艺术流派"
+      ]
+    },
+    {
+      "name": "小类1.1：皮克斯（Pixar）——完整展开",
+      "intro": "温暖、圆润、质感真实；角色设计服务于个性与情感；光线与材质模拟物理真实，画面充满生活温度。",
+      "origin": "皮克斯动画工作室 / 美国",
+      "features": "",
+      "scenes": "温情成长、家庭关系、内心冒险、友情故事",
+      "works": "《玩具总动员》(1995)、《虫虫危机》(1998)、《玩具总动员2》(1999)、《怪兽电力公司》(2001)、《海底总动员》(2003)、《超人特攻队》(2004)、《赛车总动员》(2006)、《料理鼠王》(2007)、《机器人总动员》(2008)、《飞屋环游记》(2009)、《玩具总动员3》(2010)、《赛车总动员2》(2011)、《勇敢传说》(2012)、《怪兽大学》(2013)、《头脑特工队》(2015)、《恐龙当家》(2015)、《海底总动员2》(2016)、《赛车总动员3》(2017)、《寻梦环游记》(2017)、《超人总动员2》(2018)、《玩具总动员4》(2019)、《1/2的魔法》(2020)、《心灵奇旅》(2020)、《夏日友晴天》(2021)、《青春变形记》(2022)、《光年正传》(2022)、《疯狂元素城》(2023)、《头脑特工队2》(2024)",
+      "image_desc": "",
+      "prompt_cn": "皮克斯真实温情风格，温暖圆润角色，真实质感光影，情感细腻画面",
+      "prompt_en": "Pixar Warm Realistic Style, warm and rounded characters, realistic texture and lighting, emotionally rich visuals",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类1：美国动画"
+      ]
+    },
+    {
+      "name": "小类1.2：迪士尼（Disney）——完整展开",
+      "intro": "梦幻、华丽、理想化角色；高饱和色彩；场景宏大精致，有“舞台剧”般的古典美感。",
+      "origin": "华特迪士尼动画工作室 / 美国",
+      "features": "",
+      "scenes": "童话冒险、公主故事、经典英雄旅程、浪漫奇幻",
+      "works": "",
+      "image_desc": "",
+      "prompt_cn": "迪士尼梦幻古典风格，华丽童话氛围，理想化角色，高饱和色彩，舞台剧式精致场景",
+      "prompt_en": "Disney Dreamy Classic Style, magnificent fairy tale atmosphere, idealized characters, high-saturation colors, stage-like exquisite scenes",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类1：美国动画"
+      ]
+    },
+    {
+      "name": "小类1.3：梦工厂（DreamWorks）——完整展开",
+      "intro": "夸张、快节奏、漫画感；角色常不完美甚至丑陋；颠覆传统童话，视觉上大胆风格化。",
+      "origin": "梦工厂动画 / 美国",
+      "features": "",
+      "scenes": "反传统喜剧、恶搞童话、英雄成长、合家欢冒险",
+      "works": "《蚁哥正传》(1998)、《埃及王子》(1998)、《勇闯黄金城》(2000)、《怪物史瑞克》(2001)、《史瑞克2》(2004)、《鲨鱼黑帮》(2004)、《马达加斯加》(2005)、《篱笆墙外》(2006)、《史瑞克三世》(2007)、《蜜蜂总动员》(2007)、《功夫熊猫》(2008)、《马达加斯加2》(2008)、《大战外星人》(2009)、《驯龙高手》(2010)、《史瑞克快乐4神仙》(2010)、《超级大坏蛋》(2010)、《功夫熊猫2》(2011)、《穿靴子的猫》(2011)、《疯狂原始人》(2013)、《驯龙高手2》(2014)、《宝贝老板》(2017)、《驯龙高手3》(2019)、《雪人奇缘》(2019)、《疯狂原始人2》(2020)、《坏蛋联盟》(2022)、《穿靴子的猫2》(2022)、《变身吉妹》(2023)、《荒野机器人》(2024)",
+      "image_desc": "",
+      "prompt_cn": "梦工厂颠覆卡通风格，夸张漫画感角色，大胆颠覆视觉，快节奏动作",
+      "prompt_en": "DreamWorks Subversive Cartoon Style, exaggerated comic characters, bold subversive visuals, fast-paced action",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类1：美国动画"
+      ]
+    },
+    {
+      "name": "小类1.4：照明娱乐（Illumination）——完整展开",
+      "intro": "极简、低多边形、Q弹萌系；色彩明亮干净；角色造型简洁圆润，适合儿童向喜剧。",
+      "origin": "照明娱乐 / 美国",
+      "features": "",
+      "scenes": "儿童喜剧、萌宠故事、轻松合家欢",
+      "works": "《神偷奶爸》(2010)、《老雷斯的故事》(2012)、《神偷奶爸2》(2013)、《小黄人大眼萌》(2015)、《爱宠大机密》(2016)、《欢乐好声音》(2016)、《神偷奶爸3》(2017)、《爱宠大机密2》(2019)、《小黄人大眼萌：神偷奶爸前传》(2022)、《超级马力欧兄弟大电影》(2023)",
+      "image_desc": "",
+      "prompt_cn": "照明娱乐萌系风格，极简Q弹萌系角色，明亮干净色彩",
+      "prompt_en": "Illumination Cute Style, minimalist and bouncy cute characters, bright and clean colors",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类1：美国动画"
+      ]
+    },
+    {
+      "name": "小类1.5：华纳兄弟动画（Warner Bros. Animation）——完整展开",
+      "intro": "风格化2D动画与CG动画的结合；在不同世界中变换风格，追求“手工制作的美学”。",
+      "origin": "",
+      "features": "",
+      "scenes": "",
+      "works": "《雪怪大冒险》(2018)、《逗鸟外传：萌宝满天飞》(2016)、《史酷比狗》(2020)",
+      "image_desc": "",
+      "prompt_cn": "华纳2.5D混合动画风格，2D与CG结合，风格化手绘质感，奇幻冒险氛围",
+      "prompt_en": "Warner 2.5D Hybrid Style, 2D and CG combination, stylized hand-drawn texture, fantasy adventure atmosphere",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类1：美国动画"
+      ]
+    },
+    {
+      "name": "小类1.6：索尼动画（Sony Pictures Animation）——完整展开",
+      "intro": "高度风格化与可辨识的真实感结合；混合动漫线条、演唱会灯光、编辑摄影等多种灵感；每部电影独立探索视觉边界。",
+      "origin": "",
+      "features": "",
+      "scenes": "",
+      "works": "《智能大反攻》(2021)、《许愿神龙》(2021)",
+      "image_desc": "",
+      "prompt_cn": "索尼风格化CG动画，高度风格化与真实感结合，创新视觉语言，独特艺术探索",
+      "prompt_en": "Sony Stylized CG Animation, high stylization combined with realism, innovative visual language, unique artistic exploration",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类1：美国动画"
+      ]
+    },
+    {
+      "name": "小类1.7：蓝天工作室（Blue Sky Studios）——完整展开",
+      "intro": "高光泽、干净明亮、色彩鲜艳；角色毛发与材质质感精致，视觉通透。",
+      "origin": "",
+      "features": "",
+      "scenes": "",
+      "works": "《冰川时代》(2002)、《机器人历险记》(2005)、《冰川时代2》(2006)、《霍顿与无名氏》(2008)、《冰川时代3》(2009)、《里约大冒险》(2011)、《冰川时代4》(2012)、《森林战士》(2013)、《里约大冒险2》(2014)、《史努比：花生大电影》(2015)、《冰川时代5》(2016)、《公牛历险记》(2017)、《变身特工》(2019)",
+      "image_desc": "",
+      "prompt_cn": "蓝天工作室风格，高光泽鲜艳色彩，精致材质，明亮通透的画面",
+      "prompt_en": "Blue Sky Studios Style, high-gloss and vibrant colors, exquisite textures, bright and transparent visuals",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类1：美国动画"
+      ]
+    },
+    {
+      "name": "小类1.8：Netflix动画（Netflix Animation）——完整展开",
+      "intro": "写实CG风格应用于奇幻世界；融合多种技法（剪纸、定格、2D手绘、3D、混合）；3D技术配合2D构图或卡通渲染。",
+      "origin": "",
+      "features": "",
+      "scenes": "",
+      "works": "《克劳斯：圣诞节的秘密》(2019)、《海兽猎人》(2022)、《怪物少女》(2024)、《In Your Dreams》(2026)",
+      "image_desc": "",
+      "prompt_cn": "Netflix CG奇幻风格，写实CG渲染奇幻世界，混合动画技法，电影级光影",
+      "prompt_en": "Netflix CG Fantasy Style, realistic CG rendering of fantasy worlds, mixed animation techniques, cinematic lighting",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类1：美国动画"
+      ]
+    },
+    {
+      "name": "小类1.9：莱卡工作室（Laika）——完整展开",
+      "intro": "暗黑哥特式童话；玩偶定格动画；色调阴冷、画风清奇、童趣怪诞；融合CG与手工制作。",
+      "origin": "",
+      "features": "",
+      "scenes": "",
+      "works": "《僵尸新娘》(2005，参与)、《鬼妈妈》(2009)、《通灵男孩诺曼》(2012)、《盒子怪》(2014)、《久保与二弦琴》(2016)、《遗失的环节》(2019)",
+      "image_desc": "",
+      "prompt_cn": "莱卡暗黑哥特定格风格，阴冷色调，玩偶定格动画，怪诞童趣",
+      "prompt_en": "Laika Gothic Stop-Motion Style, dark and cold tones, puppet stop-motion animation, whimsical and eerie",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类1：美国动画"
+      ]
+    },
+    {
+      "name": "小类2.1：吉卜力工作室",
+      "intro": "全手绘、清新自然、通透光影；厚涂水彩感、怀旧影像质感；充满奇幻与人文气息。",
+      "origin": "",
+      "features": "",
+      "scenes": "奇幻冒险、治愈成长、环保主题",
+      "works": "《风之谷》(1984)、《天空之城》(1986)、《龙猫》(1988)、《幽灵公主》(1997)、《千与千寻》(2001)、《哈尔的移动城堡》(2004)、《崖上的波妞》(2008)、《起风了》(2013)",
+      "image_desc": "",
+      "prompt_cn": "吉卜力工作室动画风格，日式全手绘，清新治愈，水彩质感，奇幻人文",
+      "prompt_en": "Studio Ghibli Animation Style, Japanese full hand-drawn, fresh and healing, watercolor texture, fantasy and humanistic",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类2：日本动画"
+      ]
+    },
+    {
+      "name": "小类2.2：CoMix Wave Films / 新海诚",
+      "intro": "超写实背景+绚烂云彩、光晕；唯美日系青春；每一帧如诗如幻。",
+      "origin": "",
+      "features": "",
+      "scenes": "青春爱情、异地恋、时间与距离",
+      "works": "《秒速5厘米》(2007)、《你的名字。》(2016)、《天气之子》(2019)、《铃芽之旅》(2022)",
+      "image_desc": "",
+      "prompt_cn": "CoMix Wave新海诚风格，超写实唯美背景，绚烂云彩光晕，青春日系",
+      "prompt_en": "CoMix Wave Makoto Shinkai Style, hyper-realistic beautiful backgrounds, radiant clouds and halation, youthful Japanese aesthetic",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类2：日本动画"
+      ]
+    },
+    {
+      "name": "小类2.3：京都动画",
+      "intro": "画风精细、情感细腻；“京都脸”标志性画风；擅长校园、日常、情感题材。",
+      "origin": "",
+      "features": "",
+      "scenes": "校园青春、日常治愈、家庭温情",
+      "works": "《凉宫春日的忧郁》(2006)、《CLANNAD》(2007-2009)、《轻音少女》(2009)、《冰菓》(2012)、《紫罗兰永恒花园》(2018)",
+      "image_desc": "",
+      "prompt_cn": "京都动画京阿尼风格，精细画风，大眼睛角色，细腻情感，校园日常",
+      "prompt_en": "Kyoto Animation Style, refined art style, big-eyed characters, delicate emotions, school daily life",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类2：日本动画"
+      ]
+    },
+    {
+      "name": "小类2.4：MAPPA",
+      "intro": "打戏流畅、细节爆炸；大规模群战、能量爆炸；画面华丽。",
+      "origin": "",
+      "features": "",
+      "scenes": "热血战斗、奇幻冒险、运动竞技",
+      "works": "《咒术回战》(2020)、《进击的巨人 The Final Season》(2020-2023)、《链锯人》(2022)",
+      "image_desc": "",
+      "prompt_cn": "MAPPA动画风格，流畅爆炸打斗，电影级特效，华丽画面，高燃动作",
+      "prompt_en": "MAPPA Animation Style, fluid explosive action, cinematic VFX, magnificent visuals, high-energy action",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类2：日本动画"
+      ]
+    },
+    {
+      "name": "小类2.5：BONES",
+      "intro": "坚持原创、打戏作画出众；高燃动作作画。",
+      "origin": "",
+      "features": "",
+      "scenes": "原创机甲、热血冒险、奇幻战斗",
+      "works": "《钢之炼金术师》(2003/2009)、《交响诗篇》(2005)、《无皇刃谭》(2007)",
+      "image_desc": "",
+      "prompt_cn": "骨头社BONES动画风格，高燃动作作画，原创剧情，机甲奇幻",
+      "prompt_en": "BONES Animation Style, high-energy action animation, original stories, mecha and fantasy",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类2：日本动画"
+      ]
+    },
+    {
+      "name": "小类2.6：MADHOUSE",
+      "intro": "风格极其多变，高制作水准。",
+      "origin": "",
+      "features": "",
+      "scenes": "各类题材",
+      "works": "《死亡笔记》(2006)、《穿越时空的少女》(2006)、《夏日大作战》(2009)、《葬送的芙莉莲》(2023)",
+      "image_desc": "",
+      "prompt_cn": "MADHOUSE动画风格，风格多变高制作水准，精致画面",
+      "prompt_en": "MADHOUSE Animation Style, versatile styles with high production quality, refined visuals",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类2：日本动画"
+      ]
+    },
+    {
+      "name": "小类2.7：SUNRISE",
+      "intro": "机甲动画的代名词；风格多元。",
+      "origin": "",
+      "features": "",
+      "scenes": "机甲战斗、科幻战争、偶像音乐",
+      "works": "《机动战士高达》系列、《星际牛仔》(1998)、《叛逆的鲁鲁修》(2006)、《银魂》(2006)",
+      "image_desc": "",
+      "prompt_cn": "日昇SUNRISE动画风格，机甲战斗，宏大科幻，多元题材",
+      "prompt_en": "SUNRISE Animation Style, mecha battle, grand sci-fi, diverse genres",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类2：日本动画"
+      ]
+    },
+    {
+      "name": "小类2.8：Production I.G",
+      "intro": "擅长运动题材与科幻题材。",
+      "origin": "",
+      "features": "",
+      "scenes": "运动竞技、科幻悬疑",
+      "works": "《攻壳机动队》(1995)、《排球少年！！》(2014)",
+      "image_desc": "",
+      "prompt_cn": "Production I.G动画风格，流畅运镜，真实动作，科幻运动",
+      "prompt_en": "Production I.G Animation Style, smooth camera work, realistic action, sci-fi and sports",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类2：日本动画"
+      ]
+    },
+    {
+      "name": "小类2.9：TRIGGER",
+      "intro": "美漫风与日漫风结合；浓郁色彩；动态美感。",
+      "origin": "",
+      "features": "",
+      "scenes": "热血战斗、科幻机甲",
+      "works": "《斩服少女》(2013)、《SSSS.GRIDMAN》(2018)、《赛博朋克：边缘行者》(2022)",
+      "image_desc": "",
+      "prompt_cn": "扳机社TRIGGER动画风格，美漫日漫融合，浓郁色彩，热血燃系",
+      "prompt_en": "TRIGGER Animation Style, fusion of American and Japanese comics, rich colors, hot-blooded燃系",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类2：日本动画"
+      ]
+    },
+    {
+      "name": "小类2.10：ufotable",
+      "intro": "“大片感”；精细粒子特效、宏大场景。",
+      "origin": "",
+      "features": "",
+      "scenes": "奇幻战斗、史诗冒险",
+      "works": "《空之境界》(2007-2013)、《Fate/Zero》(2011)、《鬼灭之刃》(2019)",
+      "image_desc": "",
+      "prompt_cn": "ufotable飞碟社风格，电影级大片感，精细特效，宏大战斗",
+      "prompt_en": "ufotable Animation Style, cinematic blockbuster feel,精细 effects, grand battles",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类2：日本动画"
+      ]
+    },
+    {
+      "name": "小类2.11：SHAFT",
+      "intro": "几何构图、光影对比；“SHAFT角度”。",
+      "origin": "",
+      "features": "",
+      "scenes": "悬疑奇幻、青春物语",
+      "works": "《化物语》(2009)、《魔法少女小圆》(2011)",
+      "image_desc": "",
+      "prompt_cn": "SHAFT动画风格，几何构图光影对比，45度侧头，冷冽诗意",
+      "prompt_en": "SHAFT Animation Style, geometric composition with light-shadow contrast, 45-degree head tilt, cold poetic",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类2：日本动画"
+      ]
+    },
+    {
+      "name": "小类2.12：GAINAX / khara",
+      "intro": "颠覆传统、实验动画；大量戏仿致敬。",
+      "origin": "",
+      "features": "",
+      "scenes": "科幻机甲、心理惊悚",
+      "works": "《新世纪福音战士》(1995)、《福音战士新剧场版》系列",
+      "image_desc": "",
+      "prompt_cn": "GAINAX khara动画风格，颠覆传统，实验性，科幻心理",
+      "prompt_en": "GAINAX khara Animation Style, subversive, experimental, sci-fi psychological",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类2：日本动画"
+      ]
+    },
+    {
+      "name": "小类2.13：P.A.Works",
+      "intro": "原创动画；生活气息浓重、画面精美。",
+      "origin": "",
+      "features": "",
+      "scenes": "青春物语、职场生活",
+      "works": "《Angel Beats!》(2010)、《花开伊吕波》(2011)、《白箱》(2014)",
+      "image_desc": "",
+      "prompt_cn": "P.A.Works动画风格，生活气息浓重，精美画面，青春成长",
+      "prompt_en": "P.A.Works Animation Style, rich daily life atmosphere, exquisite visuals, youth growth",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类2：日本动画"
+      ]
+    },
+    {
+      "name": "小类2.14：动画工房",
+      "intro": "高质量萌系动画；轻松搞笑。",
+      "origin": "",
+      "features": "",
+      "scenes": "萌系日常、轻百合",
+      "works": "《摇曳百合》(2011)、《干物妹小埋》(2015)、《NEW GAME!》(2016)",
+      "image_desc": "",
+      "prompt_cn": "动画工房风格，萌系画风，轻松日常，美少女题材",
+      "prompt_en": "Doga Kobo Animation Style, moe art style, light-hearted daily life, cute girls",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类2：日本动画"
+      ]
+    },
+    {
+      "name": "小类2.15：Studio 4°C",
+      "intro": "介于商业与实验之间；视觉听觉交融。",
+      "origin": "",
+      "features": "",
+      "scenes": "实验艺术、科幻奇幻",
+      "works": "《回忆三部曲》(1995)、《恶童》(2006)",
+      "image_desc": "",
+      "prompt_cn": "Studio 4°C动画风格，商业与实验结合，视觉听觉交融",
+      "prompt_en": "Studio 4°C Animation Style, commercial-experimental fusion, visual-auditory integration",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类2：日本动画"
+      ]
+    },
+    {
+      "name": "小类2.16：WIT Studio",
+      "intro": "精致画面、大胆表现技法。",
+      "origin": "",
+      "features": "",
+      "scenes": "史诗奇幻、悬疑冒险",
+      "works": "《进击的巨人》前三季(2013-2019)、《国王排名》(2021)、《间谍过家家》(2022)",
+      "image_desc": "",
+      "prompt_cn": "WIT Studio霸权社风格，精致画面，大胆用色，史诗感",
+      "prompt_en": "WIT Studio Animation Style, refined visuals, bold colors, epic feel",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类2：日本动画"
+      ]
+    },
+    {
+      "name": "小类2.17：东映动画",
+      "intro": "日本动画产业先驱；长篇连载经典。",
+      "origin": "",
+      "features": "",
+      "scenes": "少年冒险、魔法少女",
+      "works": "《龙珠》系列、《美少女战士》(1992)、《光之美少女》系列",
+      "image_desc": "",
+      "prompt_cn": "东映动画风格，日式经典长篇，少年冒险，魔法少女",
+      "prompt_en": "Toei Animation Style, Japanese classic long-running,少年 adventure, magical girls",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类2：日本动画"
+      ]
+    },
+    {
+      "name": "小类2.18：A-1 Pictures",
+      "intro": "题材广泛，商业动画标杆。",
+      "origin": "",
+      "features": "",
+      "scenes": "各类商业动画",
+      "works": "《刀剑神域》(2012)、《偶像大师》(2011)",
+      "image_desc": "",
+      "prompt_cn": "A-1 Pictures动画风格，题材广泛，商业标杆，精致制作",
+      "prompt_en": "A-1 Pictures Animation Style, wide range of genres, commercial benchmark, refined production",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类2：日本动画"
+      ]
+    },
+    {
+      "name": "小类2.19：J.C.STAFF",
+      "intro": "轻小说改编大户；风格跨度极大。",
+      "origin": "",
+      "features": "",
+      "scenes": "轻小说改编、青春恋爱",
+      "works": "《灼眼的夏娜》(2005)、《魔法禁书目录》(2008)、《龙与虎》(2008)",
+      "image_desc": "",
+      "prompt_cn": "J.C.STAFF节操社风格，轻小说改编，风格跨度大，青春恋爱",
+      "prompt_en": "J.C.STAFF Animation Style, light novel adaptations, wide style range,青春 romance",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类2：日本动画"
+      ]
+    },
+    {
+      "name": "小类3.1：Studio DaDaShow暗黑写实风",
+      "intro": "以带有成人元素的19禁短片、电影为主；黑暗、荒诞或悲剧的现实题材。",
+      "origin": "Studio DaDaShow / 韩国",
+      "features": "",
+      "scenes": "成人向黑暗题材、社会批判、独立电影",
+      "works": "《猪王》(2011)、《伪善者》(2013)、《首尔站》(2016)",
+      "image_desc": "",
+      "prompt_cn": "Studio DaDaShow暗黑写实风格，黑暗荒诞题材，成人向动画，社会批判",
+      "prompt_en": "Studio DaDaShow Dark Realistic Style, dark and absurd themes, adult-oriented animation, social criticism",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类3：韩国动画"
+      ]
+    },
+    {
+      "name": "小类3.2：韩国手绘质感风",
+      "intro": "类似水彩或油画的手绘质感；非对称、略微扭曲的模型；粗糙的笔触、轮廓线条与阴影。",
+      "origin": "韩国独立动画工作室 / 韩国",
+      "features": "",
+      "scenes": "驱魔奇幻、神秘氛围、艺术探索",
+      "works": "《驱魔编年史：起源之战》(2025)",
+      "image_desc": "",
+      "prompt_cn": "韩国手绘质感动画风格，水彩油画手绘质感，粗糙笔触轮廓，神秘氛围",
+      "prompt_en": "Korean Hand-drawn Texture Style, watercolor and oil painting hand-drawn texture, rough brushstrokes and outlines, mysterious atmosphere",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类3：韩国动画"
+      ]
+    },
+    {
+      "name": "小类3.3：韩国可爱玩偶质感风",
+      "intro": "突出动物的可爱感；毛发上赋予像柔软玩偶般的触感；用绘画技法营造温暖氛围。",
+      "origin": "韩国动画工作室 / 韩国",
+      "features": "",
+      "scenes": "儿童动画、动物故事、治愈系",
+      "works": "《Hoppers》(2026)、《Underdog》(2011)",
+      "image_desc": "",
+      "prompt_cn": "韩国可爱玩偶质感动画风格，柔软玩偶毛发质感，温暖绘画技法，治愈氛围",
+      "prompt_en": "Korean Cute Plush Texture Style, soft plush fur texture, warm painting techniques, healing atmosphere",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类3：韩国动画"
+      ]
+    },
+    {
+      "name": "小类3.4：韩国本土风景叙事风",
+      "intro": "根植于韩国本土 landscapes 和故事的可识别风格；2D手绘 sensibility。",
+      "origin": "韩国独立动画人（如 Ahn Jae-hun 等） / 韩国",
+      "features": "",
+      "scenes": "韩国本土故事、民族文化、情感叙事",
+      "works": "韩国独立动画短片及长片",
+      "image_desc": "",
+      "prompt_cn": "韩国本土风景叙事动画风格，韩国 landscapes 背景，手绘 sensibility，民族文化叙事",
+      "prompt_en": "Korean Native Landscape Narrative Style, Korean landscapes backdrop, hand-drawn sensibility, ethnic cultural narrative",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类3：韩国动画"
+      ]
+    },
+    {
+      "name": "小类3.5：Studio Animal多元风格",
+      "intro": "有独立产能，兼做外包公司。",
+      "origin": "Studio Animal / 韩国",
+      "features": "",
+      "scenes": "各类动画制作、外包合作",
+      "works": "参与多部国际动画制作",
+      "image_desc": "",
+      "prompt_cn": "Studio Animal动画风格，独立产能兼外包，多元制作",
+      "prompt_en": "Studio Animal Animation Style, independent production with outsourcing, versatile制作",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类3：韩国动画"
+      ]
+    },
+    {
+      "name": "小类4.1：中国水墨风格",
+      "intro": "水墨晕染、留白写意；笔触灵动、意境悠远；画面如传统山水画。",
+      "origin": "上海美术电影制片厂 / 中国",
+      "features": "",
+      "scenes": "古典诗词意境、自然哲理、传统故事",
+      "works": "《小蝌蚪找妈妈》(1960)、《牧笛》(1963)、《山水情》(1988)",
+      "image_desc": "",
+      "prompt_cn": "中国水墨动画风格，水墨晕染，留白写意，传统山水画意境",
+      "prompt_en": "Chinese Ink Wash Painting Style, ink diffusion, blank-leaving composition, traditional landscape painting mood",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类4：中国动画"
+      ]
+    },
+    {
+      "name": "小类4.2：中国剪纸/皮影风格",
+      "intro": "平面镂空、高饱和纯色；戏剧化动作；民族装饰感强。",
+      "origin": "上海美术电影制片厂 / 中国",
+      "features": "",
+      "scenes": "民间传说、神话故事、儿童寓言",
+      "works": "《渔童》(1959)、《猴子捞月》(1981)、《鹬蚌相争》(1983)、《葫芦兄弟》(1986)",
+      "image_desc": "",
+      "prompt_cn": "中国剪纸皮影动画风格，平面镂空造型，高饱和纯色，戏剧化民族风",
+      "prompt_en": "Chinese Paper-cut / Shadow Puppetry Style, flat cut-out shapes, high-saturation solid colors, dramatic ethnic folk art",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类4：中国动画"
+      ]
+    },
+    {
+      "name": "小类4.3：中国年画风格",
+      "intro": "色彩浓烈、构图饱满；人物造型夸张；具有江南年画的装饰美感。",
+      "origin": "上海美术电影制片厂 / 中国",
+      "features": "",
+      "scenes": "神话英雄、古典名著、民族史诗",
+      "works": "《大闹天宫》(1961-1964)、《哪吒闹海》(1979)",
+      "image_desc": "",
+      "prompt_cn": "中国年画动画风格，浓烈饱满色彩，夸张装饰造型，民族传统美感",
+      "prompt_en": "Chinese New Year Painting Style, rich and full colors, exaggerated decorative shapes, traditional ethnic aesthetic",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类4：中国动画"
+      ]
+    },
+    {
+      "name": "小类5.1：欧洲独立动画风",
+      "intro": "非主流动画，篇幅短小；简约、怀旧画面；注重哲理性、思想性；关注社会边缘群体。",
+      "origin": "法国、英国、波兰等国独立制作公司 / 法国、英国、波兰等",
+      "features": "",
+      "scenes": "哲理反思、社会议题、实验艺术",
+      "works": "《疯狂约会美丽都》(2003)、《艾特熊和赛娜鼠》(2012)、《西葫芦的生活》(2016)",
+      "image_desc": "",
+      "prompt_cn": "欧洲独立动画风格，简约怀旧画面，哲理深刻，艺术实验性，非主流叙事",
+      "prompt_en": "European Independent Animation Style, minimalist nostalgic visuals, profound philosophical themes, artistic experimentation",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类5：欧洲动画"
+      ]
+    },
+    {
+      "name": "小类5.2：法国极简水彩风",
+      "intro": "线条简洁，色彩轻盈如水彩；风格清新，充满艺术感与“手工”感。",
+      "origin": "法国动画工作室 / 法国",
+      "features": "",
+      "scenes": "文艺治愈、儿童故事、诗意叙事",
+      "works": "《猫在巴黎》(2010)、《大坏狐狸的故事》(2017)",
+      "image_desc": "",
+      "prompt_cn": "法国极简水彩动画风格，线条简洁，水彩轻盈质感，清新艺术感",
+      "prompt_en": "French Minimalist Watercolor Style, simple lines, light watercolor texture, fresh artistic feel",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第三大类：按地域国别分类",
+        "中类5：欧洲动画"
+      ]
+    },
+    {
+      "name": "小类1.1：全年龄段家庭动画",
+      "intro": "",
+      "origin": "",
+      "features": "",
+      "scenes": "",
+      "works": "《玩具总动员》系列、《冰雪奇缘》系列、《疯狂动物城》等",
+      "image_desc": "",
+      "prompt_cn": "全年龄段家庭动画风格，合家欢题材，温馨有趣，老少皆宜",
+      "prompt_en": "Family Animation Style, family-friendly themes, warm and fun, suitable for all ages",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第四大类：按其他分类标准",
+        "中类1：按受众定位分类"
+      ]
+    },
+    {
+      "name": "小类1.2：成人向动画",
+      "intro": "黑色幽默、荒诞、恶搞流行文化；泥塑/黏土定格与快速剪辑结合；风格扭曲另类。",
+      "origin": "Adult Swim（卡通频道成人节目区块） / 美国",
+      "features": "",
+      "scenes": "成人喜剧、黑色幽默、社会讽刺、流行文化解构",
+      "works": "《机器肉鸡》(2005)、《瑞克和莫蒂》(2013)、《原始人》(2019)",
+      "image_desc": "",
+      "prompt_cn": "Adult Swim成人动画风格，黑色幽默，泥塑定格，恶搞文化符号，荒诞视觉",
+      "prompt_en": "Adult Swim Style, dark humor, claymation stop-motion, pop culture parody, absurd visuals",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第四大类：按其他分类标准",
+        "中类1：按受众定位分类"
+      ]
+    },
+    {
+      "name": "小类1.3：儿童向动画",
+      "intro": "",
+      "origin": "",
+      "features": "",
+      "scenes": "",
+      "works": "《小黄人大眼萌》、《光之美少女》系列、《小猪佩奇》等",
+      "image_desc": "",
+      "prompt_cn": "儿童向动画风格，色彩明亮，角色可爱，简单易懂，寓教于乐",
+      "prompt_en": "Children's Animation Style, bright colors, cute characters, easy to understand, educational and fun",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第四大类：按其他分类标准",
+        "中类1：按受众定位分类"
+      ]
+    },
+    {
+      "name": "小类2.1：电视动画系列",
+      "intro": "",
+      "origin": "",
+      "features": "",
+      "scenes": "",
+      "works": "《瑞克和莫蒂》、《龙珠》系列、《航海王》等",
+      "image_desc": "",
+      "prompt_cn": "电视动画系列风格，周更番剧质感，连续叙事，统一画风",
+      "prompt_en": "TV Anime Series Style, weekly episode feel, continuous narrative, consistent art style",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第四大类：按其他分类标准",
+        "中类2：按播出形式分类"
+      ]
+    },
+    {
+      "name": "小类2.2：剧场版/电影动画",
+      "intro": "",
+      "origin": "",
+      "features": "",
+      "scenes": "",
+      "works": "《千与千寻》、《玩具总动员》系列、《冰雪奇缘》等",
+      "image_desc": "",
+      "prompt_cn": "剧场版电影动画风格，大银幕质感，电影级光影，宏大场面",
+      "prompt_en": "Theatrical Feature Animation Style, big-screen feel, cinematic lighting, grand scenes",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第四大类：按其他分类标准",
+        "中类2：按播出形式分类"
+      ]
+    },
+    {
+      "name": "小类2.3：网络动画",
+      "intro": "",
+      "origin": "",
+      "features": "",
+      "scenes": "",
+      "works": "《赛博朋克：边缘行者》、《恶魔人 Crybaby》",
+      "image_desc": "",
+      "prompt_cn": "网络动画ONA风格，流媒体质感，一次性放送，高制作标准",
+      "prompt_en": "Web Animation / ONA Style, streaming platform feel, batch release, high production standards",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第四大类：按其他分类标准",
+        "中类2：按播出形式分类"
+      ]
+    },
+    {
+      "name": "小类2.4：OVA/OAD",
+      "intro": "",
+      "origin": "",
+      "features": "",
+      "scenes": "",
+      "works": "《FLCL》、《浪客剑心 追忆篇》",
+      "image_desc": "",
+      "prompt_cn": "OVA动画风格，直接发行影碟，高质量作画，独立叙事",
+      "prompt_en": "OVA Animation Style, direct-to-video release, high-quality animation, standalone narrative",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "第四大类：按其他分类标准",
+        "中类2：按播出形式分类"
+      ]
+    }
+  ],
+  "deleted_entries": [],
+  "deleted_categories": [],
+  "deleted_domains": []
+}

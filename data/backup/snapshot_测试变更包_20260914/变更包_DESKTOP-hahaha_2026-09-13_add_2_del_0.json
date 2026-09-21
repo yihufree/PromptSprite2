@@ -1,0 +1,135 @@
+{
+  "version": 5,
+  "type": "change",
+  "exported_at": "2026-09-13 23:59:29",
+  "computer_code": "DESKTOP-hahaha",
+  "day": "2026-09-13",
+  "summary": {
+    "add_entries": 2,
+    "add_categories": 1,
+    "add_domains": 0,
+    "del_entries": 0,
+    "del_categories": 0,
+    "del_domains": 0,
+    "deleted_snapshots": 0
+  },
+  "projects": [
+    {
+      "name": "日常学习记录",
+      "sort_order": 0
+    },
+    {
+      "name": "网上资源收集",
+      "sort_order": 1
+    },
+    {
+      "name": "本人创作作品",
+      "sort_order": 3
+    },
+    {
+      "name": "个人经验总结",
+      "sort_order": 4
+    }
+  ],
+  "domain_projects": {
+    "视频": "日常学习记录",
+    "海外AI绘画案例库": "网上资源收集"
+  },
+  "domains": [
+    {
+      "name": "视频",
+      "sort_order": 1
+    },
+    {
+      "name": "海外AI绘画案例库",
+      "sort_order": 8
+    }
+  ],
+  "domain_links": {
+    "海外AI绘画案例库": [
+      "Product & E-commerce"
+    ],
+    "视频": [
+      "工作"
+    ]
+  },
+  "categories": [
+    {
+      "parent": null,
+      "name": "Product & E-commerce",
+      "sort_order": 25
+    },
+    {
+      "parent": "Product & E-commerce",
+      "name": "Product Hero Shot",
+      "sort_order": 1
+    },
+    {
+      "parent": null,
+      "name": "工作",
+      "sort_order": 104
+    },
+    {
+      "parent": "工作",
+      "name": "test",
+      "sort_order": 0
+    }
+  ],
+  "entries": [
+    {
+      "name": "Surreal product metaphor ad",
+      "intro": "Product shots, packaging, detail pages, and commerce visuals.",
+      "origin": "@aziz4ai | https://x.com/aziz4ai/status/2075307262399176752",
+      "features": "branding",
+      "scenes": "",
+      "works": "",
+      "image_desc": "Surreal product metaphor ad",
+      "prompt_cn": "",
+      "prompt_en": "PRODUCT: [ADD PRODUCT NAME OR ATTACH ITS PHOTO]\n\nCreate ONE scroll-stopping premium surreal advertising visual for the product above.\n\nFirst, silently identify and analyze the product’s brand, purpose, audience, visual DNA, iconic colors, emotional promise and strongest customer benefit.\n\nTranslate that single benefit into ONE ingenious surreal visual metaphor that communicates the entire advertising idea instantly—an impossible scene that feels logically perfect, emotionally meaningful and understandable within one second.\n\nCreative benchmark: the clarity of a hand holding a key while an entire road emerges from it. Do not copy this execution; invent a completely original metaphor specifically connected to the submitted product.\n\nPRODUCT ACCURACY:\nIf a reference image is attached, preserve the real product with absolute accuracy: identical shape, proportions, colors, materials, packaging, typography, label placement, logo and every recognizable detail. Do not redesign, distort, replace or stylize it.\n\nThe product must remain intact, realistic, clearly branded and visually dominant. Build the surreal event around it, emerging from it or interacting with one of its functional features—never transform it into an unrecognizable fantasy object.\n\nBRAND VISIBILITY:\nDisplay the official brand logo clearly and naturally on the product. If the attached product already includes the logo, preserve it exactly. Do not invent, misspell, duplicate or redesign the logo.\n\nART DIRECTION:\nWorld-class premium advertising, intelligent visual wit, photorealistic commercial product photography, minimal seamless background inspired by the brand palette, sophisticated editorial composition, tactile materials, cinematic studio lighting, physically believable shadows, subtle depth, generous negative space and immaculate high-end retouching.\n\nUse only:\n• one hero product\n• one surreal visual event\n• one supporting hand or object only when essential\n\nAvoid miniature worlds, generic portals, decorative surrealism, floating particles, visual clutter, excessive props, busy environments, multiple concepts, collages, split screens and presentation layouts.\n\nCOPY:\nWrite exactly THREE powerful English words that complete the metaphor and feel native to the brand DNA. The words must express the product promise—not describe the image.\n\nTypography must occupy less than 8% of the canvas. Add no other copy, CTA, explanation or disclaimer.\n\nBefore generating, silently reject generic or reusable ideas and refine the concept until it scores at least 9/10 for:\nvisual hook, instant clarity, product relevance, brand recognition, originality and premium execution.\n\nFinal output: ONE standalone advertising image, portrait 4:5.",
+      "image_plan": "https://cdn.aiistudio.com/twitter/2075307262399176752/0.jpg",
+      "is_favorite": 0,
+      "path": [
+        "Product & E-commerce",
+        "Product Hero Shot"
+      ],
+      "custom_fields": {
+        "custom_1": "第十一",
+        "custom_2": "https://cdn.aiistudio.com/awesome-gpt2/portrait/23.jpg",
+        "custom_3": "",
+        "custom_4": "",
+        "custom_5": ""
+      }
+    },
+    {
+      "name": "test",
+      "intro": "",
+      "origin": "",
+      "features": "",
+      "scenes": "",
+      "works": "",
+      "image_desc": "",
+      "prompt_cn": "",
+      "prompt_en": "",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "工作",
+        "test"
+      ],
+      "custom_fields": {
+        "custom_1": "",
+        "custom_2": "",
+        "custom_3": "",
+        "custom_4": "",
+        "custom_5": ""
+      },
+      "tags": [
+        "中国",
+        "儿童"
+      ]
+    }
+  ],
+  "deleted_entries": [],
+  "deleted_categories": [],
+  "deleted_domains": []
+}

@@ -8,7 +8,7 @@ env/
 .pytest_cache/
 
 # ===== 运行时数据（本地数据库、自动备份、关联图片）=====
-data/
+# data/          2026-09-21 修改添加
 # 2026-08-18（第023条）：打包时由 build.py 生成的临时内嵌库（每次打包自动重建）
 app/resources/builtin_prompts.db
 

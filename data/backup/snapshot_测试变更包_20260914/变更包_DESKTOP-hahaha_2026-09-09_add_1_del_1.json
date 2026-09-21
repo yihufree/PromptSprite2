@@ -1,0 +1,98 @@
+{
+  "version": 4,
+  "type": "change",
+  "exported_at": "2026-09-09 23:46:55",
+  "computer_code": "DESKTOP-hahaha",
+  "day": "2026-09-09",
+  "summary": {
+    "add_entries": 1,
+    "add_categories": 2,
+    "add_domains": 0,
+    "del_entries": 1,
+    "del_categories": 0,
+    "del_domains": 0,
+    "deleted_snapshots": 1
+  },
+  "projects": [
+    {
+      "name": "日常学习记录",
+      "sort_order": 0
+    },
+    {
+      "name": "网上资源收集",
+      "sort_order": 1
+    },
+    {
+      "name": "本人创作作品",
+      "sort_order": 3
+    },
+    {
+      "name": "个人经验总结",
+      "sort_order": 4
+    }
+  ],
+  "domain_projects": {},
+  "domains": [],
+  "domain_links": {},
+  "categories": [
+    {
+      "parent": null,
+      "name": "1111",
+      "sort_order": 105
+    },
+    {
+      "parent": "1111",
+      "name": "2222",
+      "sort_order": 0
+    }
+  ],
+  "entries": [
+    {
+      "name": "2222-22",
+      "intro": "",
+      "origin": "",
+      "features": "",
+      "scenes": "",
+      "works": "",
+      "image_desc": "",
+      "prompt_cn": "",
+      "prompt_en": "",
+      "image_plan": "",
+      "is_favorite": 0,
+      "path": [
+        "1111",
+        "2222"
+      ]
+    }
+  ],
+  "deleted_entries": [
+    {
+      "name": "22-111",
+      "chain": [
+        "1111",
+        "2222"
+      ],
+      "content_key": "22-111\u001f\u001f\u001f\u001f\u001f\u001f\u001f\u001f\u001f",
+      "snapshot": {
+        "id": 4107,
+        "category_id": 393,
+        "name": "22-111",
+        "intro": "",
+        "origin": "",
+        "features": "",
+        "scenes": "",
+        "works": "",
+        "image_desc": "",
+        "prompt_cn": "",
+        "prompt_en": "",
+        "image_plan": "",
+        "image_path": "",
+        "is_favorite": 0,
+        "created_at": "2026-09-09 00:45:47",
+        "updated_at": "2026-09-09 00:46:25"
+      }
+    }
+  ],
+  "deleted_categories": [],
+  "deleted_domains": []
+}
