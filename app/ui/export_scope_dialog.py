@@ -19,8 +19,13 @@ from tkinter import ttk
 import customtkinter as ctk
 
 from ..parser import json_io
+from . import ui_common as _ui_common        # 2026-09-22：用于取控件缩放系数
 
 _KIND_LABEL = {"project": "项目类别", "domain": "根目录", "cat": "分类"}
+
+# 2026-09-22（用户要求）：本窗口**距屏幕顶端固定距离**（实际px）——保证位置恒定、
+#   不随主窗口移动，也不会被屏幕下边缘遮住（不足时改为压低窗口高度）。
+_SCOPE_TOP_MARGIN = 50
 
 # 加重显示（已选分支及其下属）的配色与字体
 _HL_FG = "#1f6feb"          # 蓝色（与主界面高亮同系）
@@ -121,15 +126,28 @@ class ExportScopeDialog(ctk.CTkToplevel):
         ctk.CTkButton(btn_row, text="取消", width=110, command=self._cancel
                       ).pack(side="right", padx=4)
 
-        # 居中于主窗口（超出屏幕时靠上）
+        # 2026-09-22（用户要求）：**窗口位置固定**——水平居中于屏幕、垂直**距屏幕顶端固定 50px**；
+        #   不再"居中于主窗口"（原实现会让本窗口跟随主窗口移动，主窗口靠下时本窗口底部被屏幕遮住，
+        #   用户得先把主窗口往上拉才能点到正文按钮，体验差）。
+        #   并保证整窗始终在屏幕内：若屏幕高度放不下，则**压低窗口高度**（内部结构树可滚动，
+        #   不影响使用），而不是让底部出屏。
         self.update_idletasks()
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        _w_real = self.winfo_width()
+        _h_real = self.winfo_height()
+        _x = max((sw - _w_real) // 2, 0)
+        _max_h_real = sh - _SCOPE_TOP_MARGIN - 24          # 屏幕内底部再留 24px 余量
         try:
-            x = master.winfo_x() + (master.winfo_width() - self.winfo_reqwidth()) // 2
-            y = master.winfo_y() + (master.winfo_height() - self.winfo_reqheight()) // 2
-            sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-            self.geometry(f"+{max(min(x, sw - 200), 0)}+{max(min(y, sh - 200), 0)}")
+            # 注意：CTkToplevel 本体不"应用"缩放（widget_scaling 会返回 1.0 而算错），
+            #   必须取**窗口内子控件**的缩放系数（＝全局控件缩放，与 geometry() 同口径）。
+            _scale = _ui_common.widget_scaling(self.ok_btn) or 1.0
         except Exception:                                  # noqa: BLE001
-            pass
+            _scale = 1.0
+        if _h_real > _max_h_real:
+            self.geometry("%dx%d+%d+%d" % (_w_real / _scale, _max_h_real / _scale,
+                                           _x, _SCOPE_TOP_MARGIN))
+        else:
+            self.geometry("+%d+%d" % (_x, _SCOPE_TOP_MARGIN))
         self.lift()
         try:
             self.grab_set()
