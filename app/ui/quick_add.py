@@ -177,14 +177,29 @@ class QuickAddWindow(ctk.CTkToplevel):
 
     def _build_columns(self):
         # 2026-08-29（快速新建四级化同步）：项目类别 → 根目录 → 一级 → 二级
-        self.p_frame = ctk.CTkScrollableFrame(self, width=112, label_text="项目类别（悬停）")
-        self.l0_frame = ctk.CTkScrollableFrame(self, width=112, label_text="根目录（悬停）")
-        self.l1_frame = ctk.CTkScrollableFrame(self, width=168, label_text="一级分类（悬停）")
-        self.l2_frame = ctk.CTkScrollableFrame(self, width=168, label_text="二级分类（悬停）")
-        self.p_frame.grid(row=1, column=0, sticky="nsew", padx=(8, 2), pady=4)
-        self.l0_frame.grid(row=1, column=1, sticky="nsew", padx=2, pady=4)
-        self.l1_frame.grid(row=1, column=2, sticky="nsew", padx=2, pady=4)
-        self.l2_frame.grid(row=1, column=3, sticky="nsew", padx=(2, 8), pady=4)
+        # 2026-09-22（用户要求 1）：与主界面保持一致——「✚ 新增…」按钮**固定在列顶**、
+        #   不随下方选项滚动；滚动区只承载列表内容（外层容器与滚动区同默认底色/圆角，外观不变）。
+        self.p_col = ctk.CTkFrame(self)
+        self.l0_col = ctk.CTkFrame(self)
+        self.l1_col = ctk.CTkFrame(self)
+        self.l2_col = ctk.CTkFrame(self)
+        self.p_frame = ctk.CTkScrollableFrame(self.p_col, width=112, label_text="项目类别（悬停）")
+        self.l0_frame = ctk.CTkScrollableFrame(self.l0_col, width=112, label_text="根目录（悬停）")
+        self.l1_frame = ctk.CTkScrollableFrame(self.l1_col, width=168, label_text="一级分类（悬停）")
+        self.l2_frame = ctk.CTkScrollableFrame(self.l2_col, width=168, label_text="二级分类（悬停）")
+        # 四个「✚ 新增…」按钮只创建一次并固定在各自列顶（各 _load_* 只重建列表，不再重建按钮）
+        for _col, _frame, _txt, _cmd in (
+                (self.p_col, self.p_frame, "✚ 新增项目类别", self._add_project),
+                (self.l0_col, self.l0_frame, "✚ 新增根目录", self._add_domain),
+                (self.l1_col, self.l1_frame, "✚ 新增一级分类", self._add_l1),
+                (self.l2_col, self.l2_frame, "✚ 新增二级分类", self._add_l2)):
+            ctk.CTkButton(_col, text=_txt, height=28, **_ADD_STYLE,
+                          command=_cmd).pack(side="top", fill="x", padx=6, pady=2)
+            _frame.pack(side="top", fill="both", expand=True)
+        self.p_col.grid(row=1, column=0, sticky="nsew", padx=(8, 2), pady=4)
+        self.l0_col.grid(row=1, column=1, sticky="nsew", padx=2, pady=4)
+        self.l1_col.grid(row=1, column=2, sticky="nsew", padx=2, pady=4)
+        self.l2_col.grid(row=1, column=3, sticky="nsew", padx=(2, 8), pady=4)
 
     def _build_form(self):
         # 固定底部按钮 + 滚动输入区（参考主窗口详情区：按钮始终可见）
@@ -327,8 +342,7 @@ class QuickAddWindow(ctk.CTkToplevel):
         """渲染项目类别列（含新增按钮、"未分配"虚拟项），并按当前项目加载根目录列"""
         self._clear(self.p_frame)
         self._clear_nav_btns("p")
-        ctk.CTkButton(self.p_frame, text="✚ 新增项目类别", height=28, **_ADD_STYLE,
-                      command=self._add_project).pack(fill="x", padx=6, pady=2)
+        # 2026-09-22（用户要求 1）：新增按钮已固定在列顶（见 _build_columns），此处不再重建
         if not self._project_ready:   # 首次默认：存在未分配根目录则停留"未分配"，否则选第一个项目
             self._project_ready = True
             if self.db.list_unassigned_domains():
@@ -389,8 +403,7 @@ class QuickAddWindow(ctk.CTkToplevel):
         """渲染根目录列（当前项目类别下；"未分配"视图显示无归属根目录）"""
         self._clear(self.l0_frame)
         self._clear_nav_btns("l0")
-        ctk.CTkButton(self.l0_frame, text="✚ 新增根目录", height=28, **_ADD_STYLE,
-                      command=self._add_domain).pack(fill="x", padx=6, pady=2)
+        # 2026-09-22（用户要求 1）：新增按钮已固定在列顶（见 _build_columns），此处不再重建
         domains = (self.db.list_unassigned_domains() if self._project_id is None
                    else self.db.list_domains(project_id=self._project_id))
         for d in domains:
@@ -417,8 +430,7 @@ class QuickAddWindow(ctk.CTkToplevel):
         self._clear(self.l2_frame)
         self._clear_nav_btns("l1")
         self._clear_nav_btns("l2")
-        ctk.CTkButton(self.l1_frame, text="✚ 新增一级分类", height=28, **_ADD_STYLE,
-                      command=self._add_l1).pack(fill="x", padx=6, pady=2)
+        # 2026-09-22（用户要求 1）：两个新增按钮已固定在各自列顶（见 _build_columns），此处不再重建
         cats = self.db.list_categories(domain_id=domain_id, parent_id=None)
         if not cats:
             name = self.db.get_domain(domain_id)["name"]
@@ -453,8 +465,7 @@ class QuickAddWindow(ctk.CTkToplevel):
         children = self.db.list_categories(parent_id=cat_id)
         self._clear(self.l2_frame)
         self._clear_nav_btns("l2")
-        ctk.CTkButton(self.l2_frame, text="✚ 新增二级分类", height=28, **_ADD_STYLE,
-                      command=self._add_l2).pack(fill="x", padx=6, pady=2)
+        # 2026-09-22（用户要求 1）：新增按钮已固定在列顶（见 _build_columns），此处不再重建
         if not children:  # 无子分类 → 悬停即锁定
             self._lock(cat_id)
             self._apply_chain_highlight()

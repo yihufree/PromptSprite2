@@ -45,6 +45,7 @@ from .column_visibility_dialog import ColumnVisibilityDialog  # 2026-09-10：目
 from .copy_move_dialog import CopyMoveDialog  # 2026-08-21（第004条）：各级目录"复制到/移动到"
 from .field_defs_diff_dialog import confirm_field_defs_file  # 2026-09-13：导入前字段定义差异确认
 from .field_manager_dialog import FieldManagerDialog  # 2026-09-13（1-A-4）：字段管理（内置区块改名）
+from .export_scope_dialog import ExportScopeDialog  # 2026-09-22（用户要求 1）：导出前范围确认（结构树）
 from .import_wizard_dialog import ImportWizardDialog  # 2026-09-13（第 4 期 4-c）：网上资源结构化向导
 from .move_selector import MoveSelector
 from .progress_dialog import ProgressDialog
@@ -82,7 +83,22 @@ _FIELDS = [
 # 2026-09-10（用户要求 3）：左侧四个分类列的列宽（逻辑px，顺序＝主界面从左到右）
 #   项目类别 / 根目录 / 一级分类 / 二级分类；既用于 _build_body 建列，也用于"目录隐藏"后
 #   动态计算窗口最小宽度（隐藏 n 列即按前 n 列列宽之和减小最小宽度）。
-_NAV_COL_WIDTHS = (112, 112, 168, 168)
+# 2026-09-22（用户明确批准）：**「项目类别 / 根目录」两列由 112 → 140**（一/二级保持 168）——
+#   原因：112 源码px 在当前 15pt 字号下仅可见约 7 个汉字，较长的项目类别 / 根目录名会被截断；
+#   140 源码px 可见约 8.8 个汉字，可完整显示 8 字以内名称。
+#   ⚠ 该常量**未经用户批准不得修改**（用户已明确要求）；本次已获批准。
+#   连带的窗口最小宽度标定同步上调（见下方 _NAV_MIN_WIDTH_BY_HIDDEN）。
+#   历史：2026-09-13 时为 (112, 112, 168, 168)（四列合计 560；现为 140+140+168+168 = 616）。
+_NAV_COL_WIDTHS = (140, 140, 168, 168)
+# 2026-09-22（用户要求 2）：条目区宽度——默认总宽即原先的固定值 224。
+#   运行期可拖动条目区右缘的"分隔条"调整宽度（右侧详情区自动让位）；
+#   宽度**只存在内存、不写任何设置** ⇒ 无论上次调到多少，下次启动都按默认值 224 显示。
+#   ⚠ 分隔条宽度算在 224 之内（滚动列表内容宽 = 224 − 6），以保证**条目区列总宽与改动前
+#     完全一致**，从而不改动"窗口最小宽度 / 详情区最小宽"的既有标定。
+_ENTRY_COL_W = 224       # 条目区**含右缘分隔条**的总宽默认值（＝改动前的固定值）
+_ENTRY_GRIP_W = 6        # 右缘"可拖拽分隔条"宽度
+_ENTRY_W_MIN = 150       # 可拖到的最小总宽（源码像素，避免拖成不可用）
+_ENTRY_W_MAX = 520       # 可拖到的最大总宽（源码像素，避免把详情区挤没）
 # 2026-09-10（用户要求）：四列全显示时的窗口最小宽度由 1360 提高到 1420——
 # 详情区第 2 行（⑧/⑨ 复制全部/中文/英文 + 保存/重置）在 1360 宽时缺约 60px，
 # Tk 的 pack 会把缺口全部压到最后排入的"重置"上导致其文字被裁切；加宽后该行完整显示。
@@ -129,7 +145,9 @@ _NAV_COL_WIDTHS = (112, 112, 168, 168)
 #   ⇒ 第一行内容需求 552px ⇒ 详情区最小宽 **571 → 578** ⇒ 源码 = (578 + 1088 + 3) / 1.2 = **1391**。
 # 2026-09-14 21:05（实测复核）：578 时仍差 1~2px（实测 6 按钮 94/96、重置 70/72 被挤）；
 #   为"最窄状态下按钮也严格同宽/不裁字"，目标再留余量到 **584** ⇒ 源码 = (584 + 1088) / 1.19797 ≈ **1396**。
-_BASE_MIN_WIDTH = 1396
+# 2026-09-22（用户批准两列加宽 112→140）：`_BASE_MIN_WIDTH` **1396 → 1463**
+#   （＝标定表首项同步上调 67，理由见 _NAV_MIN_WIDTH_BY_HIDDEN 上方说明）。
+_BASE_MIN_WIDTH = 1463
 _BASE_MIN_HEIGHT = 660
 # 2026-09-14（用户最终决定，本轮 8）：**窗口最小宽度以"工具栏需要"为准**——
 #   两组工具按钮固定在第一行（不再下移），放不下一行时**只把搜索框移到第二行靠右**；
@@ -151,7 +169,11 @@ _MIN_WIDTH_FLOOR = 886
 #     隐藏2 → (578+768+3)/1.2 ≈ 1125 ｜ 隐藏3 → (578+541+3)/1.2 ≈ 935
 # 2026-09-14 21:05（实测复核）：目标再留余量到 **584**（实测 578 时仍差 1~2px）：
 #     隐藏0 → 1396 ｜ 隐藏1 → 1263 ｜ 隐藏2 → 1129 ｜ 隐藏3 → 940（隐藏4 仍 886 不变）
-_NAV_MIN_WIDTH_BY_HIDDEN = (1396, 1263, 1129, 940, 886)
+# 2026-09-22（用户批准加宽两列后的同步标定）：「项目类别 / 根目录」各 +28 源码px ⇒
+#   标定表按"该列仍可见就加上其增量"上调（每列 +34，两列共 +67）：
+#     隐藏0列 → 1396+67 = **1463** ｜ 隐藏1列 → 1263+34 = **1297**
+#     隐藏2/3/4 列 → 1129 / 940 / 886 **不变**（一二级未改）
+_NAV_MIN_WIDTH_BY_HIDDEN = (1463, 1297, 1129, 940, 886)
 # 2026-09-14（用户要求，本轮）：工具栏"折成两行"的判定余量（像素，实际值）——
 #   窗口变窄到"放不下一行工具栏"时折行；恢复时需比阈值再宽这么多才展开，避免临界宽度反复折/展。
 _BAR_UNFOLD_MARGIN = 60
@@ -849,6 +871,14 @@ class MainWindow(ctk.CTk):
         self._add_group_pairs = []   # 折叠组内的 (标签, 文本框) 对（折叠/展开显隐用）
         self._add_prompt_toggles = {}  # 2026-09-11（用户要求 1）：新增表单 ⑧/⑨ 展开/收起按钮引用
         self._add_entry_btn = None   # 条目区"✚ 新增条目"按钮引用
+        # 2026-09-22（用户要求 1）：四个分类列「✚ 新增…」按钮引用（固定在列顶，见 _build_body）
+        self._add_proj_btn = None
+        self._add_domain_btn = None
+        self._add_l1_btn = None
+        self._add_l2_btn = None
+        # 2026-09-22（用户要求 2）：条目区分隔条拖拽状态（**仅内存**，不写任何设置）
+        self._entry_grip_x0 = None
+        self._entry_grip_w0 = 0
 
         # 2026-09-16（批次 13）：原"②~⑦ 折叠组"状态变量已删除——
         #   ②~⑦ 现拆为独立可折叠块，由 _detail_expand_all 控制全部展开/收起。
@@ -1152,20 +1182,96 @@ class MainWindow(ctk.CTk):
         # 2026-08-29 用户要求列宽：1汉字≈14px；项目类别/根目录 ≤8汉字(112px)，一级/二级 ≤12汉字(168px)
         # 2026-09-09：条目区由 168px(≈12汉字) 加宽至 224px(≈16汉字)，便于同屏多看几个条目名
         # 2026-09-10（用户要求 3）：列宽统一取自模块常量 _NAV_COL_WIDTHS（与窗口最小宽度计算同源）
-        self.project_frame = ctk.CTkScrollableFrame(body, width=_NAV_COL_WIDTHS[0], label_text="项目类别")
-        self.l0_frame = ctk.CTkScrollableFrame(body, width=_NAV_COL_WIDTHS[1], label_text="根目录")
-        self.l1_frame = ctk.CTkScrollableFrame(body, width=_NAV_COL_WIDTHS[2], label_text="一级分类")
-        self.l2_frame = ctk.CTkScrollableFrame(body, width=_NAV_COL_WIDTHS[3], label_text="二级分类")
-        self.entry_frame = ctk.CTkScrollableFrame(body, width=224, label_text="条目")
+        # 2026-09-22（用户要求 1）：四个分类列与条目区改为"**上方固定「新增」按钮** + 下方滚动列表"。
+        #   原先「✚ 新增…」按钮建在可滚动区内，会随内容一起滚动（条目/分类一多就滚出视野）。
+        #   现改为：外层容器（与可滚动区**同默认底色/圆角**，外观无变化）承载"固定按钮 + 滚动区"；
+        #   外层容器即"列本体"（目录隐藏/显示按整列显隐），故 `_nav_cols` 改指向容器。
+        self.project_col = ctk.CTkFrame(body)
+        self.l0_col = ctk.CTkFrame(body)
+        self.l1_col = ctk.CTkFrame(body)
+        self.l2_col = ctk.CTkFrame(body)
+        self.entry_col = ctk.CTkFrame(body)
 
-        self.project_frame.grid(row=0, column=0, sticky="nsew")
-        self.l0_frame.grid(row=0, column=1, sticky="nsew")
-        self.l1_frame.grid(row=0, column=2, sticky="nsew")
-        self.l2_frame.grid(row=0, column=3, sticky="nsew")
-        self.entry_frame.grid(row=0, column=4, sticky="nsew")
+        self.project_frame = ctk.CTkScrollableFrame(self.project_col, width=_NAV_COL_WIDTHS[0], label_text="项目类别")
+        self.l0_frame = ctk.CTkScrollableFrame(self.l0_col, width=_NAV_COL_WIDTHS[1], label_text="根目录")
+        self.l1_frame = ctk.CTkScrollableFrame(self.l1_col, width=_NAV_COL_WIDTHS[2], label_text="一级分类")
+        self.l2_frame = ctk.CTkScrollableFrame(self.l2_col, width=_NAV_COL_WIDTHS[3], label_text="二级分类")
+        # 2026-09-22（用户要求 2）：分隔条宽度**算在条目区总宽之内**（内容宽 = 224 − 6），
+        #   这样条目区列总宽与改动前完全一致，不影响"窗口最小宽度/详情区最小宽"的既有标定。
+        self.entry_frame = ctk.CTkScrollableFrame(self.entry_col,
+                                                  width=_ENTRY_COL_W - _ENTRY_GRIP_W,
+                                                  label_text="条目")
+
+        # 2026-09-22（用户要求 2）：条目区右缘加一条**可拖拽的"分隔条"**——
+        #   拖动即调整条目区宽度（右侧详情区自动让位）；宽度只存内存、不写任何设置，
+        #   故每次启动都按默认值 _ENTRY_COL_W 显示（不记忆上次关闭时的宽度）。
+        #   放在这里先 pack（side="right"），使其占满条目区整列高度。
+        self.entry_grip = tk.Frame(self.entry_col, width=_ENTRY_GRIP_W, bg="#c9d1dd",
+                                   cursor="sb_h_double_arrow", highlightthickness=0,
+                                   bd=0)
+        self.entry_grip.pack(side="right", fill="y")
+        self.entry_grip.bind("<Button-1>", self._entry_grip_press)
+        self.entry_grip.bind("<B1-Motion>", self._entry_grip_drag)
+
+        # 2026-09-22（用户要求 1）：五个「新增」按钮**高度统一为 28**；
+        #   「新增条目」仍保留绿底白字加粗的醒目样式（字号由 15 调整为 13 以适配 28 高度）。
+        # 2026-09-22（用户要求 1）：五个「新增」按钮**只创建一次**并固定在各自区域顶部；
+        #   各 `_refresh_*` / `_render_entries` 只更新其启用状态，不再在滚动区内重建按钮。
+        self._add_proj_btn = ctk.CTkButton(
+            self.project_col, text="✚ 新增项目类别", height=28, **_ADD_BTN,
+            command=self._add_project)
+        self._add_domain_btn = ctk.CTkButton(
+            self.l0_col, text="✚ 新增根目录", height=28, **_ADD_BTN,
+            command=self._add_domain)
+        self._add_l1_btn = ctk.CTkButton(
+            self.l1_col, text="✚ 新增一级分类", height=28, **_ADD_BTN,
+            command=self._add_l1)
+        self._add_l2_btn = ctk.CTkButton(
+            self.l2_col, text="✚ 新增二级分类", height=28, **_ADD_BTN,
+            command=self._add_l2)
+        # 2026-09-07：条目区"新增条目"主按钮——绿色白字加粗，突出"要新增就点这里"
+        self._add_entry_btn = ctk.CTkButton(
+            self.entry_col, text="＋ 新增条目", height=28,
+            fg_color=_C_OK, hover_color="#256e46", text_color="white",
+            font=("Microsoft YaHei", 13, "bold"),
+            state="normal" if self._add_available() else "disabled",
+            command=self._start_new_entry)
+
+        for _col, _btn, _pad in ((self.project_col, self._add_proj_btn, (3, 2)),
+                                 (self.l0_col, self._add_domain_btn, (3, 2)),
+                                 (self.l1_col, self._add_l1_btn, (2, 2)),
+                                 (self.l2_col, self._add_l2_btn, (2, 2)),
+                                 (self.entry_col, self._add_entry_btn, (4, 2))):
+            _btn.pack(side="top", fill="x", padx=6, pady=_pad)
+
+        self.project_frame.pack(side="top", fill="both", expand=True)
+        self.l0_frame.pack(side="top", fill="both", expand=True)
+        self.l1_frame.pack(side="top", fill="both", expand=True)
+        self.l2_frame.pack(side="top", fill="both", expand=True)
+        self.entry_frame.pack(side="top", fill="both", expand=True)
+
+        self.project_col.grid(row=0, column=0, sticky="nsew")
+        self.l0_col.grid(row=0, column=1, sticky="nsew")
+        self.l1_col.grid(row=0, column=2, sticky="nsew")
+        self.l2_col.grid(row=0, column=3, sticky="nsew")
+        self.entry_col.grid(row=0, column=4, sticky="nsew")
         # 2026-09-10（用户要求 2-（2））：四个分类列控件按"从左到右"顺序登记，
         # 供"目录隐藏/目录显示"按连续前缀隐藏、连续后缀显示（见 apply_nav_visibility）。
-        self._nav_cols = [self.project_frame, self.l0_frame, self.l1_frame, self.l2_frame]
+        # 2026-09-22（用户要求 1）：登记的改为**外层容器**（容器显隐＝整列显隐，含固定按钮）。
+        self._nav_cols = [self.project_col, self.l0_col, self.l1_col, self.l2_col]
+        # 2026-09-22（用户要求 1 的必要配套）：**锁定各列列宽**——
+        #   把「新增」按钮移出滚动区后，按钮"文字所需宽度"会直接顶宽 grid 列
+        #   （实测：项目类别列 112→182、条目列 →293），从详情区抢走约 315px，
+        #   导致"详情区最小宽"时 2 个按钮被压（GUI 回归实测到）。故容器设固定宽 +
+        #   关闭尺寸传播，使各列宽度**与改动前完全一致**（列宽只由下面两个常量决定）。
+        #   注：容器内子控件用 pack 排布 ⇒ 必须用 **pack_propagate(False)**（用 grid_propagate 无效）。
+        for _col, _w in ((self.project_col, _NAV_COL_WIDTHS[0]),
+                         (self.l0_col, _NAV_COL_WIDTHS[1]),
+                         (self.l1_col, _NAV_COL_WIDTHS[2]),
+                         (self.l2_col, _NAV_COL_WIDTHS[3]),
+                         (self.entry_col, _ENTRY_COL_W)):
+            _col.configure(width=_w)
+            _col.pack_propagate(False)
         # 2026-09-09：悬停条目区浮出"全部条目名"（进入/离开各处理一次，避免重复绑定累积）
         self.entry_frame.bind("<Enter>", self._entry_ov_enter, add="+")
         self.entry_frame.bind("<Leave>", self._entry_ov_leave, add="+")
@@ -1661,9 +1767,9 @@ class MainWindow(ctk.CTk):
         """渲染项目类别列（含"新增"按钮、"未分配"虚拟项）"""
         self._clear_frame(self.project_frame)
         self._clear_nav_btns("p")
-        ctk.CTkButton(self.project_frame, text="✚ 新增项目类别", height=30, **_ADD_BTN,
-                      state="disabled" if self._lock_on else "normal",
-                      command=self._add_project).pack(fill="x", padx=6, pady=3)
+        # 2026-09-22（用户要求 1）：按钮已固定在列顶（见 _build_body）→ 此处只更新启用状态
+        if self._add_proj_btn is not None and self._add_proj_btn.winfo_exists():
+            self._add_proj_btn.configure(state="disabled" if self._lock_on else "normal")
         for p in self.db.list_projects():
             btn = ctk.CTkButton(self.project_frame, text=p["name"], anchor="w", height=32,
                                 command=lambda pid=p["id"]: self._select_project(pid))
@@ -1727,6 +1833,39 @@ class MainWindow(ctk.CTk):
         """
         mode = "hide" if self._nav_hidden == 0 else "show"
         ColumnVisibilityDialog(self, self._nav_hidden, mode, self.apply_nav_visibility)
+
+    # ------------------------------------------------------------------ #
+    # 条目区宽度可拖拽调整（2026-09-22，用户要求 2）
+    #   拖动条目区右缘的"分隔条"即可调整条目区宽度（右侧详情区自动让位）；
+    #   宽度**只存在内存、不写任何设置** ⇒ 无论上次调到多少，下次启动都按默认值
+    #   `_ENTRY_COL_W`（224）显示，**不记忆上次关闭时的宽度**。
+    # ------------------------------------------------------------------ #
+    def _entry_grip_press(self, event) -> None:
+        """记录拖拽起点：起始鼠标 x 与条目区**总宽**（列容器当前实际宽度）"""
+        self._entry_grip_x0 = int(event.x_root)
+        try:
+            self._entry_grip_w0 = int(self.entry_col.winfo_width())
+        except Exception:                                  # noqa: BLE001
+            self._entry_grip_w0 = _ENTRY_COL_W
+
+    def _entry_grip_drag(self, event) -> None:
+        """拖动分隔条 → 按鼠标位移调整条目区**总宽**（钳制在上下限内）
+
+        2026-09-22 修复（用户反馈"看起来能拖、实际拖不动"）：列容器已用
+        `pack_propagate(False)` 锁宽 ⇒ **只改滚动区宽度不会改变列宽**；
+        故必须**同时改列容器宽度**（列宽 = 容器宽度），滚动区宽度 = 总宽 − 分隔条宽。
+        """
+        if getattr(self, "_entry_grip_x0", None) is None:
+            return
+        _delta = int(event.x_root) - int(self._entry_grip_x0)
+        _scale = _ui_common.widget_scaling(self.entry_col) or 1.0
+        _total_src = (getattr(self, "_entry_grip_w0", _ENTRY_COL_W) + _delta) / _scale
+        _total_src = max(_ENTRY_W_MIN, min(_total_src, _ENTRY_W_MAX))
+        try:
+            self.entry_col.configure(width=_total_src)                       # 列宽（关键）
+            self.entry_frame.configure(width=max(_total_src - _ENTRY_GRIP_W, 1))
+        except Exception:                                  # noqa: BLE001
+            pass
 
     def _nav_min_width(self) -> int:
         """按"连续隐藏的分类列宽度"计算当前窗口最小宽度（2026-09-10，用户要求 3）。
@@ -2225,6 +2364,14 @@ class MainWindow(ctk.CTk):
                                                    command=self._on_tag_limit_change,
                                                    font=("Microsoft YaHei", 11))
             self._tag_limit_om.pack(side="left")
+
+            # 2026-09-22（用户要求 1）：把上面 5 个治理按钮（重命名 / 合并… / 删除 /
+            #   清理未使用 / 🤖 批量打标…）整行**移到页面最底部**——即"⚠ 无标签条目 + 分页/每页"
+            #   这一行的**下方**。理由：它们是"对选中标签的批量写操作"，放在"浏览控制"之后
+            #   更符合"先浏览、后操作"的动线，且让无标签入口与分页紧贴标签云。
+            #   做法：pack_forget + 重新 pack（同一父容器内重排到最后）——按钮顺序与宽度**未变**。
+            mgr.pack_forget()
+            mgr.pack(fill="x", padx=12, pady=(0, 10))
 
         # 2026-09-15（批次 6-2，用户在"同类漏网"议题上选定"一并置灰"）：三档的**写操作按钮**
         #   统一按锁定态置灰——标签档 5 个（治理按钮）/ 热点词档 3 个 /
@@ -3481,6 +3628,9 @@ class MainWindow(ctk.CTk):
                           command=lambda: self._rename_project(project_id))
             m.add_command(label="删除", state=lock_state,
                           command=lambda: self._delete_project(project_id))
+            # 2026-09-22（用户要求 3-2）：批量删除本分支全部数据（项目类别 = 最高风险层）
+            m.add_command(label="🧹 批量删除本分支全部数据…", state=lock_state,
+                          command=lambda: self._batch_delete_branch("project", project_id))
             self._add_move_menu_items(m, "project", project_id, lock_state)  # 2026-09-11：上移/下移
         m.tk_popup(event.x_root, event.y_root)
 
@@ -3565,12 +3715,12 @@ class MainWindow(ctk.CTk):
         """
         self._clear_frame(self.l0_frame)
         self._clear_nav_btns("l0")
-        ctk.CTkButton(self.l0_frame, text="✚ 新增根目录", height=30, **_ADD_BTN,
-                      state=("disabled" if (self._lock_on
-                                            or (self._view is None and self._cur_project_id is None))
-                             else "normal"),
-                      # 2026-08-21（第005条）：锁定时禁用新增；2026-09-07：未选任何项目时灰显但保留可见
-                      command=self._add_domain).pack(fill="x", padx=6, pady=3)
+        # 2026-09-22（用户要求 1）：按钮已固定在列顶（见 _build_body）→ 此处只更新启用状态
+        if self._add_domain_btn is not None and self._add_domain_btn.winfo_exists():
+            self._add_domain_btn.configure(
+                state=("disabled" if (self._lock_on
+                                      or (self._view is None and self._cur_project_id is None))
+                       else "normal"))   # 2026-08-21（第005条）：锁定时禁用；未选任何项目时灰显
         if self._view is None and self._cur_project_id is None:
             domains = []                      # 初始态：未选项目类别 → 列留提示
             empty_hint = "先选择上方「项目类别」，\n此处将列出其根目录"
@@ -3656,10 +3806,11 @@ class MainWindow(ctk.CTk):
         """
         self._clear_frame(self.l1_frame)
         self._clear_nav_btns("l1")
-        ctk.CTkButton(self.l1_frame, text="✚ 新增一级分类", height=28, **_ADD_BTN,
-                      state="disabled" if (self._lock_on or self._cur_domain_id is None) else "normal",
-                      # 2026-08-21（第005条）：锁定时禁用新增；2026-09-07：未选根目录时灰显但保留可见
-                      command=self._add_l1).pack(fill="x", padx=6, pady=2)
+        # 2026-09-22（用户要求 1）：按钮已固定在列顶（见 _build_body）→ 此处只更新启用状态
+        #   （2026-08-21 第005条：锁定时禁用新增；2026-09-07：未选根目录时灰显但保留可见）
+        if self._add_l1_btn is not None and self._add_l1_btn.winfo_exists():
+            self._add_l1_btn.configure(
+                state="disabled" if (self._lock_on or self._cur_domain_id is None) else "normal")
         if self._cur_domain_id is None:
             self._nav_hint(self.l1_frame, "先在上方选择「根目录」，\n此处将列出一级分类")
             self._apply_nav_highlight()
@@ -3703,10 +3854,11 @@ class MainWindow(ctk.CTk):
         self._clear_frame(self.l2_frame)
         self._clear_nav_btns("l2")
         parent_id = self._l2_parent_id()
-        ctk.CTkButton(self.l2_frame, text="✚ 新增二级分类", height=28, **_ADD_BTN,
-                      state="disabled" if (self._lock_on or self._cur_cat_id is None) else "normal",
-                      # 2026-08-21（第005条）：锁定时禁用新增；2026-09-07：未选分类时灰显但保留可见
-                      command=self._add_l2).pack(fill="x", padx=6, pady=2)
+        # 2026-09-22（用户要求 1）：按钮已固定在列顶（见 _build_body）→ 此处只更新启用状态
+        #   （2026-08-21 第005条：锁定时禁用新增；2026-09-07：未选分类时灰显但保留可见）
+        if self._add_l2_btn is not None and self._add_l2_btn.winfo_exists():
+            self._add_l2_btn.configure(
+                state="disabled" if (self._lock_on or self._cur_cat_id is None) else "normal")
         if parent_id is not None:
             subs = self.db.list_categories(parent_id=parent_id)
             for c in subs:
@@ -4025,14 +4177,11 @@ class MainWindow(ctk.CTk):
                 self._add_target = None
                 self._show_detail(None)
 
-        # 2026-09-07：条目区"新增条目"主按钮——绿色白字加高加粗，突出"要新增就点这里"
-        self._add_entry_btn = ctk.CTkButton(
-            self.entry_frame, text="＋ 新增条目", height=36,
-            fg_color=_C_OK, hover_color="#256e46", text_color="white",
-            font=("Microsoft YaHei", 15, "bold"),
-            state="normal" if self._add_available() else "disabled",
-            command=self._start_new_entry)
-        self._add_entry_btn.pack(fill="x", padx=6, pady=(4, 2))
+        # 2026-09-22（用户要求 1）：条目区"新增条目"主按钮已固定在区域顶部（见 _build_body）
+        #   ——原先在此处重建按钮，会随条目列表一起滚动；现只更新其启用状态。
+        if self._add_entry_btn is not None and self._add_entry_btn.winfo_exists():
+            self._add_entry_btn.configure(
+                state="normal" if self._add_available() else "disabled")
 
         # 2026-09-14：被截断时显示"已显示前 N 条 · 剩余 M 条" + 「显示更多 / 全部显示」
         # （整行 fill=x，适配条目区仅 224px 的窄宽度；不再截断后按钮置灰）
@@ -4240,6 +4389,10 @@ class MainWindow(ctk.CTk):
         entry_id = e["id"]
 
         def _click(_ev, eid=entry_id):
+            # 2026-09-22：点击前先取消"悬停延迟选中"定时器。
+            #   原逻辑点击时不取消失效，会出现"悬停 200ms 定时器"与"点击"先后各触发
+            #   一次 _select_entry，导致详情区被重建两次（用户反馈的多次刷新问题）。
+            self._cancel_select()
             self._select_entry(eid)
 
         def _menu(_ev, eid=entry_id):
@@ -4782,6 +4935,14 @@ class MainWindow(ctk.CTk):
             pass
 
     def _select_entry(self, entry_id: int) -> None:
+        # 2026-09-22：去重——若已是当前展示条目且无未保存修改，则直接返回，
+        #   避免"悬停延迟 + 点击"或重复事件导致详情区被反复重建（用户反馈的多次刷新问题）。
+        #   注意：必须保留 `not self._detail_dirty` 前提——若存在未保存修改，
+        #   仍需走原有 `_confirm_unsaved()` 询问流程，行为不变。
+        if (entry_id == self._detail_entry_id
+                and not self._detail_dirty
+                and not self._adding_new):
+            return
         if not self._confirm_unsaved():
             return
         e = self.db.get_entry(entry_id)
@@ -5553,8 +5714,29 @@ class MainWindow(ctk.CTk):
         if not getattr(self, "_tag_block_rendered", False):
             self.toast("ℹ 🏷 标签区块已隐藏；请在「字段管理」中改回「显示」后再推荐标签")
             return
-        texts = {k: self._box_text(k) for k in
-                 ("name", "intro", "features", "image_desc", "prompt_cn", "prompt_en")}
+        # 2026-09-22（用户决策 4：先保存后推荐 + 统一取值来源）：
+        #   原实现从 UI 控件 `_box_text()` 取这 6 个字段；而"字段管理"里被设为「隐藏」
+        #   的字段（如隐藏的提示词）不渲染 ⇒ 无控件 ⇒ 取到空串 ⇒ 推荐只能从标题提取。
+        #   现改为：已存条目**先确保保存，再统一从数据库读取**这 6 个字段，
+        #   与"字段是否隐藏"彻底解耦（隐藏字段同样参与推荐，行为确定可预期）。
+        #   新增态没有数据库行，仍从 UI 取（隐藏字段本就无从填写，无内容可读）。
+        _suggest_keys = ("name", "intro", "features", "image_desc", "prompt_cn", "prompt_en")
+        if not self._adding_new and self._detail_entry_id is not None:
+            if self._detail_dirty and not self._lock_on:
+                if not messagebox.askyesno(
+                        "先保存，再推荐标签",
+                        "推荐标签将基于**已保存**的内容（含被隐藏的字段，如提示词）。\n\n"
+                        "当前条目有未保存的修改，是否先保存再推荐？",
+                        parent=self):
+                    self.toast("ℹ 已取消推荐：请先保存条目修改后再试")
+                    return
+                self._save_detail()
+                if self._detail_dirty:
+                    return   # 保存未生效（如重复内容提示中选了"否"）
+            _cur = self.db.get_entry(self._detail_entry_id) or {}
+            texts = {k: (_cur.get(k) or "") for k in _suggest_keys}
+        else:
+            texts = {k: self._box_text(k) for k in _suggest_keys}
         try:
             nm = self._name_entry.get().strip()
             if nm:
@@ -7621,6 +7803,9 @@ class MainWindow(ctk.CTk):
                       command=lambda: self._rename_domain(domain_id))
         m.add_command(label="删除", state=lock_state,
                       command=lambda: self._delete_domain(domain_id))
+        # 2026-09-22（用户要求 3-2）：批量删除本根目录下的全部数据
+        m.add_command(label="🧹 批量删除本分支全部数据…", state=lock_state,
+                      command=lambda: self._batch_delete_branch("domain", domain_id))
         self._add_move_menu_items(m, "domain", domain_id, lock_state)  # 2026-09-11：上移/下移
         m.tk_popup(event.x_root, event.y_root)
 
@@ -7643,6 +7828,9 @@ class MainWindow(ctk.CTk):
                       command=lambda: self._rename_category(cat_id))
         m.add_command(label="删除", state=lock_state,
                       command=lambda: self._delete_category(cat_id))
+        # 2026-09-22（用户要求 3-2）：批量删除本分类（含全部子分类）下的全部数据
+        m.add_command(label="🧹 批量删除本分支全部数据…", state=lock_state,
+                      command=lambda: self._batch_delete_branch("cat", cat_id))
         # 2026-09-11（用户要求 2）：一级/二级分类列内上移/下移
         self._add_move_menu_items(m, src_type, cat_id, lock_state)
         m.tk_popup(event.x_root, event.y_root)
@@ -7855,6 +8043,154 @@ class MainWindow(ctk.CTk):
         self.toast("✅ 已级联删除（条目已入回收站）")
         self._after_delete_category(cat, reset_view=True)
 
+    # ------------------------------------------------------------------ #
+    # 批量删除本分支全部数据（2026-09-22，用户要求 3-2）
+    #   入口：左侧导航 项目类别 / 根目录 / 一级·二级分类 的右键菜单
+    #   严格流程（顺序不可跳步）：
+    #     ① 影响范围统计弹窗 → askyesno
+    #     ② 手工输入确认短语（db._CASCADE_PHRASE）
+    #     ③ 选择删除方式：软删除（入回收站，可恢复）/ 硬删除（彻底清除）
+    #     ④ 仅"项目类别"层：手输项目类别名称 + 专用口令（更高级别确认）
+    #     ⑤ 双重备份：全量库快照 + 待删分支 JSON（任一失败 → 立即中止，不写数据）
+    #     ⑥ 执行删除 → 刷新左侧导航 / 条目区 / 详情区
+    # ------------------------------------------------------------------ #
+    def _batch_delete_branch(self, kind: str, scope_id: int) -> None:
+        """按分支批量删除全部数据（kind：'project'/'domain'/'cat'）"""
+        if not self._assert_unlocked("批量删除"):
+            return
+        st = self.db.count_scope_items(kind, scope_id)
+        if not st.get("exists"):
+            self.toast("⚠ 目标不存在，可能已被删除", color=_C_DANGER)
+            return
+        level = {"project": "项目类别", "domain": "根目录", "cat": "分类"}.get(kind, "分支")
+        # ① 影响范围（先讲清楚"删什么 / 保留什么"，再让用户决定）
+        msg = [f"⚠️ 将对{level}【{st['title']}】执行**批量删除**：", ""]
+        msg.append(f"· 删除分类记录：{st['categories']} 个（含全部子分类）")
+        if st["l1_shared"]:
+            msg.append(f"· 解除共享分类关联：{st['l1_shared']} 个"
+                       "（分类本身保留，其他根目录仍可正常访问）")
+        if st["domains"]:
+            msg.append(f"· 删除根目录记录：{st['domains']} 个")
+        if st["projects"]:
+            msg.append(f"· 删除项目类别记录：{st['projects']} 个")
+        msg.append(f"· 处置条目本体：{st['entries_purge']} 条（其全部位置都在本分支内）")
+        if st["entries_unlink"]:
+            msg.append(f"· 仅解除位置关联：{st['entries_unlink']} 条"
+                       "（其他分支仍有位置，条目本体保留）")
+        msg += ["", "确定进入下一步？"]
+        if not messagebox.askyesno("批量删除 · 影响范围", "\n".join(msg), parent=self):
+            return
+        # ② 手工输入确认短语
+        phrase = self.db._CASCADE_PHRASE
+        got = simpledialog.askstring(
+            "批量删除 · 确认短语",
+            f"请输入确认短语「{phrase}」以继续：", parent=self)
+        if got is None:
+            return
+        if got.strip() != phrase:
+            messagebox.showwarning("已取消", "确认短语不正确，批量删除已取消。", parent=self)
+            return
+        # ③ 删除方式（软删除 / 硬删除）
+        r = messagebox.askyesnocancel(
+            "批量删除 · 选择删除方式",
+            "请选择本次删除方式：\n\n"
+            "【是】软删除：条目移入回收站，可从「删除历史 / 回收站」恢复（推荐）\n"
+            "【否】硬删除：条目彻底删除，无法从回收站恢复（只能靠备份 / 导出文档恢复）\n"
+            "【取消】放弃本次删除",
+            parent=self)
+        if r is None:
+            self.toast("ℹ 已取消批量删除")
+            return
+        mode = "soft" if r else "hard"
+        # ④ 项目类别层：更高级别确认（名称 + 专用口令，用户决策 3）
+        passphrase = None
+        if kind == "project":
+            nm = simpledialog.askstring(
+                "批量删除 · 高等级确认",
+                f"这是**最高风险**操作（相当于删除整库的一个子集）。\n"
+                f"请输入该项目类别的完整名称「{st['title']}」以确认：", parent=self)
+            if (nm or "").strip() != st["title"]:
+                messagebox.showwarning("已取消", "项目类别名称不匹配，批量删除已取消。", parent=self)
+                return
+            passphrase = simpledialog.askstring(
+                "批量删除 · 专用口令", "请输入专用口令：", parent=self)
+            if (passphrase or "").strip() != self.db._BATCH_DELETE_PASSPHRASE:
+                messagebox.showwarning("已取消", "口令不正确，批量删除已取消。", parent=self)
+                return
+        # ⑤ 双重备份（失败即中止，绝不带病删除）
+        if not self._backup_before_batch_delete(kind, scope_id, st["title"]):
+            return
+        # ⑥ 执行
+        try:
+            if kind == "project":
+                self.db.delete_project_cascade(scope_id, phrase, passphrase, mode=mode)
+            elif kind == "domain":
+                self.db.delete_domain_cascade(scope_id, phrase, mode=mode)
+            else:
+                self.db.delete_scope_cascade("cat", scope_id, phrase, mode=mode)
+        except Exception as exc:
+            messagebox.showerror("批量删除失败", f"删除过程中出错：\n{exc}", parent=self)
+            return
+        self._after_batch_delete(kind, scope_id)
+        self.toast("✅ 批量删除完成（删除前已双重备份：全量库 + 分支）")
+
+    def _backup_before_batch_delete(self, kind: str, scope_id: int, title: str) -> bool:
+        """批量删除前的**双重备份**（2026-09-22 用户要求 3-2）。
+
+        第 1 份：全量库快照（backup.predel_snapshot，独立前缀 prompts_predel_*.db）
+        第 2 份：待删分支全部数据（json_io.export_json，按当前层级范围导出为 JSON）
+        两者同放现有备份目录 data/backup/；任一失败 → 返回 False（调用方立即中止删除）。
+        """
+        snap = backup_mod.predel_snapshot()
+        if not snap.get("ok"):
+            messagebox.showerror(
+                "备份失败，已中止删除",
+                f"删除前【全量库备份】失败：\n{snap.get('error')}\n\n"
+                "为避免数据无法恢复，本次删除已中止。", parent=self)
+            return False
+        safe = re.sub(r'[\\/:*?"<>|\r\n\t]+', "_", str(title)).strip(" ._") or "分支"
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        dest = os.path.join(os.path.dirname(snap["path"]),
+                            f"prompts_branch_{safe}_{stamp}.json")
+        try:
+            n = json_io.export_json(
+                self.db, dest, **self._export_scope_kwargs({"kind": kind, "id": scope_id}))
+        except Exception as exc:
+            messagebox.showerror(
+                "备份失败，已中止删除",
+                f"删除前【分支数据备份】失败：\n{exc}\n\n"
+                "为避免数据无法恢复，本次删除已中止。", parent=self)
+            return False
+        self.toast(f"✅ 删除前双重备份完成（全量库 + 分支 {n} 条）")
+        return True
+
+    def _after_batch_delete(self, kind: str, scope_id: int) -> None:
+        """批量删除后：清理已失效的选中态 → 重建左侧导航 → 清空条目区 / 详情区"""
+        if kind == "project" and self._cur_project_id == scope_id:
+            self._cur_project_id = None
+            self._cur_domain_id = None
+            self._cur_cat_id = None
+            self._view = None
+        elif kind == "domain" and self._cur_domain_id == scope_id:
+            self._cur_domain_id = None
+            self._cur_cat_id = None
+            self._view = ("project", self._cur_project_id)
+        elif kind == "cat":
+            self._cur_cat_id = None
+            if self._cur_domain_id:
+                self._view = ("domain", self._cur_domain_id)
+        # 当前浏览的分类可能被"连带删除" → 统一收敛为"未选中分类"
+        if self._cur_cat_id is not None and self.db.get_category(self._cur_cat_id) is None:
+            self._cur_cat_id = None
+        self._refresh_projects()
+        self._refresh_l0()
+        self._refresh_l1()
+        self._refresh_l2()
+        self._render_entries([], "条目")
+        # 详情区若正在展示已被删除的条目 → 清空，避免展示"已不存在"的数据
+        if self._detail_entry_id is not None and self.db.get_entry(self._detail_entry_id) is None:
+            self._show_detail(None)
+
     def _after_delete_category(self, cat: dict, reset_view: bool = False) -> None:
         """删除分类后刷新导航；若正在浏览被删分类（或级联删除了其子树）则回到根目录视图"""
         if cat["parent_id"] is None:
@@ -7871,9 +8207,59 @@ class MainWindow(ctk.CTk):
     # ------------------------------------------------------------------ #
     # 数据导入导出（阶段六）
     # ------------------------------------------------------------------ #
-    def _current_subtree_cat_id(self) -> Optional[int]:
-        """当前分类子树根 id（未选中分类则返回 None）"""
-        return self._cur_cat_id
+    def _current_export_scope(self) -> dict:
+        """当前左侧导航选中项的**导出/删除范围**（子树根）。
+
+        2026-09-22（用户要求 3-1 前置改造）：原 `_current_subtree_cat_id()` 只返回
+        `self._cur_cat_id`，导致在"项目类别""根目录"层级无法按分支导出
+        （选中它们时 `_cur_cat_id` 为 None，界面提示"请先在左侧选中分类"）。
+        现按左侧**实际选中层级**返回，供导出与批量删除共用：
+
+          - `{"kind": "cat",     "id": 分类 id}`   ← 选中一级 / 二级分类
+          - `{"kind": "domain",  "id": 根目录 id}` ← 选中根目录
+          - `{"kind": "project", "id": 项目类别 id}` ← 选中项目类别
+          - `{"kind": None,      "id": None}`       ← 其它视图（未分类/收藏/搜索/标签/无标签）
+
+        说明：以 `self._view` 为准（它正是左侧高亮的那个层级）；无视图时按
+        "分类 > 根目录" 回退，与改造前的行为保持一致。
+        """
+        view = self._view if isinstance(self._view, tuple) and self._view else None
+        if view:
+            kind = view[0]
+            ref = view[1] if len(view) > 1 else None
+            if kind in ("cat", "domain", "project") and ref:
+                return {"kind": kind, "id": ref}
+            return {"kind": None, "id": None}
+        if self._cur_cat_id:
+            return {"kind": "cat", "id": self._cur_cat_id}
+        if self._cur_domain_id:
+            return {"kind": "domain", "id": self._cur_domain_id}
+        return {"kind": None, "id": None}
+
+    def _export_scope_kwargs(self, scope: dict) -> dict:
+        """把 `_current_export_scope()` 的结果转成导出函数的参数关键字"""
+        if scope.get("kind") == "cat":
+            return {"category_id": scope["id"]}
+        if scope.get("kind") == "domain":
+            return {"domain_id": scope["id"]}
+        if scope.get("kind") == "project":
+            return {"project_id": scope["id"]}
+        return {}
+
+    def _scope_default_filename(self, scope: dict, ext: str, plain_name: str) -> str:
+        """按范围生成导出默认文件名（用户决策 1，方案 A）。
+
+        2026-09-22：**项目类别 / 根目录**导出时用
+        `prompts_backup_<项目名/根目录名>_<YYYYMMDD_HHMMSS>.<ext>`（便于按分支+时间区分备份）；
+        其它情况（全库导出、分类导出）沿用原来的固定名 `plain_name`——不改动既有习惯。
+        名称中的文件名非法字符统一替换为 `_`。
+        """
+        if scope.get("kind") not in ("project", "domain"):
+            return plain_name
+        title = json_io.scope_title(self.db, **self._export_scope_kwargs(scope)) or "分支"
+        safe = re.sub(r'[\\/:*?"<>|\r\n\t]+', "_", str(title)).strip(" ._") or "分支"
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return f"prompts_backup_{safe}_{stamp}.{ext}"
 
     def _open_import_wizard(self) -> None:
         """打开 T1 离线"网上资源结构化"向导（2026-09-13，第 4 期 4-c）"""
@@ -8237,53 +8623,71 @@ class MainWindow(ctk.CTk):
         from .compare_dialog import CompareDialog
         CompareDialog(self, self.db)
 
+    def _confirm_export_scope(self, scope: dict, fmt_label: str) -> bool:
+        """导出前弹"范围确认"对话框（2026-09-22，用户要求 1）。
+
+        对话框展示**整个库的结构树**，把用户已选分支及其全部下属**加重显示**，
+        并给出本次将导出的条目数；未选中任何级别/选项时给出提醒且不允许确认。
+        返回 True 表示用户已确认可以导出。
+        """
+        dlg = ExportScopeDialog(self, self.db, scope, fmt_label)
+        self.wait_window(dlg)
+        return bool(getattr(dlg, "result", False))
+
     def _export_json(self, current_only: bool = False) -> None:
-        cat = self._current_subtree_cat_id() if current_only else None
-        if current_only and cat is None:
-            self.toast("请先在左侧选中分类", color=_C_DANGER)
+        # 2026-09-22（用户要求 3-1）：current_only 时按左侧**实际选中层级**导出
+        #   （项目类别 / 根目录 / 分类 三种分支均可），不再局限于分类。
+        scope = self._current_export_scope() if current_only else {"kind": None, "id": None}
+        # 2026-09-22（用户要求 1）：导出当前分类前先弹范围确认对话框
+        if current_only and not self._confirm_export_scope(scope, "JSON"):
             return
-        path = filedialog.asksaveasfilename(title="导出 JSON", parent=self,
-                                            defaultextension=".json",
-                                            initialfile="prompts_backup.json",
-                                            filetypes=[("JSON", "*.json")])
+        path = filedialog.asksaveasfilename(
+            title="导出 JSON", parent=self,
+            defaultextension=".json",
+            initialfile=self._scope_default_filename(scope, "json", "prompts_backup.json"),
+            filetypes=[("JSON", "*.json")])
         if not path:
             return
         try:
-            n = json_io.export_json(self.db, path, category_id=cat)
+            n = json_io.export_json(self.db, path, **self._export_scope_kwargs(scope))
             self.toast(f"✅ 已导出 {n} 条")
         except Exception as exc:
             messagebox.showerror("导出失败", str(exc), parent=self)
 
     def _export_excel(self, current_only: bool = False) -> None:
-        cat = self._current_subtree_cat_id() if current_only else None
-        if current_only and cat is None:
-            self.toast("请先在左侧选中分类", color=_C_DANGER)
+        # 2026-09-22（用户要求 3-1）：同 _export_json，支持项目类别 / 根目录分支导出
+        scope = self._current_export_scope() if current_only else {"kind": None, "id": None}
+        # 2026-09-22（用户要求 1）：导出当前分类前先弹范围确认对话框
+        if current_only and not self._confirm_export_scope(scope, "Excel"):
             return
-        path = filedialog.asksaveasfilename(title="导出 Excel", parent=self,
-                                            defaultextension=".xlsx",
-                                            initialfile="prompts.xlsx",
-                                            filetypes=[("Excel", "*.xlsx")])
+        path = filedialog.asksaveasfilename(
+            title="导出 Excel", parent=self,
+            defaultextension=".xlsx",
+            initialfile=self._scope_default_filename(scope, "xlsx", "prompts.xlsx"),
+            filetypes=[("Excel", "*.xlsx")])
         if not path:
             return
         try:
-            n = excel_io.export_excel(self.db, path, category_id=cat)
+            n = excel_io.export_excel(self.db, path, **self._export_scope_kwargs(scope))
             self.toast(f"✅ 已导出 {n} 条")
         except Exception as exc:
             messagebox.showerror("导出失败", str(exc), parent=self)
 
     def _export_html(self, current_only: bool = False) -> None:
-        cat = self._current_subtree_cat_id() if current_only else None
-        if current_only and cat is None:
-            self.toast("请先在左侧选中分类", color=_C_DANGER)
+        # 2026-09-22（用户要求 3-1）：同 _export_json，支持项目类别 / 根目录分支导出
+        scope = self._current_export_scope() if current_only else {"kind": None, "id": None}
+        # 2026-09-22（用户要求 1）：导出当前分类前先弹范围确认对话框
+        if current_only and not self._confirm_export_scope(scope, "HTML"):
             return
-        path = filedialog.asksaveasfilename(title="导出 HTML", parent=self,
-                                            defaultextension=".html",
-                                            initialfile="index.html",
-                                            filetypes=[("HTML", "*.html")])
+        path = filedialog.asksaveasfilename(
+            title="导出 HTML", parent=self,
+            defaultextension=".html",
+            initialfile=self._scope_default_filename(scope, "html", "index.html"),
+            filetypes=[("HTML", "*.html")])
         if not path:
             return
         try:
-            n = html_export.export_html(self.db, path, category_id=cat)
+            n = html_export.export_html(self.db, path, **self._export_scope_kwargs(scope))
             self.toast(f"✅ 已导出 {n} 条")
         except Exception as exc:
             messagebox.showerror("导出失败", str(exc), parent=self)

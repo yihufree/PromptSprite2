@@ -1421,9 +1421,18 @@ class ImportWizardDialog(ctk.CTkToplevel):
         self.unused_ignored.add(col)
         self._render_unused(self.source.get("headers") or [])
 
-    def _set_tgt_val(self, key: str, label: str) -> None:
-        """把某目标位的取值改为 label；同一源列只允许一个目标位取用（后取者占，前者让出）"""
+    def _set_tgt_val(self, key: str, label: str, redraw: bool = True) -> None:
+        """把某目标位的取值改为 label；同一源列只允许一个目标位取用（后取者占，前者让出）
+
+        2026-09-22（用户反馈修复）：redraw=True 时，在安排整表重绘**之前**先调用
+        `_harvest_row_inputs(skip_key=key)`，把其它行"手输但未回车"的新名称收割进 tgt_val。
+        原先重绘只读 tgt_val，未提交的手输文本会随控件销毁而丢失——表现为"填好分类名后
+        去选源列，上面 4 个分类区被刷新、已填内容丢失"。
+        """
         label = (label or "").strip()
+        # 2026-09-22：重绘前先"抢救"其它行手输的名称（skip_key=key 跳过本行，避免干扰下面的取值变化判断）
+        if redraw:
+            self._harvest_row_inputs(skip_key=key, redraw=False)
         old_col = self._src_col_of_key(key)     # 2026-09-20：改前的源列（用于判断是否换了源列）
         old_label = (self.tgt_val.get(key) or "").strip()   # 2026-09-20：改前的取值文本（用于判断取值是否变化）
         new_label = "" if label in ("", self._ignore_label(key)) else label
@@ -1433,14 +1442,14 @@ class ImportWizardDialog(ctk.CTkToplevel):
             # 2026-09-20：换了源列（或不再取自源列）→ 旧"选项名改名"映射已失效，一并清除
             self.layer_rename.pop(key, None)
         # 2026-09-20：取值文本变化也要重绘（否则第三列「显示名」停留旧状态：按钮不出现 / 改忽略后按钮残留）
-        redraw = (new_label != old_label)
+        changed = (new_label != old_label)
         if col is not None:
             for other in list(self.tgt_val):
                 if other != key and self._src_col_of_key(other) == col:
                     self.tgt_val[other] = ""      # 让出该源列（回到「忽略」）
                     self.layer_rename.pop(other, None)   # 2026-09-20：其改名映射同步失效
-                    redraw = True
-        if redraw:
+                    changed = True
+        if redraw and changed:
             self.after(30, self._render_target_rows)   # 延迟重绘（避免销毁正在回调的下拉）
             return
         smp = getattr(self, "_row_sample", {}).get(key)
@@ -1449,14 +1458,21 @@ class ImportWizardDialog(ctk.CTkToplevel):
         self._update_map_stat()
         self._render_unused(self.source.get("headers") or [])
 
-    def _harvest_row_inputs(self) -> None:
+    def _harvest_row_inputs(self, skip_key: str = None, redraw: bool = True) -> None:
         """把层级行「取值」列里手输但未回车的新名称收割进映射（点「下一步」时自动提交）
 
         2026-09-20：原设计必须按回车才生效（隐性操作），改为点「下一步」也自动生效。
         仅处理**层级行且文本确有变化**的情况；「（忽略 → 用兜底名）」项已在 _set_tgt_val 里
         被折算为空串，这里按忽略标签跳过，避免把忽略标签误当作新选项名。
+
+        2026-09-22（用户反馈修复）：新增 skip_key / redraw——
+          `_set_tgt_val` 安排整表重绘前会先调用本方法"抢救"其它行手输的名称；
+          skip_key 指定"调用方正自行设置的那一行"（跳过它，避免干扰其取值变化判断）；
+          redraw=False 时仅登记映射不做 UI 刷新（随后的整表重绘已足够）。
         """
         for key, var in list(getattr(self, "_row_vars", {}).items()):
+            if skip_key is not None and key == skip_key:
+                continue
             try:
                 txt = (var.get() or "").strip()
             except Exception:                      # noqa: BLE001
@@ -1465,7 +1481,7 @@ class ImportWizardDialog(ctk.CTkToplevel):
                 continue                           # 空 / 下拉选的「忽略」→ 无需收割
             if txt == (self.tgt_val.get(key) or "").strip():
                 continue                           # 取值未变化 → 不重复提交
-            self._set_tgt_val(key, txt)
+            self._set_tgt_val(key, txt, redraw=redraw)
 
     def _ignore_all(self) -> None:
         """全部忽略：清空所有目标位的取值与「未安置列」的忽略状态（表回到初始未指定）"""

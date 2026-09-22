@@ -12,8 +12,8 @@ from openpyxl import Workbook, load_workbook
 from .. import config  # 2026-08-29（B3 修复）：新建根目录兜底归入"未明确分类"
 from ..database import Database  # 2026-08-18（P1-1）：内容判重键 content_key
 from ..models import Entry
-from .json_io import (_gather_categories, _chain_names, _restore_pending_custom_fields,
-                      _restore_pending_tags,
+from .json_io import (_chain_names, _restore_pending_custom_fields,
+                      _restore_pending_tags, _scope_categories,
                       _restore_pending_images)
 
 _HEADERS = ["领域", "一级分类", "二级分类", "名称", "介绍", "溯源", "核心特征",
@@ -163,13 +163,19 @@ def _entry_domain_names(db, entry) -> str:
     return "/".join(d["name"] for d in db.linked_domains(root))
 
 
-def export_excel(db, path, category_id=None) -> int:
-    """导出全部（或指定分类子树）为 xlsx；返回导出的条目数"""
-    if category_id is None:
+def export_excel(db, path, category_id=None, project_id=None, domain_id=None) -> int:
+    """导出全部（或指定"分类 / 根目录 / 项目类别"子树）为 xlsx；返回导出的条目数
+
+    2026-09-22（用户要求 3-1）：新增 project_id / domain_id——按"项目类别""根目录"导出
+    该分支下的全部条目。范围解析与 JSON 导出共用 `json_io._scope_categories`；
+    三者只需传其一（优先级 category_id > domain_id > project_id），皆不传＝全库（行为不变）。
+    """
+    _cats, scope = _scope_categories(db, category_id=category_id,
+                                     domain_id=domain_id, project_id=project_id)
+    if scope is None:
         entries = db.list_all_entries()
     else:
-        cat_ids = [c["id"] for c in _gather_categories(db, parent_id=category_id)]
-        entries = [e for cid in cat_ids for e in db.list_entries(cid)]
+        entries = [e for cid in scope for e in db.list_entries(cid)]
 
     wb = Workbook()
     ws = wb.active

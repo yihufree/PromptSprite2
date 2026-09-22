@@ -12,7 +12,7 @@ import os
 from datetime import datetime
 
 from ..config import data_dir
-from .json_io import _gather_categories, _ancestor_chain_cats
+from .json_io import _scope_categories, scope_title
 
 _ENTRY_FIELDS = [
     ("② 介绍", "intro"), ("③ 溯源", "origin"), ("④ 核心特征", "features"),
@@ -157,8 +157,13 @@ def _section_html(title: str, entries) -> str:
     return "".join(body)
 
 
-def export_html(db, path, category_id=None) -> int:
-    """导出全部（或指定分类子树）为单文件 HTML；返回导出的条目数"""
+def export_html(db, path, category_id=None, project_id=None, domain_id=None) -> int:
+    """导出全部（或指定"分类 / 根目录 / 项目类别"子树）为单文件 HTML；返回导出的条目数
+
+    2026-09-22（用户要求 3-1）：新增 project_id / domain_id——按"项目类别""根目录"导出
+    该分支下的全部条目。范围解析与 JSON 导出共用 `json_io._scope_categories`；
+    三者只需传其一（优先级 category_id > domain_id > project_id），皆不传＝全库（行为不变）。
+    """
     sections = []   # [(维度标题或None, [(分类标题, 条目列表), …])]
     total = 0
     # 2026-09-13（1-A-5 收尾）：为条目附上"自定义字段（显示名, 值）"，供 _entry_html 展示
@@ -189,7 +194,7 @@ def export_html(db, path, category_id=None) -> int:
                 _e["_gallery"] = []
         return es
 
-    if category_id is None:
+    if category_id is None and project_id is None and domain_id is None:
         # 按领域分组：领域 → 一级(维度) → 二级(分类)
         for d in db.list_domains():
             domain_sections = []
@@ -200,15 +205,16 @@ def export_html(db, path, category_id=None) -> int:
                     total += len(es)
             sections.append((d["name"], domain_sections))
     else:
-        # 子树导出：以根分类为标题（含路径上下文）
-        chain = _ancestor_chain_cats(db, category_id)
-        root_title = " / ".join(c["name"] for c in chain)
-        cat_ids = [c["id"] for c in _gather_categories(db, parent_id=category_id)]
-        subs = [(c["name"], _with_custom(db.list_entries(c["id"]))) for c in
-                _gather_categories(db, parent_id=category_id)]
+        # 2026-09-22（用户要求 3-1）：统一走 `_scope_categories`——分类 / 根目录 / 项目类别
+        #   三种范围共用一套解析（分类范围含祖先链，仅作路径上下文，不重复出节）。
+        cats, scope = _scope_categories(db, category_id=category_id,
+                                        domain_id=domain_id, project_id=project_id)
+        subs = [(c["name"], _with_custom(db.list_entries(c["id"])))
+                for c in cats if (scope is None or c["id"] in scope)]
         for _, es in subs:
             total += len(es)
-        sections.append((root_title, subs))
+        sections.append((scope_title(db, category_id=category_id,
+                                     domain_id=domain_id, project_id=project_id), subs))
 
     body_html = []
     for group_title, subs in sections:

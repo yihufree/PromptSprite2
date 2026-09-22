@@ -205,7 +205,9 @@ def main():
         check("view cat at L1-with-children [view=%s cat=%s]" % (app._view, app._cur_cat_id),
               app._view == ("cat", l1))
         check("add btn green text", app._add_entry_btn.cget("text_color") == "white")
-        check("add btn font15", "15" in str(app._add_entry_btn.cget("font")))
+        # 2026-09-22（用户要求 1）：五个「新增」按钮高度统一为 28，"新增条目"字号由 15 调整为 13
+        check("add btn font13", "13" in str(app._add_entry_btn.cget("font")))
+        check("add btn height28", float(app._add_entry_btn.cget("height")) == 28)
         check("add available at non-leaf", app._add_available())
 
         # 详情名称字段：顶部无输入框、名称字段 ① 在详情区
@@ -1345,20 +1347,38 @@ def main():
                               for w in dlg._look_widgets.values())
                       and all(w["size"].get() == dlg._look_default
                               for w in dlg._look_widgets.values()))
+                # 2026-09-22（用户要求 2）：外观页改为"列标签行 + 6 行设置"置于**只占自然宽度**的
+                #   子容器内（消除列被拉宽、导致「字体设置」与「字号设置」间距过大的问题）→
+                #   以下两条宽度断言改为**按子容器（host）递归/按行**取控件，避免改布局后变成空断言。
+                _hosts = {w["family"].master for w in dlg._look_widgets.values()}
+                _host = _hosts.pop() if len(_hosts) == 1 else _pg
+                _lbls_all = []
+                walk_types(_pg, "CTkLabel", _lbls_all)
                 _wide = [(str(c.cget("text"))[:12], c.winfo_reqwidth())
-                         for c in _pg.winfo_children()
-                         if isinstance(c, _ctk.CTkLabel) and c.winfo_reqwidth() > max(tabv.winfo_width() - 50, 200)]
+                         for c in _lbls_all
+                         if c.winfo_reqwidth() > max(tabv.winfo_width() - 50, 200)]
                 check("appearance page: 无文字超出页宽 [%s]" % (_wide or "无"), not _wide)
                 _overs = []
-                for _r in range(1, len(dlg._look_widgets) + 1):
+                for _r in sorted({int(w["family"].grid_info().get("row", -1))
+                                  for w in dlg._look_widgets.values()}):
                     _sum = 0
-                    for c in _pg.winfo_children():
+                    for c in _host.winfo_children():
                         _gi = c.grid_info()
                         if _gi and int(_gi.get("row", -1)) == _r:
                             _sum += c.winfo_reqwidth()
                     if _sum + 50 > max(tabv.winfo_width(), 200):
                         _overs.append((_r, _sum))
                 check("appearance page: 每行控件总宽放得下 [%s]" % (_overs or "无"), not _overs)
+                # 2026-09-22（用户要求 2）：四个列标签必须存在，且"字体设置"与"字号设置"的
+                #   横向间距应回到正常值（改前约 278px，因列被跨列控件撑宽）
+                _hdr = [str(c.cget("text")) for c in _lbls_all
+                        if str(c.cget("text") or "") in ("字体设置", "字号设置",
+                                                         "颜色设置（文字）", "颜色设置（背景）")]
+                check("appearance page: 四个列标签齐备 [%s]" % _hdr, len(_hdr) == 4)
+                _w0 = dlg._look_widgets[list(dlg._look_widgets)[0]]
+                _gap = (_w0["size"].winfo_rootx() - _w0["family"].winfo_rootx()
+                        - _w0["family"].winfo_width())
+                check("appearance page: 字体↔字号间距正常 [%d px ≤ 60]" % _gap, _gap <= 60)
         # 7.1 用户要求 1：把"在查询栏输入 #无标签 查无标签条目"的方法写进「关于」页；
         #     并保证该说明不超出「关于」页可视宽度（否则会被裁切）
         if tabv is not None:
@@ -1412,9 +1432,10 @@ def main():
             check("about window mentions 无标签 entry",
                   bool(_newtops) and "无标签" in _txt and "#none" in _txt)
             # 2026-09-16（批次 15，用户要求 4）：关于窗口补入 09-15/09-16 增强说明
-            check("about window mentions 09-16 增强（区块排序/隐藏 + 智能自动取词）",
-                  "后续增强" in _txt and "区块" in _txt
-                  and "自动取词" in _txt and "全部隐藏" in _txt)
+            # 2026-09-22（用户要求 2）：关于内容已**精简重写**（版本修订只留一行摘要，
+            #   不再有"V2.1.0 后续增强"小节）→ 本断言改为校验**新内容仍覆盖这些能力**
+            check("about window mentions 区块排序/隐藏 + 智能自动取词",
+                  "区块" in _txt and "自动取词" in _txt and "全部隐藏" in _txt)
             for _t in _newtops:
                 try:
                     _t.grab_release()

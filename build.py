@@ -58,7 +58,7 @@ def _load_version() -> str:
 
 def versioned_exe_path() -> str:
     """EXE 产物文件名格式：PromptSprite_<最后修改日期YYMMDD>_V<版本号>.EXE
-    （2026-09-07 第7条，如 PromptSprite_260907_V1.6.0.EXE）"""
+    （2026-09-07 第7条；2026-09-22：示例版本号更新为当前 V2.3.0）"""
     tag = datetime.now().strftime("%y%m%d")
     return os.path.join(DIST_DIR, f"PromptSprite_{tag}_V{_load_version()}.exe")
 

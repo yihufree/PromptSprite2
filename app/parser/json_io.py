@@ -101,6 +101,63 @@ def _domain_links(db, cat_ids) -> dict:
     return links
 
 
+def _scope_categories(db, category_id=None, domain_id=None, project_id=None):
+    """解析导出范围 → `(cats, scope_ids)`；2026-09-22（用户要求 3-1）新增。
+
+    背景：原"导出当前分类"只认 `category_id`（一级/二级分类），无法按"项目类别""根目录"
+    导出整个分支。此处把三种范围统一为一套解析，供 JSON/Excel/HTML 导出共用。
+
+    - `category_id` 指定 → 该分类子树 + **祖先链**（保留路径上下文）；
+    - `domain_id`   指定 → 该根目录（领域）关联的全部分类（一级分类及其全部子级）；
+    - `project_id`  指定 → 该项目类别下全部根目录所关联的全部分类；
+    - 三者皆空           → 全部分类（全库导出）。
+
+    返回：
+      - `cats`：需要写入包/参与展示的分类 dict 列表（去重保序）；
+      - `scope_ids`：**条目位置过滤范围**（list，按收集顺序）；`None` 表示全库、不限制位置。
+    优先级（正常只会传其一）：category_id > domain_id > project_id。
+    """
+    if category_id is not None:
+        subtree = _gather_categories(db, parent_id=category_id)
+        seen, cats = set(), []
+        for c in _ancestor_chain_cats(db, category_id) + subtree:
+            if c["id"] not in seen:
+                seen.add(c["id"])
+                cats.append(c)
+        return cats, [c["id"] for c in subtree]
+    if domain_id is not None:
+        cats = _gather_categories(db, domain_id=domain_id)
+        return cats, [c["id"] for c in cats]
+    if project_id is not None:
+        seen, cats = set(), []
+        for d in db.list_domains(project_id=project_id):
+            for c in _gather_categories(db, domain_id=d["id"]):
+                if c["id"] not in seen:
+                    seen.add(c["id"])
+                    cats.append(c)
+        return cats, [c["id"] for c in cats]
+    return _gather_categories(db), None
+
+
+def scope_title(db, category_id=None, domain_id=None, project_id=None) -> str:
+    """导出范围的显示名（2026-09-22，用户要求 3-1）：分类路径 / 根目录名 / 项目类别名。
+
+    供 HTML 分节标题与界面"默认文件名"共用；任何异常返回空串（不阻断导出流程）。
+    """
+    try:
+        if category_id is not None:
+            return " / ".join(c["name"] for c in _ancestor_chain_cats(db, category_id))
+        if domain_id is not None:
+            d = db.get_domain(domain_id)
+            return (d or {}).get("name") or ""
+        if project_id is not None:
+            p = db.get_project(project_id)
+            return (p or {}).get("name") or ""
+    except Exception:                                  # noqa: BLE001
+        pass
+    return ""
+
+
 def apply_field_defs(db, defs, resolver=None) -> dict:
     """把随包的字段定义写入本地（2026-09-13：支持"逐项确认"）。
 
@@ -364,10 +421,14 @@ def _restore_pending_images(db, max_id_before: int, pending_imgs: list) -> int:
 # ---------------------------------------------------------------------- #
 # 导出
 # ---------------------------------------------------------------------- #
-def export_json(db, path, category_id=None, computer_code=None, day=None) -> int:
-    """导出全部（或指定分类子树）为 JSON（**v6**：含稳定 ID 与多位置清单）；返回导出的条目数。
+def export_json(db, path, category_id=None, computer_code=None, day=None,
+                project_id=None, domain_id=None) -> int:
+    """导出全部（或指定分类子树 / 根目录子树 / 项目类别子树）为 JSON（**v6**）；返回条目数。
 
     computer_code/day：增量备份场景补充来源信息（电脑代号/日期）；普通导出可省略。
+    project_id/domain_id：**2026-09-22（用户要求 3-1）新增**——按"项目类别""根目录"导出
+      该分支下的全部数据（分类 + 条目）。三者只需传其一，优先级 category_id > domain_id
+      > project_id；皆不传＝全库导出（与原来完全一致）。
 
     2026-09-17（FR-93/FR-94，v6）两处行为变化：
       ① 每条例目携带 `uuid`（稳定 ID，跨机器认人）；
@@ -375,28 +436,21 @@ def export_json(db, path, category_id=None, computer_code=None, day=None) -> int
          各位置写入 `locations` 数组，导入时据此重建关联（"1 条 + N 位置"）。
          因此 `summary.add_entries` 由"位置行数"变为**唯一条目数**（更准确）。
     """
+    export_cats, _scope_list = _scope_categories(
+        db, category_id=category_id, domain_id=domain_id, project_id=project_id)
     _scope_ids = None      # 子树导出时的位置范围（None = 全库，不限制位置）
-    if category_id is None:
-        export_cats = _gather_categories(db)
+    if _scope_list is None:
         export_entries = db.list_all_entries()
     else:
-        chain = _ancestor_chain_cats(db, category_id)
-        subtree = _gather_categories(db, parent_id=category_id)
-        seen, export_cats = set(), []
-        for c in chain + subtree:  # 路径上下文(链) + 子树，按 id 去重
-            if c["id"] not in seen:
-                seen.add(c["id"])
-                export_cats.append(c)
-        cat_ids = [c["id"] for c in subtree]
         # 2026-09-17（FR-94）：按**条目 id 去重**——多位置条目在子树内只出现一次
         _seen_e, export_entries = set(), []
-        for _cid in cat_ids:
+        for _cid in _scope_list:
             for _e in db.list_entries(_cid):
                 if _e["id"] in _seen_e:
                     continue
                 _seen_e.add(_e["id"])
                 export_entries.append(_e)
-        _scope_ids = set(cat_ids)
+        _scope_ids = set(_scope_list)
 
     projects = db.list_projects()
     p_by_id = {p["id"]: p for p in projects}

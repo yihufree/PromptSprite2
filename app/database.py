@@ -3067,6 +3067,235 @@ class Database:
             self.conn.rollback()
             raise
 
+    # ------------------------------------------------------------------ #
+    # 批量删除（2026-09-22，用户要求 3-2：按 项目类别/根目录/分类 批量删除本分支全部数据）
+    #
+    #   背景：原先删除只能针对"分类（categories）"层级，数据量大时逐项删除体验差。
+    #   本段提供数据层能力；删除前的两份备份（全量库快照 + 分支 JSON 导出）由 UI 层完成，
+    #   数据层只负责"按方案执行"，并做兜底校验（短语 / 口令）防误删。
+    #
+    #   两条既定口径（2026-09-22 用户决策）：
+    #     ① 条目处置（决策 5）：**只有该条目的全部位置都落在本次删除范围内**，才处置
+    #        条目本体；只要还有位置在范围之外，就仅删除范围内的位置关联，条目本体保留
+    #        （其他分支仍可访问）。
+    #     ② 结构处置（决策：独占删除、共享保留）：一级分类与根目录是多对多
+    #        （domain_category）。删除某根目录/项目类别时，**仍被范围外根目录关联的
+    #        一级分类记录保留**，仅靠删除域记录时外键级联解除关联；只有"仅在范围内"
+    #        的一级分类才连同其子树一起删除。
+    #
+    #   注：本段全是**新增**方法，不改动既有 delete_category_cascade / delete_domain /
+    #       delete_project 的行为，确保既有右键菜单流程零影响。
+    # ------------------------------------------------------------------ #
+    # 批量删除"项目类别"层级的专用口令（2026-09-22 用户决策 3：更高级别确认；
+    #   该口令是公开默认值，作用是"多一道手工关卡"，真正的兜底是双备份 + 回收站）
+    _BATCH_DELETE_PASSPHRASE = "123456"
+
+    def _l1_domain_links(self) -> dict:
+        """全部一级分类 → 关联到的根目录 id 集合（用于判断"独占 / 共享"）"""
+        rows = self.conn.execute(
+            "SELECT dc.category_id AS cid, dc.domain_id AS did "
+            "FROM domain_category dc JOIN categories c ON c.id = dc.category_id "
+            "WHERE c.parent_id IS NULL"
+        ).fetchall()
+        out = {}
+        for r in rows:
+            out.setdefault(r["cid"], set()).add(r["did"])
+        return out
+
+    def _batch_delete_plan(self, kind: str, scope_id: int) -> Optional[dict]:
+        """批量删除方案（**只读**，不修改任何数据）；返回 None 表示目标不存在。
+
+        kind：'cat'（一级/二级分类）/ 'domain'（根目录）/ 'project'（项目类别）
+        返回字段：
+          title          分支名称（供 UI 显示）
+          scope_cats     将被删除的分类记录 id（含全部子分类）
+          l1_delete      将被删除记录的一级分类 id
+          l1_shared      共享保留（仅解除关联）的一级分类 id
+          domain_delete  将被删除的根目录 id
+          project_delete 将被删除的项目类别 id（或 None）
+          entries_purge  将被处置本体的条目 id（全部位置都在范围内）
+          entries_unlink [(条目 id, [范围内应移除的位置分类 id]), …]
+        """
+        plan = {
+            "kind": kind, "scope_id": scope_id, "title": "",
+            "scope_cats": [], "l1_delete": [], "l1_shared": [],
+            "domain_delete": [], "project_delete": None,
+            "entries_purge": [], "entries_unlink": [],
+        }
+        if kind == "cat":
+            c = self.get_category(scope_id)
+            if not c:
+                return None
+            plan["title"] = c["name"]
+            plan["scope_cats"] = self._collect_category_ids(scope_id)
+        elif kind == "domain":
+            d = self.get_domain(scope_id)
+            if not d:
+                return None
+            plan["title"] = d["name"]
+            plan["domain_delete"] = [scope_id]
+            scope_domains = {scope_id}
+            links = self._l1_domain_links()
+            for cid in sorted(cid for cid, doms in links.items() if scope_id in doms):
+                if links[cid] <= scope_domains:
+                    plan["l1_delete"].append(cid)
+                else:
+                    plan["l1_shared"].append(cid)   # 共享：分类记录保留，删域记录时级联解除关联
+            for cid in plan["l1_delete"]:
+                plan["scope_cats"].extend(self._collect_category_ids(cid))
+        elif kind == "project":
+            p = self.get_project(scope_id)
+            if not p:
+                return None
+            plan["title"] = p["name"]
+            plan["project_delete"] = scope_id
+            plan["domain_delete"] = [d["id"] for d in self.list_domains(project_id=scope_id)]
+            scope_domains = set(plan["domain_delete"])
+            links = self._l1_domain_links()
+            for cid in sorted(cid for cid, doms in links.items() if doms & scope_domains):
+                if links[cid] <= scope_domains:
+                    plan["l1_delete"].append(cid)
+                else:
+                    plan["l1_shared"].append(cid)
+            for cid in plan["l1_delete"]:
+                plan["scope_cats"].extend(self._collect_category_ids(cid))
+        else:
+            raise ValueError(f"未知的批量删除层级：{kind}")
+
+        # 条目处置：范围内涉及的条目逐个判断"是否全部位置都在范围内"
+        if plan["scope_cats"]:
+            ids = plan["scope_cats"]
+            ph = ",".join("?" * len(ids))
+            rows = self.conn.execute(
+                "SELECT e.id AS id FROM entries e WHERE e.category_id IN (" + ph + ")"
+                " UNION "
+                "SELECT l.entry_id AS id FROM entry_links l WHERE l.category_id IN (" + ph + ")",
+                ids + ids,
+            ).fetchall()
+            for r in rows:
+                eid = r["id"]
+                locs = self._entry_location_ids(eid)
+                in_scope = [c for c in locs if c in set(ids)]
+                if len(in_scope) == len(locs):     # 全部位置都在范围内 → 处置本体
+                    plan["entries_purge"].append(eid)
+                elif in_scope:                     # 范围外仍有位置 → 只解除范围内的位置
+                    plan["entries_unlink"].append((eid, in_scope))
+        return plan
+
+    def count_scope_items(self, kind: str, scope_id: int) -> dict:
+        """批量删除影响面统计（**只读**，供 UI 确认弹窗）。
+
+        返回 {'exists', 'title', 'categories', 'l1_shared', 'domains', 'projects',
+              'entries_purge', 'entries_unlink', 'entries', 'images'}
+          categories     将被删除的分类记录数（含子分类）
+          l1_shared      共享保留、仅解除关联的一级分类数
+          entries_purge  将被处置本体的条目数（全部位置都在范围内）
+          entries_unlink 仅解除位置关联的条目数（范围外仍有位置，条目本体保留）
+          images         将被释放的图片数（仅"硬删除"才真正删除图片文件）
+        """
+        plan = self._batch_delete_plan(kind, scope_id)
+        if plan is None:
+            return {"exists": False, "title": ""}
+        purge = plan["entries_purge"]
+        images = 0
+        if purge:
+            ph = ",".join("?" * len(purge))
+            images = self.conn.execute(
+                "SELECT COUNT(*) FROM entry_images WHERE entry_id IN (" + ph + ")",
+                purge).fetchone()[0]
+            images += self.conn.execute(
+                "SELECT COUNT(*) FROM entries WHERE id IN (" + ph + ")"
+                " AND image_path IS NOT NULL AND image_path <> ''", purge).fetchone()[0]
+        return {
+            "exists": True,
+            "title": plan["title"],
+            "categories": len(plan["scope_cats"]),
+            "l1_shared": len(plan["l1_shared"]),
+            "domains": len(plan["domain_delete"]),
+            "projects": 1 if plan["project_delete"] else 0,
+            "entries_purge": len(purge),
+            "entries_unlink": len(plan["entries_unlink"]),
+            "entries": len(purge) + len(plan["entries_unlink"]),
+            "images": images,
+        }
+
+    def delete_scope_cascade(self, kind: str, scope_id: int, confirm_phrase: str,
+                             passphrase: Optional[str] = None,
+                             mode: str = "soft") -> dict:
+        """按分支批量删除（**破坏性**；数据层兜底校验，UI 层另有多重确认）。
+
+        kind：'cat' / 'domain' / 'project'
+        mode：'soft'（条目本体移入回收站，可恢复）/ 'hard'（条目本体彻底删除并释放图片）
+        passphrase：仅 kind='project' 需要（更高级别确认，见用户决策 3）
+
+        返回 {'categories','domains','projects','entries_purge','entries_unlink'}。
+        """
+        if confirm_phrase != self._CASCADE_PHRASE:
+            raise ValueError("确认短语不正确，已取消批量删除")
+        if kind == "project" and passphrase != self._BATCH_DELETE_PASSPHRASE:
+            raise ValueError("口令不正确，已取消批量删除")
+        if mode not in ("soft", "hard"):
+            raise ValueError(f"未知的删除方式：{mode}")
+        plan = self._batch_delete_plan(kind, scope_id)
+        if plan is None:
+            raise ValueError("目标不存在，无法批量删除")
+        try:
+            # 1) 只解除位置关联的条目（范围外仍有位置 → 本体保留）
+            for eid, cids in plan["entries_unlink"]:
+                with self.conn:
+                    self._entry_location_apply_tx(eid, remove=cids, add=[])
+            # 2) 处置本体的条目（全部位置都在范围内）
+            for eid in plan["entries_purge"]:
+                if mode == "soft":
+                    self.trash_entry(eid, reason="批量删除")
+                else:
+                    self.delete_entry(eid, purge_image=True)
+            # 3) 删除分类结构（含子树；entry_links 由外键 ON DELETE CASCADE 自动清除）
+            ids = plan["scope_cats"]
+            if ids:
+                for cid in ids:
+                    c = self.get_category(cid)
+                    if c:
+                        self._log_deletion("category", c["name"],
+                                           chain=self._category_name_chain(cid))
+                ph = ",".join("?" * len(ids))
+                self.conn.execute("DELETE FROM categories WHERE id IN (" + ph + ")", ids)
+            # 4) 删除根目录记录（domain_category 关联由外键 ON DELETE CASCADE 自动解除）
+            for did in plan["domain_delete"]:
+                d = self.get_domain(did)
+                if d:
+                    self._log_deletion("domain", d["name"])
+                self.conn.execute("DELETE FROM domains WHERE id = ?", (did,))
+            # 5) 删除项目类别记录
+            if plan["project_delete"]:
+                p = self.get_project(plan["project_delete"])
+                if p:
+                    self._log_deletion("project", p["name"])
+                self.conn.execute("DELETE FROM projects WHERE id = ?",
+                                  (plan["project_delete"],))
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return {
+            "categories": len(plan["scope_cats"]),
+            "domains": len(plan["domain_delete"]),
+            "projects": 1 if plan["project_delete"] else 0,
+            "entries_purge": len(plan["entries_purge"]),
+            "entries_unlink": len(plan["entries_unlink"]),
+        }
+
+    def delete_domain_cascade(self, domain_id: int, confirm_phrase: str,
+                              mode: str = "soft") -> dict:
+        """批量删除某根目录下的全部数据（独占分类删除、共享分类保留）"""
+        return self.delete_scope_cascade("domain", domain_id, confirm_phrase, mode=mode)
+
+    def delete_project_cascade(self, project_id: int, confirm_phrase: str,
+                               passphrase: str, mode: str = "soft") -> dict:
+        """批量删除某项目类别下的全部数据（需 确认短语 + 专用口令 双重兜底）"""
+        return self.delete_scope_cascade("project", project_id, confirm_phrase,
+                                         passphrase=passphrase, mode=mode)
+
     def toggle_favorite(self, entry_id: int) -> int:
         """切换收藏状态，返回新状态(0/1)"""
         self.conn.execute(
