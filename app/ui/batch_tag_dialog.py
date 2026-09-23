@@ -611,6 +611,16 @@ class BatchTagDialog(ctk.CTkToplevel):
         if mode == "当前列表":
             if not self._is_current_db():
                 return []          # "当前列表"指的是软件里正在看的列表，对其他库无意义
+            # 2026-09-23（阶段0-2，用户确认方案 A）：改走主窗口统一取值口 `_current_scope_entries()`。
+            #   搜索视图改为分页加载后 `_entries_all` 只含"已加载部分"（首屏 50 条 + 点过的"显示更多"），
+            #   直接沿用会让"当前列表"**静默缩小范围**（数据风险）；统一取值口在分页视图下会按需
+            #   重查一次"全部命中"，非分页视图仍返回 `_entries_all`，语义与改动前完全一致。
+            try:
+                fn = getattr(self.master, "_current_scope_entries", None)
+                if callable(fn):
+                    return list(fn() or [])
+            except Exception:
+                pass
             return list(getattr(self.master, "_entries_all", None) or [])
         return self._target_db.list_all_entries()
 

@@ -17,6 +17,13 @@ from tkinter import messagebox
 import customtkinter as ctk
 from tkinter import ttk
 
+from . import ui_common as _ui_common        # 2026-09-23：用于取控件缩放系数
+
+# 2026-09-23（用户要求 3）：本窗口**距屏幕顶端固定距离**（实际px）——位置恒定、
+#   不随主窗口移动，也不会被屏幕下边缘遮住（不足时改为压低窗口高度）。
+#   取值与 export_scope_dialog._SCOPE_TOP_MARGIN / move_selector._TOP_MARGIN 一致。
+_TOP_MARGIN = 50
+
 
 class CopyMoveDialog(ctk.CTkToplevel):
     def __init__(self, master, db, src_type: str, src_id: int, src_name: str,
@@ -91,16 +98,33 @@ class CopyMoveDialog(ctk.CTkToplevel):
         # 底部按钮
         btn_row = ctk.CTkFrame(self, fg_color="transparent")
         btn_row.grid(row=6, column=0, sticky="ew", padx=12, pady=(0, 12))
-        ctk.CTkButton(btn_row, text="确定", width=88,
-                      command=self._confirm).pack(side="right", padx=(4, 0))
+        self.btn_ok = ctk.CTkButton(btn_row, text="确定", width=88,
+                                    command=self._confirm)
+        self.btn_ok.pack(side="right", padx=(4, 0))
         ctk.CTkButton(btn_row, text="取消", width=88,
                       command=self._cancel).pack(side="right", padx=4)
 
-        # 居中于主窗口
+        # 2026-09-23（用户要求 3）：**窗口位置固定**——水平居中于屏幕、垂直距屏幕顶端
+        #   固定 _TOP_MARGIN px；不再"居中于主窗口"（原实现使本窗口跟随主窗口移动，
+        #   主窗口靠下时本窗口底部会被屏幕遮住）。并保证整窗始终在屏幕内：屏幕高度
+        #   放不下时**压低窗口高度**（内部结构树可滚动，不影响使用），而非让底部出屏。
         self.update_idletasks()
-        x = master.winfo_x() + (master.winfo_width() - 480) // 2
-        y = master.winfo_y() + (master.winfo_height() - 600) // 2
-        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        _w_real = self.winfo_width()
+        _h_real = self.winfo_height()
+        _x = max((sw - _w_real) // 2, 0)
+        _max_h_real = sh - _TOP_MARGIN - 24                 # 屏幕内底部再留 24px 余量
+        try:
+            # 注意：CTkToplevel 本体不"应用"缩放（widget_scaling 会返回 1.0 而算错），
+            #   必须取**窗口内子控件**的缩放系数（＝全局控件缩放，与 geometry() 同口径）。
+            _scale = _ui_common.widget_scaling(self.btn_ok) or 1.0
+        except Exception:                                   # noqa: BLE001
+            _scale = 1.0
+        if _h_real > _max_h_real:
+            self.geometry("%dx%d+%d+%d" % (_w_real / _scale, _max_h_real / _scale,
+                                           _x, _TOP_MARGIN))
+        else:
+            self.geometry("+%d+%d" % (_x, _TOP_MARGIN))
         self.lift()
         self._set_preview()
 

@@ -25,6 +25,9 @@ from app import auto_words, config, tagger, tagger_dict   # 2026-09-18：词表�
 from app.ui import main_window as _mw
 from app.ui import auto_words_dialog as _awmod   # 2026-09-16（批次 12-3）：自动取词管理对话框
 from app.ui import batch_tag_dialog as _btd   # 阶段 2：批量打标（备份桩用）
+from app.ui.copy_move_dialog import CopyMoveDialog
+from app.ui.export_scope_dialog import ExportScopeDialog   # 2026-09-23（需求 5）：导出范围对话框
+from app.ui import move_selector as _msl   # 2026-09-23（需求 3）：取 _TOP_MARGIN 断言用
 from app.ui.main_window import MainWindow
 from app.ui.move_selector import MoveSelector
 from app.ui.settings_dialog import SettingsDialog
@@ -233,15 +236,25 @@ def main():
 
         # 顶部命令条顺序（像素）——"🗑 删除"已移到底部常驻栏，不再出现在命令条
         # 2026-09-10（用户要求）："☆ 收藏"与"编辑/浏览"互换位置 → 收藏在最左
+        # 2026-09-23（本轮需求 2）：行首标签「⑧/⑨ 提示词：」已删、「☆ 收藏」移入第二行最左 ⇒
+        #   第一行顺序＝ 移动到 → 关联到 → 复制到；第二行顺序＝ 收藏 → 复制中文 → 复制英文 → 复制全部。
         app.update()
         row1 = app.detail_head.winfo_children()[0]
-        want = ("☆ 收藏", "➜ 移动到", "↔ 关联到", "⧉ 复制到")
+        row2 = app.detail_head.winfo_children()[1]
+        want = ("➜ 移动到", "↔ 关联到", "⧉ 复制到")
         pos = {}
         for child in row1.winfo_children():
             if type(child).__name__ == "CTkButton" and child.cget("text") in want:
                 pos[child.cget("text")] = child.winfo_x()
         seq = [t for t, _ in sorted(pos.items(), key=lambda kv: kv[1])]
         check("command bar order", seq == list(want))
+        want2 = ("☆ 收藏", "复制中文", "复制英文", "📋 复制全部")
+        pos2 = {}
+        for child in row2.winfo_children():
+            if type(child).__name__ == "CTkButton" and child.cget("text") in want2:
+                pos2[child.cget("text")] = child.winfo_x()
+        seq2 = [t for t, _ in sorted(pos2.items(), key=lambda kv: kv[1])]
+        check("command bar row2 order (收藏→中文→英文→全部)", seq2 == list(want2))
         check("move/link/copy enabled", app.move_btn.cget("state") == "normal"
               and app.link_btn.cget("state") == "normal"
               and app.copyto_btn.cget("state") == "normal")
@@ -1277,20 +1290,22 @@ def main():
             _pgf = tabv._tab_dict.get("字段")
             check("field page exists & 字段管理按钮在其上",
                   _pgf is not None and dlg._mgr_btn_field.winfo_parent() == str(_pgf))
-            # 标签与词表页的管理入口共 4 个：词表 / 热点词 / 批量打标 / 清理垃圾标签。
+            # 标签与词表页的管理入口共 5 个：词表 / 热点词 / 批量打标 / 清理垃圾标签 / 来源标注。
             # 2026-09-17（用户要求 3）：为不超出本页高度，「批量打标」与「清理垃圾标签」
             #   并入**同一行的 Frame** ⇒ 直接挂在页面上的 CTkButton 变为 2 个，
             #   4 个按钮本体仍都在本页（下面逐项校验）。
+            # 2026-09-23（阶段 1-3）：新增「🏷 来源标注…」，同样放入该行 Frame（不增页高）。
             _pgt = tabv._tab_dict.get("标签与词表")
             _tag_mgr = [b for b in (_pgt.winfo_children() if _pgt is not None else [])
                         if isinstance(b, _ctk.CTkButton)]
             _mgr_all = (dlg._mgr_btn_dict, dlg._mgr_btn_hot,
-                        dlg._mgr_btn_batch, dlg._mgr_btn_cleanup)
-            check("tag page holds 4 mgr entries (2 direct + 2 in row frame) [%d]" % len(_tag_mgr),
+                        dlg._mgr_btn_batch, dlg._mgr_btn_cleanup, dlg._mgr_btn_source)
+            check("tag page holds 5 mgr entries (2 direct + 3 in row frame) [%d]" % len(_tag_mgr),
                   len(_tag_mgr) == 2
                   and all(b is not dlg._mgr_btn_field for b in _tag_mgr)
                   and all(b.winfo_exists() for b in _mgr_all)
                   and dlg._mgr_btn_batch.master.master == _pgt
+                  and dlg._mgr_btn_source.master.master == _pgt
                   and dlg._mgr_btn_cleanup.master.master == _pgt)
 
             # ---- 11-6（2026-09-16，用户确认问题 2）：标签推荐策略与顺序（勾选 + ↑/↓ 排序） ----
@@ -1484,16 +1499,17 @@ def main():
             pump(app)
             _m_locked = [str(b.cget("state")) for b in
                          (_dlg2._mgr_btn_dict, _dlg2._mgr_btn_hot,
-                          _dlg2._mgr_btn_cleanup, _dlg2._mgr_btn_field, _dlg2._mgr_btn_batch)]
-            check("settings(6-2): 锁定态可打开设置且 5 个管理入口全部置灰 [%s]" % (_m_locked,),
-                  len(_m_locked) == 5 and all(s == "disabled" for s in _m_locked))
+                          _dlg2._mgr_btn_cleanup, _dlg2._mgr_btn_field, _dlg2._mgr_btn_batch,
+                          _dlg2._mgr_btn_source)]
+            check("settings(6-2): 锁定态可打开设置且 6 个管理入口全部置灰 [%s]" % (_m_locked,),
+                  len(_m_locked) == 6 and all(s == "disabled" for s in _m_locked))
             try:
                 _dlg2.grab_release()
             except Exception:
                 pass
             _dlg2.destroy(); pump(app)
         except Exception as _e:
-            check("settings(6-2): 锁定态可打开设置且 5 个管理入口全部置灰 [err=%s]" % _e, False)
+            check("settings(6-2): 锁定态可打开设置且 6 个管理入口全部置灰 [err=%s]" % _e, False)
         finally:
             app._lock_on = _lock_bs
         # 解锁态：管理入口不受影响（保证本次改动未破坏正常路径）
@@ -1501,9 +1517,10 @@ def main():
         pump(app)
         _m_free = [str(b.cget("state")) for b in
                    (_dlg3._mgr_btn_dict, _dlg3._mgr_btn_hot,
-                    _dlg3._mgr_btn_cleanup, _dlg3._mgr_btn_field, _dlg3._mgr_btn_batch)]
-        check("settings(6-2): 解锁态 5 个管理入口正常可用 [%s]" % (_m_free,),
-              len(_m_free) == 5 and all(s == "normal" for s in _m_free))
+                    _dlg3._mgr_btn_cleanup, _dlg3._mgr_btn_field, _dlg3._mgr_btn_batch,
+                    _dlg3._mgr_btn_source)]
+        check("settings(6-2): 解锁态 6 个管理入口正常可用 [%s]" % (_m_free,),
+              len(_m_free) == 6 and all(s == "normal" for s in _m_free))
         try:
             _dlg3.grab_release()
         except Exception:
@@ -1512,9 +1529,12 @@ def main():
 
         # ---- 8. 性能优化（2026-09-14）：标签云换行 / 显示上限 / 条目区渲染上限 / 按钮顺序 ----
         ts = "2026-09-14 00:00:00"
-        # 8.0 默认上限常量（用户确认：条目区 50/步长 50、标签页 50）
+        # 8.0 默认上限常量（用户确认：条目区 50、标签页 50）
+        # 2026-09-23（第 5 组需求 1-②）：条目区改为「每页」档位（对齐标签页 50/100/200/500/不限），
+        #   原"步长 ENTRY_RENDER_STEP"已删除，改断言档位集合。
         check("default render limits are 50",
-              _mw.ENTRY_RENDER_LIMIT == 50 and _mw.ENTRY_RENDER_STEP == 50
+              _mw.ENTRY_RENDER_LIMIT == 50
+              and tuple(_mw.ENTRY_PAGE_LIMITS) == ("50", "100", "200", "500", "不限")
               and _mw.TAG_PAGE_LIMIT == 50)
         # 8.1 工具栏按钮顺序：🏷标签 移到最左（col1）；🔒锁定 移到 导出(col8) 与 设置(col10) 之间(col9);
         #     2026-09-14（"无标签条目"入口 方案 A + 用户要求 4）：新增"🏷 无标条目"在"📂 无类条目"
@@ -1579,6 +1599,7 @@ def main():
               and app._tag_page_group.master is app._tag_bottom_row
               and app._tag_limit_om.master is app._tag_page_group
               and app._tag_page_lbl.master is app._tag_page_group
+              and app._tag_page_entry.master is app._tag_page_group
               and all(b.master is app._tag_page_group for b in app._tag_page_btns.values()))
         # 2026-09-15（用户要求）：分页/每页**在本行依次靠右**，"无标签条目"按钮**保持靠左**
         _un_b = next((c for c in app._tag_bottom_row.winfo_children()
@@ -1602,9 +1623,11 @@ def main():
         app._tag_page_limit = 100; app._tag_page_no = 1
         app._render_tag_main(); pump(app)
         _n_p1, _ = _cloud_stats()
+        # 2026-09-23（第 5 组需求 1-⑤）：页码由只读标签改为「第 [__] / 共 Y 页」输入框
+        _pg = lambda: str(app._tag_page_entry.get()).strip()
         _p1_txt = text_of(app._tag_page_lbl)
-        check("tag page: 第 1 页显示 100 条且页码已更新 [n=%d %s]" % (_n_p1, _p1_txt),
-              95 <= _n_p1 <= 110 and "第 1 /" in _p1_txt)
+        check("tag page: 第 1 页显示 100 条且页码已更新 [n=%d 输入=%s %s]" % (_n_p1, _pg(), _p1_txt),
+              95 <= _n_p1 <= 110 and _pg() == "1" and "/ 共" in _p1_txt)
         check("tag page: 第 1 页时「首页/上页」置灰、可下翻",
               str(app._tag_page_btns["first"].cget("state")) == "disabled"
               and str(app._tag_page_btns["prev"].cget("state")) == "disabled"
@@ -1612,17 +1635,36 @@ def main():
               and str(app._tag_page_btns["last"].cget("state")) == "normal")
         app._on_tag_page_next(); pump(app)
         _n_p2, _ = _cloud_stats()
-        check("tag page: 下翻一页 → 第 2 页且内容已换 [n=%d %s]" % (_n_p2, text_of(app._tag_page_lbl)),
-              "第 2 /" in text_of(app._tag_page_lbl) and _n_p2 > 0)
+        check("tag page: 下翻一页 → 第 2 页且内容已换 [n=%d 输入=%s]" % (_n_p2, _pg()),
+              _pg() == "2" and _n_p2 > 0)
         app._on_tag_page_last(); pump(app)
         _n_pl, _ = _cloud_stats()
-        _pl_txt = text_of(app._tag_page_lbl)
-        check("tag page: 跳到末页 → 「下页/末页」置灰 [n=%d %s]" % (_n_pl, _pl_txt),
-              "第 1 /" not in _pl_txt and _n_pl > 0
+        _pl_txt = _pg()
+        check("tag page: 跳到末页 → 「下页/末页」置灰 [n=%d 输入=%s]" % (_n_pl, _pl_txt),
+              _pl_txt != "1" and _n_pl > 0
               and str(app._tag_page_btns["next"].cget("state")) == "disabled"
               and str(app._tag_page_btns["last"].cget("state")) == "disabled")
         app._on_tag_page_first(); pump(app)
-        check("tag page: 回首页", "第 1 /" in text_of(app._tag_page_lbl))
+        check("tag page: 回首页", _pg() == "1")
+        # --- 2026-09-23（第 5 组需求 1-⑤）：「第 X 页」输入框回车跳转 ---
+        _pg_max = _pg()  # 占位，避免未使用告警
+        app._tag_page_entry.delete(0, "end"); app._tag_page_entry.insert(0, "2")
+        app._on_tag_page_jump(); pump(app)
+        _n_j2, _ = _cloud_stats()
+        check("tag page ⑤: 输入 2 回车 → 跳到第 2 页 [n=%d 输入=%s]" % (_n_j2, _pg()),
+              _pg() == "2" and _n_j2 > 0)
+        app._tag_page_entry.delete(0, "end"); app._tag_page_entry.insert(0, "abc")
+        app._on_tag_page_jump(); pump(app)
+        check("tag page ⑤: 非法输入 → 保持当前页并回填 [输入=%s]" % _pg(), _pg() == "2")
+        app._tag_page_entry.delete(0, "end"); app._tag_page_entry.insert(0, "999999")
+        app._on_tag_page_jump(); pump(app)
+        _n_jl, _ = _cloud_stats()
+        _pg_last = _pg()
+        check("tag page ⑤: 越界输入 → 钳制到末页 [输入=%s n=%d]" % (_pg_last, _n_jl),
+              _pg_last != "999999" and _pg_last != "1" and _n_jl > 0)
+        app._tag_page_entry.delete(0, "end"); app._tag_page_entry.insert(0, "1")
+        app._on_tag_page_jump(); pump(app)
+        check("tag page ⑤: 回第 1 页", _pg() == "1")
         # 搜索防抖（用户要求 8）：输入后**不立即**刷新，约 0.4s 后才刷新
         app._tag_search_entry.delete(0, "end")
         app._tag_search_entry.insert(0, "云标签00")
@@ -1641,7 +1683,10 @@ def main():
         app._tag_page_limit = 100
         app._close_tag_page(); pump(app)
 
-        # 8.3 条目区渲染上限 + 「显示更多 / 全部显示」+ 标签一次性预取（用极小上限/步长快速验证）
+        # 8.3 条目区「每页」档位 + **替换式**翻页 + 「全部」一次性显示 + 标签一次性预取
+        #     2026-09-23（第 5 组需求 1-①②④，用户批复"A：三钮同行"）：原"累积式显示更多 +
+        #     ENTRY_RENDER_STEP 步长"已废弃，改为"每页 X 条 · 点下一页只渲染下一轮"（无累积）。
+        #     用极小档位（5 条/页）快速验证；档位恢复在 finally。
         db.conn.executemany(
             "INSERT INTO entries(name, category_id, created_at, updated_at) VALUES(?,?,?,?)",
             [("性能条目%02d" % i, l1, ts, ts) for i in range(20)])
@@ -1649,37 +1694,52 @@ def main():
         all_rows = db.list_all_entries()
         db.set_entry_tags_bulk({e["id"]: ["性能标签"] for e in all_rows[:5]},
                                touch_updated=False)   # 供"标签预取"断言
-        _orig_step = _mw.ENTRY_RENDER_STEP
-        _mw.ENTRY_RENDER_STEP = 3
+        _orig_limit = app._entry_page_limit
         try:
-            app._entry_render_limit = 5
+            app._entry_page_limit = 5
+            app._entry_all_once = False
             app._show_tags_in_list = True
             app._render_entries(all_rows, "性能测试"); pump(app)
-            check("entries truncated to limit",
-                  len(app._entry_render_shown) == 5 and len(app._entry_more_btns) == 2)
+            check("entries truncated to page size",
+                  len(app._entry_render_shown) == 5 and len(app._entry_more_btns) == 3)
             check("entry tags prefetched in one query",
                   len(app._entry_tags_cache) == 5)
-            app._show_more_entries(); pump(app)
-            check("show-more appends one step", len(app._entry_render_shown) == 8)
-            # 「全部显示」在超大集合上先二次确认（临时把阈值降到 1 以触发该分支）
+            check("pager: 首页「◀ 上一页」置灰",
+                  str(app._entry_more_btns[0].cget("state")) == "disabled")
+            # 短点击「下一页 ▶」＝只渲染下一轮 5 条（替换式，不累积）
+            app._on_entry_page_next(); pump(app)
+            check("pager: 下一页只渲染下一轮（页码 2 / 仍 5 条 / 内容为第 6-10 条）",
+                  app._entry_page_no == 2
+                  and len(app._entry_render_shown) == 5
+                  and [x["id"] for x in app._entry_render_shown]
+                  == [x["id"] for x in all_rows[5:10]])
+            check("pager: 计数文本用页码口径",
+                  app._entry_count_text().startswith("第 2 /"))
+            # 「全部」＝一次性显示全部（**不**改「每页」档位、**不**写 meta；用户批复）
             _orig_thr = _mw.ENTRY_ALL_CONFIRM_THRESHOLD
             _mw.ENTRY_ALL_CONFIRM_THRESHOLD = 1
             try:
                 mb.asks.clear()
-                app._show_more_entries(all_=True); pump(app)
+                app._on_entry_page_all(); pump(app)
+                # 2026-09-23 22:06（用户选方案 B，本轮）：断言原写「全部显示」，而实现
+                #   `_on_entry_page_all()` 的 askyesno **标题为「显示全部」** ⇒ 子串判断恒为 False、
+                #   该断言长期 FAIL。现按用户决定**改测试断言**（不改界面文案）⇒ 「全部显示」→「显示全部」。
                 check("show-all asks confirm for big set",
-                      any(_k == "yesno" and "全部显示" in str(a[0])
+                      any(_k == "yesno" and "显示全部" in str(a[0])
                           for (_k, a, _kk) in mb.asks))
             finally:
                 _mw.ENTRY_ALL_CONFIRM_THRESHOLD = _orig_thr
-            check("show-all appends the rest",
-                  len(app._entry_render_shown) == len(all_rows))
-            check("more buttons disabled when all shown",
-                  all(b.cget("state") == "disabled" for b in app._entry_more_btns))
+            check("show-all renders everything once",
+                  app._entry_all_once is True
+                  and len(app._entry_render_shown) == len(all_rows))
+            check("show-all 不改「每页」档位、不写记忆",
+                  app._entry_page_limit == 5
+                  and not (db.get_meta(config.META_ENTRY_PAGE_LIMIT) or ""))
         finally:
-            _mw.ENTRY_RENDER_STEP = _orig_step
             app._show_tags_in_list = False
-            app._entry_render_limit = _mw.ENTRY_RENDER_LIMIT
+            app._entry_page_limit = _orig_limit
+            app._entry_all_once = False
+            app._render_entries(all_rows, "性能测试"); pump(app)
 
         # ---- 8.4 "无标签条目"入口（2026-09-14 用户要求：方案 A 工具栏 + B 标签页 + C 搜索语法）----
         # 8.4.1 工具栏按钮的**相对顺序**（2026-09-15 审核 L-11：原断言写死列号 4/5/6/7/8/9/12，
@@ -1751,10 +1811,15 @@ def main():
         #   即 ≈26.2% 而失败。**阈值放宽到 0.30**：本断言要守的是"搜索框不得像改前那样独占工具栏
         #   （41%）"，而非某个具体百分点；且实测该比例随窗口宽/DPI 浮动（本机 25.1%~26.3%），
         #   0.30 保留守护语义，又不再因换机 ±1pp 差异误报。
+        # 2026-09-23 17:10（阶段1-4，用户决策：**保留容器、抬高阈值**）：工具栏「全部/外部/自建」
+        #   段控（132）+「🏷 来源标注」按钮并入**同一搜索框容器**（仍占 col12）后，容器实宽由 ≈293
+        #   增至 ≈622（实测占工具栏 35%）⇒ 原 0.30 阈值不再适用。用户拍板：仍测 search_box 容器，
+        #   **阈值 0.30 → 0.40**；断言含义随之变为"搜索组（段控+标注按钮+输入框）不得独占工具栏"。
+        #   （实测本机默认窗口 ≈35%，0.40 保留守护语义又留有换机/DPI 浮动的余量。）
         _sb_w, _bar_w = app.search_box.winfo_width(), max(_bar.winfo_width(), 1)
         check("toolbar: search box actual width now small [%d/%d=%.0f%%]"
               % (_sb_w, _bar_w, 100.0 * _sb_w / _bar_w),
-              _sb_w > 0 and _sb_w <= _bar_w * 0.30)
+              _sb_w > 0 and _sb_w <= _bar_w * 0.40)
         # 8.4.1c 详情区「编辑/浏览」已改为**普通切换按钮**（2026-09-14 用户要求，与「🗂 目录隐藏」同形式）
         _tgl = app.edit_mode_toggle
         check("detail: edit/browse is a plain toggle button [%s]"
@@ -1771,14 +1836,16 @@ def main():
               and app._browse_mode is False and "编辑" in str(_tgl.cget("text")))
         # 2026-09-15（审核 L-10）：原先断言"重置 源码 == 60 / 收藏 源码 == 87"（写死源码值、绑定本机缩放）
         #   → 改为**关系断言**：① 重置 与 「✏️ 编辑」**同列同宽**（方案 A 的对齐目标）；
-        #   ② 收藏比"刚好显示文字"更宽（即用户要求的"+1 个汉字"语义）。先拉到足够宽再测，避免窄窗压缩干扰。
+        #   ② 收藏宽度足够显示其文案（不裁字）。先拉到足够宽再测，避免窄窗压缩干扰。
+        # ⚠ 2026-09-23 21:30（用户要求"按列缩窄、上下同宽"）：收藏宽度改为与第一行首钮「➜ 移动到」
+        #   **同列同宽**（口径＝按较宽文案「★ 已收藏」取值）⇒ ② 的描述相应改为"宽度足显文案"。
         app.geometry("1500x760"); pump(app)
         check("detail: 重置 与 编辑 同列同宽（相对断言）[%d vs %d]"
               % (app.reset_btn.winfo_width(), app.edit_mode_toggle.winfo_width()),
               app.reset_btn.winfo_width() > 0
               and app.reset_btn.winfo_width() == app.edit_mode_toggle.winfo_width())
         _fav_need = app.fav_btn._text_label.winfo_reqwidth() + 12
-        check("detail: 收藏 比'刚好显示文字'更宽（+1 汉字语义）[win=%d need=%d]"
+        check("detail: 收藏 宽度足显文案（不裁字）[win=%d need=%d]"
               % (app.fav_btn.winfo_width(), _fav_need),
               app.fav_btn.winfo_width() >= _fav_need + 4)
         # 8.4.1d 按钮"内边距=5（圆角=5）/ 间距=5"（2026-09-14 用户要求）
@@ -1805,7 +1872,8 @@ def main():
         #   避免把"用户要求的窄详情区"误判为缺陷。
         app.geometry("1500x760"); pump(app)
         # 注：重置/收藏（用户指定固定宽度）与"6 个统一宽度按钮"（2026-09-14 20:35 用户要求
-        #   "大小一样大、上下对齐"→ 宽度由文字需求最大者决定）比"刚好显示文字"宽 → 不参与本检查
+        #   "大小一样大、上下对齐"；⚠ 2026-09-23 21:30 改为"按列缩窄、上下同宽"，各列宽度＝该列上下两钮取大值）
+        #   → 仍按"列内较大者"取值、不逐个等于"刚好显示文字" → 不参与本检查
         _uni6 = ("move_btn", "link_btn", "copyto_btn",
                  "copy_all_btn", "copy_cn_btn", "copy_en_btn")
         # 右侧 4 控件（用户选方案 A）同样是固定宽度、两列取大值 → 不参与本检查
@@ -1817,18 +1885,35 @@ def main():
         check("buttons: width == text + 2*6px [win=%d detail=%d %s]"
               % (app.winfo_width(), app.detail_root.winfo_width(), _badw or "all ok"),
               not _badw)
-        # 8.4.1d-2（2026-09-14 20:35，用户要求）：这 6 个按钮**大小一样大、上下对齐**——
-        #   ① 宽度全部相等且 ≥ 各自文字需求（不裁字）；② 第二行的 3 个与第一行的 3 个**起始 x 逐列相同**。
-        _g6_top = [app.move_btn, app.link_btn, app.copyto_btn]
-        _g6_bot = [app.copy_all_btn, app.copy_cn_btn, app.copy_en_btn]
-        _w6 = {b.winfo_width() for b in _g6_top + _g6_bot}
-        _clip = [b.cget("text") for b in _g6_top + _g6_bot
-                 if b.winfo_width() + 1 < b._text_label.winfo_reqwidth() + 12]
-        check("detail: 6 按钮同宽且不裁字 [w=%s clip=%s]" % (sorted(_w6), _clip or "none"),
-              len(_w6) == 1 and next(iter(_w6)) > 0 and not _clip)
-        check("detail: 6 按钮上下逐列对齐 [上=%s 下=%s]"
-              % ([b.winfo_x() for b in _g6_top], [b.winfo_x() for b in _g6_bot]),
-              [b.winfo_x() for b in _g6_top] == [b.winfo_x() for b in _g6_bot])
+        # 8.4.1d-2（2026-09-23 21:30，用户要求改为"按列缩窄"）：详情区工具行"第一行左侧 4 钮"与
+        #   "第二行左侧 4 钮"**逐列缩窄、上下同宽、逐列对齐**（不裁字前提下尽量短）——
+        #   列1 ➜ 移动到 / ☆ 收藏、列2 ↔ 关联到 / 复制中文、列3 ⧉ 复制到 / 复制英文、
+        #   列4 ⧉ 复制为我的 / 📋 复制全部；每列宽度＝该列上下两钮"文字需求"的较大者。
+        _cols4 = [
+            ("列1 移动到/收藏", app.move_btn, app.fav_btn),
+            ("列2 关联到/复制中文", app.link_btn, app.copy_cn_btn),
+            ("列3 复制到/复制英文", app.copyto_btn, app.copy_en_btn),
+            ("列4 复制为我的/复制全部", app.mine_btn, app.copy_all_btn),
+        ]
+        _colclip = [n for n, t, b in _cols4
+                    if t.winfo_width() + 1 < t._text_label.winfo_reqwidth() + 12
+                    or b.winfo_width() + 1 < b._text_label.winfo_reqwidth() + 12]
+        check("detail: 4 列上下同宽且不裁字 [w=%s clip=%s]"
+              % ([t.winfo_width() for _, t, _ in _cols4], _colclip or "none"),
+              all(t.winfo_width() == b.winfo_width() for _, t, b in _cols4) and not _colclip)
+        check("detail: 4 列上下逐列对齐 [上=%s 下=%s]"
+              % ([t.winfo_x() for _, t, _ in _cols4], [b.winfo_x() for _, _, b in _cols4]),
+              [t.winfo_x() for _, t, _ in _cols4] == [b.winfo_x() for _, _, b in _cols4])
+        # ① 两行**首列对齐**（第一行首钮「➜ 移动到」与第二行首钮「☆ 收藏」起始 x 相同）；
+        # ② 第二行 4 个按钮起始 x 依序排列、互不重叠。
+        _r2_btns = [app.fav_btn, app.copy_cn_btn, app.copy_en_btn, app.copy_all_btn]
+        _r2_x = [b.winfo_x() for b in _r2_btns]
+        check("detail: 两行首列对齐（移动到 / 收藏）[上=%d 下=%d]"
+              % (app.move_btn.winfo_x(), app.fav_btn.winfo_x()),
+              app.move_btn.winfo_x() == app.fav_btn.winfo_x())
+        check("detail: 第二行 4 钮依序排列不重叠 [x=%s]" % _r2_x,
+              all(_r2_x[i] + _r2_btns[i].winfo_width() <= _r2_x[i + 1]
+                  for i in range(len(_r2_btns) - 1)))
         # 8.4.1d-3（2026-09-14 21:05，用户选方案 A）：**右侧 4 个控件**（✏️ 编辑 / 🔧 与 重置 / 💾 保存）
         #   两行"整体宽度一样、上下逐列对齐"——A 列（编辑/重置）72px、B 列（🔧/保存）66px，
         #   右边界同为行右端；即 编辑对齐重置、🔧 对齐保存。
@@ -2001,7 +2086,9 @@ def main():
         _orig_untagged = app.db.list_untagged
         _view_backup = app._view
         try:
-            app.db.list_untagged = lambda: (_ for _ in ()).throw(RuntimeError("注入"))
+            # 2026-09-23（阶段1-4）：`_restore_view` 现传 `source_type=` ⇒ 桩需接受任意关键字
+            #   （否则 TypeError 会掩盖本用例"读取失败"的意图；两者都不冒泡，但仍应测真实路径）。
+            app.db.list_untagged = lambda **_k: (_ for _ in ()).throw(RuntimeError("注入"))
             app._view = ("untagged", "")
             app._restore_view(); pump(app)
             _uu_title = str(getattr(app, "_entries_title", ""))
@@ -2986,6 +3073,668 @@ def main():
               is app._tag_pick_btn.master is app._rec_btn.master)
         app._adding_new = False
         app._show_detail(db.get_entry(_h_e)); pump(app)
+
+        # ---------------- 2026-09-23（阶段 1-4）：工具栏「全部 / 外部 / 自建」来源筛选 ----------------
+        # 依据 1-4 规格（施工报告第 382 行）：
+        #   "切换筛选→条目列表只显示对应来源→状态栏更新→重启后记住上次选择"；
+        #   以及用户决策 23（来源筛选作用于**所有**条目列表视图，`search` 亦然）。
+        # 造数：同一分类下 3 条 —— 外部 / 自建 / 未标定（不标注 ⇒ 库默认 'unspecified'）。
+        _sf_bak14 = app._source_filter
+        _view_bak14 = app._view
+        _c14 = db.add_category("来源筛选L", domain_id=did)
+        _e_ext = db.add_entry(Entry(name="来源-外部条目", category_id=_c14))
+        _e_org = db.add_entry(Entry(name="来源-自建条目", category_id=_c14))
+        _e_uns = db.add_entry(Entry(name="来源-未标定条目", category_id=_c14))
+        db.set_entry_source(_e_ext, "external", "Midjourney", "2026-09-20 10:00:00")
+        db.set_entry_source(_e_org, "original")            # 自建
+        check("1-4: 测试条目来源类型已就位 [%s/%s/%s]"
+              % (db.get_entry(_e_ext)["source_type"], db.get_entry(_e_org)["source_type"],
+                 db.get_entry(_e_uns)["source_type"]),
+              db.get_entry(_e_ext)["source_type"] == "external"
+              and db.get_entry(_e_org)["source_type"] == "original"
+              and db.get_entry(_e_uns)["source_type"] == "unspecified")
+        _ALL3 = {"来源-外部条目", "来源-自建条目", "来源-未标定条目"}
+        _names14 = lambda: {x["name"] for x in app._entry_render_shown}
+
+        def _seg14(v):
+            """模拟**真实点击**段控：控件先置值 → 再回调（与 CTk 点击路径同序）。
+
+            注：`CTkSegmentedButton.set()` 不会触发 command，直接调 `_on_source_filter_change`
+            会漏掉"控件自身已切档"这一步，导致断言误判。
+            """
+            app.source_seg.set(v)
+            app._on_source_filter_change(v)
+        app._view = None                     # 绕过 `_select_category` 的"同分类直接返回"短路
+        app._select_category(_c14); pump(app)
+        check("1-4: 基线——未筛选时分类视图 3 条全显示 [view=%s 实显示=%s]"
+              % (app._view, sorted(_names14())),
+              app._view == ("cat", _c14) and _names14() == _ALL3)
+        # ① 切换「外部」→ 列表只剩外部条目；段控/状态栏/meta 三处同步
+        _seg14("外部"); pump(app)
+        check("1-4: 切「外部」→ 列表只显示 external 条目 [%s]" % sorted(_names14()),
+              _names14() == {"来源-外部条目"})
+        check("1-4: 内部值归一为 'external' [%s]" % app._source_filter,
+              app._source_filter == "external")
+        check("1-4: 段控显示与实际一致 [%s]" % app.source_seg.get(),
+              app.source_seg.get() == "外部")
+        check("1-4: 持久化写入 meta [%s]"
+              % db.get_meta(config.META_SOURCE_FILTER),
+              db.get_meta(config.META_SOURCE_FILTER) == "external")
+        check("1-4: 状态栏显示当前筛选 [%s]" % app.status_label.cget("text"),
+              "来源筛选：外部" in app.status_label.cget("text"))
+        # ② 切换「自建」→ 列表只剩自建条目
+        _seg14("自建"); pump(app)
+        check("1-4: 切「自建」→ 列表只显示 original 条目 [%s]" % sorted(_names14()),
+              _names14() == {"来源-自建条目"})
+        # ③ 切回「全部」→ 不筛选，且状态栏不再追加筛选文字（与改动前一致）
+        _seg14("全部"); pump(app)
+        check("1-4: 切回「全部」→ 3 条全显示且状态栏无筛选提示 [%s]"
+              % app.status_label.cget("text"),
+              _names14() == _ALL3 and "来源筛选" not in app.status_label.cget("text"))
+        # ④ 决策 23：搜索结果视图同样跟随来源筛选（含"显示更多"计数口径一致性）
+        _seg14("外部"); pump(app)
+        app.search_entry.delete(0, "end")
+        app.search_entry.insert(0, "来源-")
+        app._on_search_key(); pump(app)
+        check("1-4: 搜索结果同样跟随来源筛选 [view=%s 实显示=%s 计数=%d]"
+              % (app._view, sorted(_names14()), app.db.search_count("来源-", source_type="external")),
+              app._view == ("search", "来源-") and _names14() == {"来源-外部条目"}
+              and app.db.search_count("来源-", source_type="external") == 1)
+        # ⑤ 清空搜索框 → 回到分类视图（且仍受来源筛选约束）
+        app.search_entry.delete(0, "end")
+        app._on_search_key(); pump(app)
+        check("1-4: 清空搜索框回到分类视图且筛选仍生效 [view=%s %s]"
+              % (app._view, sorted(_names14())),
+              app._view == ("cat", _c14) and _names14() == {"来源-外部条目"})
+        # ⑥ 重启后记住上次选择：meta 已持久化 → 启动载入路径 `_load_settings()` 必须还原
+        app._source_filter = ""              # 模拟"新进程未载入设置"的初值
+        app._load_settings(); pump(app)
+        check("1-4: 重启后记住上次选择（_load_settings 还原）[%s]" % app._source_filter,
+              app._source_filter == "external")
+        # 启动时 `_build_toolbar` 即按载入值设置段控 ⇒ 复现该步，验证"界面也记住"
+        app.source_seg.set(_mw._SOURCE_SEG_LABELS.get(app._source_filter, "全部"))
+        check("1-4: 重启后段控显示为上次选择 [%s]" % app.source_seg.get(),
+              app.source_seg.get() == "外部")
+        # ⑦ 决策 24 布局验收（本次新增边界）：段控 + 「🏷 来源标注」并入容器后，容器 reqwidth
+        #   由 ≈293 增至 ≈622 ⇒ 需守护"窗口最窄（四区全关闭）+ 折行"时**第二行容器不被裁切/不越界**。
+        _nav_bak14 = int(getattr(app, "_nav_hidden", 0))
+        _win_bak14 = app.geometry()
+        app.apply_nav_visibility(4); pump(app)          # 四区全关闭（窗口最窄形态）
+        app.geometry("900x760"); pump(app, 8)
+        _folded14 = bool(app._bar_folded)
+        _r2 = app._bar_row2
+        _box_r = app.search_box.winfo_x() + app.search_box.winfo_width()
+        check("1-4: 最窄窗口折行时搜索组容器完整可见不越界 "
+              "[win=%d folded=%s 实宽=%d req=%d 右=%d/%d]"
+              % (app.winfo_width(), _folded14, app.search_box.winfo_width(),
+                 app.search_box.winfo_reqwidth(), _box_r, _r2.winfo_width()),
+              _folded14
+              and app.search_box.winfo_width() + 1 >= app.search_box.winfo_reqwidth()
+              and _box_r <= _r2.winfo_width() + 2)
+        app.geometry(_win_bak14); pump(app, 6)
+        app.apply_nav_visibility(_nav_bak14); pump(app)
+        # 复原：内部状态 + 段控 + 视图 + 状态栏（不动临时库数据）
+        app._source_filter = _sf_bak14
+        app._view = _view_bak14
+        try:
+            app.source_seg.set(_mw._SOURCE_SEG_LABELS.get(_sf_bak14, "全部"))
+        except Exception:
+            pass
+        app._status_default(); pump(app)
+
+        # ---------------- 2026-09-23（阶段 1-5）：「复制为我的条目」+ JSON 来源三键 ----------------
+        # 依据 1-5 规格（施工报告第 383 行）：
+        #   "复制条目→来源字段重置→导出 JSON→含来源字段→导入旧包→默认 unspecified"。
+        #   JSON 侧（导出逐键为空则不写 / 导入三键恢复 / 旧包默认未标定 / 无键不清洗已标注）
+        #   由 `app/parser/json_io.py::_json_v5_selftest()` 的 F 段覆盖；本处只覆盖 UI 侧行为。
+        #   用户决策：入口＝右键菜单 + 详情面板按钮；副本落到「复制到…」同一多选目标选择器；
+        #   副本来源重置 source_type='original' / source_name='' / source_time=当前时间。
+        _pick_bak15 = app._pick_entry_targets
+        _browse_bak15 = app._browse_mode
+        _lock_bak15 = app._lock_on
+        _e15 = db.add_entry(Entry(name="派生源条目", category_id=_c14,
+                                  prompt_cn="原始中文提示词", prompt_en="origin en"))
+        db.set_entry_source(_e15, "external", "Midjourney", "2026-09-20 10:00:00")
+        db.set_entry_tags(_e15, ["来源标签"])
+        _src_bak15 = (db.get_entry(_e15)["source_type"], db.get_entry(_e15)["source_name"],
+                      db.get_entry(_e15)["source_time"])
+        app._pick_entry_targets = lambda mode, eid: [_c14]
+        app._view = None
+        app._select_category(_c14); pump(app)
+        check("1-5: 详情按钮「复制为我的」已就位 [%s]" % app.mine_btn.cget("text"),
+              "复制为我的" in app.mine_btn.cget("text"))
+
+        # ① 执行「复制为我的条目」→ 副本来源重置为 自建/空名/当前时间
+        app._copy_entry_as_mine(_e15); pump(app)
+        _copies15 = [x for x in db.list_entries(_c14) if x["name"] == "派生源条目（副本）"]
+        check("1-5: 派生副本已生成（同分类 + （副本）后缀）[%d]" % len(_copies15),
+              len(_copies15) == 1)
+        _new15 = _copies15[0] if _copies15 else {}
+        _nid15 = _new15.get("id")
+        _today15 = time.strftime("%Y-%m-%d")
+        check("1-5: 副本来源重置为 自建/空名/当前时间 [%s|%s|%s]"
+              % (_new15.get("source_type"), _new15.get("source_name"), _new15.get("source_time")),
+              _new15.get("source_type") == "original"
+              and (_new15.get("source_name") or "") == ""
+              and str(_new15.get("source_time") or "").startswith(_today15))
+        check("1-5: 副本为独立条目（uuid 不同 / 内容·标签已复制 / 单一位置）[%s vs %s]"
+              % (str(_new15.get("uuid"))[:8], str(db.get_entry(_e15)["uuid"])[:8]),
+              bool(_new15.get("uuid")) and _new15.get("uuid") != db.get_entry(_e15)["uuid"]
+              and _new15.get("prompt_cn") == "原始中文提示词"
+              and _new15.get("prompt_en") == "origin en"
+              and db.list_entry_tag_names(_nid15) == ["来源标签"]
+              and db.list_entry_locations(_nid15) == [_c14])
+        check("1-5: 原条目来源未被改动（类型/名称/时间三键不变）[%s|%s]"
+              % (db.get_entry(_e15)["source_type"], db.get_entry(_e15)["source_name"]),
+              (db.get_entry(_e15)["source_type"], db.get_entry(_e15)["source_name"],
+               db.get_entry(_e15)["source_time"]) == _src_bak15)
+
+        # ② 入口：条目右键菜单含「复制为我的条目」——普通态可用、锁定态随「复制到」一并置灰
+        class _Ev15:
+            x_root = 0
+            y_root = 0
+
+        _cap15 = {}
+
+        class _MenuCap15:
+            def __init__(self, *a, **k):
+                self.items = []
+                _cap15["menu"] = self
+
+            def add_command(self, label=None, **k):
+                self.items.append((label, k.get("state")))
+
+            def add_separator(self, **k):
+                self.items.append(("---", None))
+
+            def tk_popup(self, *a, **k):
+                pass
+
+        _real_menu15 = _mw.tk.Menu
+        _mw.tk.Menu = _MenuCap15
+        try:
+            app._entry_menu(_Ev15(), _e15)
+            _items15 = dict(_cap15["menu"].items)
+            check("1-5: 条目右键菜单含「复制为我的条目」且未锁定时可用 [%s]"
+                  % _items15.get("复制为我的条目"),
+                  "复制为我的条目" in _items15 and _items15["复制为我的条目"] == "normal")
+            app._lock_on = True
+            app._entry_menu(_Ev15(), _e15)
+            _items15b = dict(_cap15["menu"].items)
+            check("1-5: 锁定态右键「复制为我的条目」置灰（与「复制到…（多选）」一致）[%s|%s]"
+                  % (_items15b.get("复制为我的条目"), _items15b.get("复制到…（多选）")),
+                  _items15b.get("复制为我的条目") == "disabled"
+                  and _items15b.get("复制到…（多选）") == "disabled")
+        finally:
+            _mw.tk.Menu = _real_menu15
+            app._lock_on = _lock_bak15
+
+        # ③ 详情面板按钮状态机：有当前条目可用 / 锁定态与浏览态置灰 / 无条目置灰
+        app._lock_on = False
+        app._browse_mode = False
+        app._show_detail(db.get_entry(_e15)); pump(app)
+        check("1-5: 有当前条目时详情按钮可用 [%s]" % app.mine_btn.cget("state"),
+              app.mine_btn.cget("state") == "normal")
+        app._lock_on = True
+        app._apply_lock_state(); pump(app)
+        check("1-5: 锁定态详情按钮置灰 [%s]" % app.mine_btn.cget("state"),
+              app.mine_btn.cget("state") == "disabled")
+        app._lock_on = False
+        app._apply_lock_state(); pump(app)
+        check("1-5: 解锁后详情按钮恢复可用 [%s]" % app.mine_btn.cget("state"),
+              app.mine_btn.cget("state") == "normal")
+        app._browse_mode = True
+        app._apply_lock_state(); pump(app)
+        check("1-5: 浏览态（只读）详情按钮置灰 [%s]" % app.mine_btn.cget("state"),
+              app.mine_btn.cget("state") == "disabled")
+        app._browse_mode = False
+        app._show_detail(None); pump(app)
+        check("1-5: 无当前条目时详情按钮置灰 [%s]" % app.mine_btn.cget("state"),
+              app.mine_btn.cget("state") == "disabled")
+
+        # ④ 布局：新增按钮紧邻「复制到」右侧、位于第一行内、且**未被裁切**（文字完整可见）
+        app._show_detail(db.get_entry(_e15)); pump(app)
+        check("1-5 布局: 「复制为我的」紧邻「复制到」右侧 [复制到 x=%d 宽=%d 我的 x=%d]"
+              % (app.copyto_btn.winfo_x(), app.copyto_btn.winfo_width(), app.mine_btn.winfo_x()),
+              app.mine_btn.winfo_x() >= app.copyto_btn.winfo_x() + app.copyto_btn.winfo_width())
+        check("1-5 布局: 「复制为我的」按钮未被裁切 [实宽=%d 需求宽=%d]"
+              % (app.mine_btn.winfo_width(), app.mine_btn.winfo_reqwidth()),
+              app.mine_btn.winfo_width() + 1 >= app.mine_btn.winfo_reqwidth())
+
+        # 复原（不动临时库数据）
+        app._pick_entry_targets = _pick_bak15
+        app._browse_mode = _browse_bak15
+        app._lock_on = _lock_bak15
+        app._view = _view_bak14
+        pump(app)
+
+        # ---------------- 2026-09-23（第 5 组需求 2）：详情区 ⑧⑨ 提示词文本框高度随内容自动扩展 ----------------
+        #   用户批复原文：「B：保留按钮但改语义」→ 默认＝自动全高（按钮文案「收起为 6 行」）；
+        #   点击后固定 _COLLAPSED_H（6 行）且按钮＝「展开为全高」；再点恢复自动全高。
+        #   隔离要求：②~⑦⑩ 的折叠/高度行为必须完全不变（本段一并断言）。
+        def _p2_keybind_n(w):
+            """控件上 <KeyRelease> 的绑定脚本条数（多条＝叠绑）。
+
+            注：CTkTextbox.bind 不返回脚本 → 改读其内部 tk.Text（`_textbox`）。
+            """
+            try:
+                it = getattr(w, "_textbox", None) or w
+                s = str(it.bind("<KeyRelease>") or "")
+            except Exception:
+                return -1
+            return len([x for x in s.split("\n") if x.strip()])
+
+        def _p2_toggle_of(box):
+            """由文本框向上定位其所属字段块的「收起为 6 行」按钮（⑧⑨ 专用）。"""
+            node = box
+            for _ in range(6):
+                node = getattr(node, "master", None)
+                if node is None:
+                    return None
+                _bs = []
+                walk_types(node, "CTkButton", _bs)
+                _hit = [b for b in _bs if str(text_of(b)).startswith("收起")]
+                if _hit:
+                    return _hit[0]
+            return None
+
+        _p2_bak = (app._adding_new, app._add_target, app._view, app._cur_cat_id,
+                   app._detail_entry_id, app._detail_expand_all, app._browse_mode)
+        _e2 = db.add_entry(Entry(
+            name="需求2自动扩展", category_id=_c14,
+            prompt_cn="短中文提示词",
+            prompt_en="\n".join("en prompt line %d" % i for i in range(1, 21)),
+            intro="介绍内容"))
+        try:
+            app._adding_new = False
+            app._browse_mode = False
+            app._detail_expand_all = False     # ②~⑦ 保持默认折叠（隔离基线）
+            app._show_detail(db.get_entry(_e2)); pump(app, 6)
+            _b2cn = app._detail_boxes.get("prompt_cn")
+            _b2en = app._detail_boxes.get("prompt_en")
+            _b2in = app._detail_boxes.get("intro")
+            _h2cn, _h2en = int(_b2cn.cget("height")), int(_b2en.cget("height"))
+            check("需求2: 详情态 ⑧短内容按内容自适应（不再固定 6 行/120px）[高=%d 6行=%d]"
+                  % (_h2cn, _mw._COLLAPSED_H),
+                  _h2cn != _mw._COLLAPSED_H and _h2cn >= _mw._EMPTY_H)
+            check("需求2: 详情态 ⑨长内容（20 行）自动扩展超出 6 行 [高=%d 6行=%d]"
+                  % (_h2en, _mw._COLLAPSED_H), _h2en > _mw._COLLAPSED_H)
+            check("需求2: 详情态 ⑧已挂「内容自适应」绑定（与 _mark_dirty 叠加）[绑定数=%d]"
+                  % _p2_keybind_n(_b2cn), _p2_keybind_n(_b2cn) >= 2)
+            # 按钮语义：默认「收起为 6 行」；详情区内该文案按钮恰好 2 个（＝⑧⑨）
+            _tog2cn, _tog2en = _p2_toggle_of(_b2cn), _p2_toggle_of(_b2en)
+            _all2btn = []
+            walk_types(app.detail_scroll, "CTkButton", _all2btn)
+            _n2btn = len([b for b in _all2btn if str(text_of(b)) == "收起为 6 行"])
+            check("需求2: 详情态 ⑧⑨ 按钮默认文案＝「收起为 6 行」且仅此 2 个 [%s|%s 全屏=%d]"
+                  % (text_of(_tog2cn), text_of(_tog2en), _n2btn),
+                  text_of(_tog2cn) == "收起为 6 行" and text_of(_tog2en) == "收起为 6 行"
+                  and _n2btn == 2)
+            # 点击「收起为 6 行」→ 固定 6 行 + 按钮变「展开为全高」；固定期间键入不再改高度
+            _tog2en.invoke(); pump(app, 2)
+            check("需求2: 点击后 ⑨ 固定在 6 行且按钮＝「展开为全高」 [高=%d 文案=%s]"
+                  % (int(_b2en.cget("height")), text_of(_tog2en)),
+                  int(_b2en.cget("height")) == _mw._COLLAPSED_H
+                  and text_of(_tog2en) == "展开为全高")
+            _b2en.insert("end", "\n固定期间追加的一行")
+            app._prompt_autofit_on_type(_b2en, _tog2en); pump(app, 2)
+            check("需求2: 固定期间键入不改高度（自动自适应已停用）[高=%d]"
+                  % int(_b2en.cget("height")), int(_b2en.cget("height")) == _mw._COLLAPSED_H)
+            # 再点「展开为全高」→ 恢复自动全高
+            _tog2en.invoke(); pump(app, 2)
+            check("需求2: 再点「展开为全高」→ 恢复自动全高 [高=%d > 6行=%d 文案=%s]"
+                  % (int(_b2en.cget("height")), _mw._COLLAPSED_H, text_of(_tog2en)),
+                  int(_b2en.cget("height")) > _mw._COLLAPSED_H
+                  and text_of(_tog2en) == "收起为 6 行")
+            # 自动模式下继续键入 → 高度继续增长
+            _h2cn0 = int(_b2cn.cget("height"))
+            _b2cn.insert("end", "\n" + "\n".join("追加行 %d" % i for i in range(1, 15)))
+            app._prompt_autofit_on_type(_b2cn, _tog2cn); pump(app, 2)
+            _h2cn1 = int(_b2cn.cget("height"))
+            check("需求2: 自动模式下键入后继续扩展 [前=%d 后=%d]" % (_h2cn0, _h2cn1),
+                  _h2cn1 > _h2cn0)
+            # 隔离：②介绍（默认折叠）高度与绑定数均未受本次改动影响
+            check("需求2隔离: ②介绍（默认折叠）高度/绑定未被改动 [高=%s 绑定数=%d]"
+                  % (int(_b2in.cget("height")) if _b2in else None,
+                     _p2_keybind_n(_b2in) if _b2in else -1),
+                  _b2in is not None and int(_b2in.cget("height")) == 1
+                  and _p2_keybind_n(_b2in) == 1)
+            # 新增态：初始 120px（便于录入）+「收起为 6 行」；录入后自动扩展；点击可固定
+            app._adding_new = True
+            app._add_target = _c14
+            app._view = ("cat", _c14)
+            app._cur_cat_id = _c14
+            app._detail_entry_id = None
+            app._build_new_entry_editor(_c14); pump(app, 6)
+            _nb2cn = app._detail_boxes.get("prompt_cn")
+            _nt2cn = app._add_prompt_toggles.get("prompt_cn")
+            check("需求2: 新增态 ⑧ 初始 120px 便于录入且按钮＝「收起为 6 行」 [高=%d 文案=%s]"
+                  % (int(_nb2cn.cget("height")), text_of(_nt2cn)),
+                  int(_nb2cn.cget("height")) == _mw._COLLAPSED_H
+                  and text_of(_nt2cn) == "收起为 6 行")
+            check("需求2: 新增态 ⑧ 已挂「内容自适应」绑定 [绑定数=%d]" % _p2_keybind_n(_nb2cn),
+                  _p2_keybind_n(_nb2cn) >= 2)
+            _nb2cn.insert("1.0", "\n".join("新表单行 %d" % i for i in range(1, 16)))
+            app._prompt_autofit_on_type(_nb2cn, _nt2cn); pump(app, 2)
+            check("需求2: 新增态 ⑧ 录入后随内容自动扩展 [高=%d > 120]" % int(_nb2cn.cget("height")),
+                  int(_nb2cn.cget("height")) > _mw._COLLAPSED_H)
+            _nt2cn.invoke(); pump(app, 2)
+            check("需求2: 新增态 ⑧ 点击后固定 6 行 + 文案＝「展开为全高」 [高=%d 文案=%s]"
+                  % (int(_nb2cn.cget("height")), text_of(_nt2cn)),
+                  int(_nb2cn.cget("height")) == _mw._COLLAPSED_H
+                  and text_of(_nt2cn) == "展开为全高")
+            # 新增态「重置」→ 回到初始态（空内容 120px + 文案「收起为 6 行」）
+            app._reset_new_entry(); pump(app, 4)
+            _nb2cnr = app._detail_boxes.get("prompt_cn")
+            _nt2cnr = app._add_prompt_toggles.get("prompt_cn")
+            check("需求2: 新增态「重置」回到初始态 [高=%s 文案=%s]"
+                  % (int(_nb2cnr.cget("height")) if _nb2cnr else None, text_of(_nt2cnr)),
+                  _nb2cnr is not None and int(_nb2cnr.cget("height")) == _mw._COLLAPSED_H
+                  and text_of(_nt2cnr) == "收起为 6 行")
+        finally:
+            (app._adding_new, app._add_target, app._view, app._cur_cat_id,
+             app._detail_entry_id, app._detail_expand_all,
+             app._browse_mode) = _p2_bak
+            app._show_detail(None); pump(app)
+
+        # ---------------- 2026-09-23（第 5 组需求 3）：目标选择对话框改为屏幕固定定位 ----------------
+        #   用户批复原文：「两者都改（推荐）」→ MoveSelector（关联到/复制到/移动到）与
+        #   CopyMoveDialog（目录对象复制到/移动到）**都改**为：水平居中于屏幕、垂直距屏幕
+        #   顶端固定 50px、且整窗始终在屏幕内；不再"居中于主窗口"（原实现随主窗口移动，
+        #   主窗口靠下时对话框底部会被屏幕下边缘遮住）。
+        _p3_bak_geo = str(app.geometry())
+        _sw3, _sh3 = app.winfo_screenwidth(), app.winfo_screenheight()
+        _p3_cat3 = db.get_category(_c14) or {}
+
+        def _p3_geo_xy(w):
+            """读回窗口 geometry 的位置部分 → (x, y)，解析失败返回 (None, None)。
+
+            注：CTkToplevel.geometry() 读取时**只对宽高反向缩放**（customtkinter
+            scaling_base_class._apply_geometry_scaling 仅缩放宽高），位置不参与缩放，
+            故读回的位置与代码设定值同口径，可直接断言。
+            """
+            try:
+                w.update_idletasks()
+                _parts = str(w.geometry()).split("+")
+                return int(_parts[1]), int(_parts[2])
+            except Exception:
+                return None, None
+
+        def _p3_assert(dlg, tag, my_y):
+            """对单个对话框断言"屏幕固定定位"（水平居中于屏幕 + 顶端固定 + 不跟随主窗口）。"""
+            _x, _y = _p3_geo_xy(dlg)
+            _exp_x = max((_sw3 - dlg.winfo_width()) // 2, 0)
+            check("需求3: %s 顶端固定在屏幕 %dpx 处且不再跟随主窗口 [设定y=%s rooty=%d 主窗口y=%d]"
+                  % (tag, _msl._TOP_MARGIN, _y, dlg.winfo_rooty(), my_y),
+                  _y == _msl._TOP_MARGIN
+                  and _msl._TOP_MARGIN <= dlg.winfo_rooty() <= _msl._TOP_MARGIN + 48   # 客户区另含标题栏
+                  and dlg.winfo_rooty() < my_y - 200)
+            check("需求3: %s 水平居中于屏幕 [设定x=%s 期望=%d 客户区中心=%d 屏中心=%d]"
+                  % (tag, _x, _exp_x, dlg.winfo_rootx() + dlg.winfo_width() // 2, _sw3 // 2),
+                  _x == _exp_x
+                  and abs(dlg.winfo_rootx() + dlg.winfo_width() // 2 - _sw3 // 2) <= 20)
+            check("需求3: %s 整窗在屏幕内（底边留 ≥24px）[底边=%d 屏高=%d]"
+                  % (tag, dlg.winfo_rooty() + dlg.winfo_height(), _sh3),
+                  dlg.winfo_rooty() + dlg.winfo_height() <= _sh3 - 24 + 1)
+
+        try:
+            # 把主窗口压到屏幕下部——复现"主窗口靠下"的真实痛点场景
+            app.geometry("900x600+120+%d" % max(_sh3 - 200, 0))
+            pump(app, 4)
+            _p3_my3 = app.winfo_y()
+
+            _p3_d1 = MoveSelector(app, db, mode="link")
+            pump(app, 8)
+            _p3_assert(_p3_d1, "MoveSelector", _p3_my3)
+            _p3_d1.destroy(); pump(app, 2)
+
+            _p3_d2 = CopyMoveDialog(app, db, "l1", _c14, "来源筛选L", "copy",
+                                    _p3_cat3.get("domain_id"))
+            pump(app, 8)
+            _p3_assert(_p3_d2, "CopyMoveDialog", _p3_my3)
+            # 隔离：对话框原有交互输出（result/树节点映射）未受定位改动影响
+            check("需求3隔离: CopyMoveDialog 原有结果字段与树映射保持默认 [%s/%d]"
+                  % (_p3_d2.result, len(_p3_d2._iid_node)),
+                  _p3_d2.result == "cancel" and len(_p3_d2._iid_node) > 0)
+            _p3_d2.destroy(); pump(app, 2)
+        finally:
+            app.geometry(_p3_bak_geo); pump(app, 3)
+
+        # ---------------- 2026-09-23（第 5 组需求 4）：目标选择对话框"按模式记住上次目标节点" ----------------
+        # 依据 问答 #05 第 765 行（用户批复原文）：
+        #   "MoveSelector 按**模式分别记忆**（link / copy / move 各 1 个 meta 键，共 3 键），
+        #    下次打开自动展开并选中、滚动到该节点"；
+        #   以及本项开工前的追加批复：「移入未分类」不清除记忆，保留上次具体分类。
+        _p4_k = _msl._META_KEYS
+        _p4_a = db.add_category("需求4目标A", domain_id=did)
+        _p4_b = db.add_category("需求4目标B", domain_id=did)
+
+        def _p4_clear():
+            """清空 3 个记忆键（保证断言与历史运行互不干扰）"""
+            for _k in _p4_k.values():
+                db.set_meta(_k, "")
+
+        def _p4_iid(dlg, cid):
+            """分类 id → 树 iid（不在树中返回 None）"""
+            for _iid, _c in dlg._iid_to_cat.items():
+                if _c == cid:
+                    return _iid
+            return None
+
+        def _p4_sel_ids(dlg):
+            """当前树选中项 → 分类 id 列表"""
+            return [dlg._iid_to_cat[i] for i in dlg.tree.selection()
+                    if i in dlg._iid_to_cat]
+
+        _p4_clear(); pump(app, 2)
+
+        # 1) link 模式：无记忆不预选；确认后写记忆；同模式重开自动选中该节点
+        _p4_d1 = MoveSelector(app, db, mode="link"); pump(app, 8)
+        check("需求4: 无记忆时不预选任何节点、结果字段保持默认 [选中=%s result=%s]"
+              % (list(_p4_d1.tree.selection()), _p4_d1.result),
+              list(_p4_d1.tree.selection()) == []
+              and _p4_d1.result == "cancel" and _p4_d1.selected_cat_ids == [])
+        _p4_d1.tree.selection_set(_p4_iid(_p4_d1, _p4_a))
+        _p4_d1._confirm(); pump(app, 3)
+        check("需求4: link 确认后写入 link 键且返回口径不变 [记忆=%s result=%s 选中=%s]"
+              % (db.get_meta(_p4_k["link"]), _p4_d1.result, _p4_d1.selected_cat_ids),
+              db.get_meta(_p4_k["link"]) == str(_p4_a)
+              and _p4_d1.result == "ok" and _p4_d1.selected_cat_ids == [_p4_a])
+
+        _p4_d2 = MoveSelector(app, db, mode="link"); pump(app, 8)
+        _p4_chain = []
+        _p4_p = _p4_d2.tree.parent(_p4_iid(_p4_d2, _p4_a))
+        while _p4_p:                                   # 逐级上溯，父级链须全为展开
+            _p4_chain.append(bool(_p4_d2.tree.item(_p4_p, "open")))
+            _p4_p = _p4_d2.tree.parent(_p4_p)
+        check("需求4: 同模式重开自动定位到上次节点 [选中=%s 焦点匹配=%s 计数=%s 父级展开=%s]"
+              % (_p4_sel_ids(_p4_d2), _p4_d2.tree.focus() == _p4_iid(_p4_d2, _p4_a),
+                 _p4_d2.sel_label.cget("text"), _p4_chain),
+              _p4_sel_ids(_p4_d2) == [_p4_a]
+              and _p4_d2.tree.focus() == _p4_iid(_p4_d2, _p4_a)
+              and _p4_d2.sel_label.cget("text") == "已选 1 个分类"
+              and bool(_p4_chain) and all(_p4_chain))
+        _p4_d2.destroy(); pump(app, 2)
+
+        # 2) 模式隔离：只有所用模式的键被写入，互不干扰
+        check("需求4隔离: 仅写入所用模式的键 [copy=%r move=%r]"
+              % (db.get_meta(_p4_k["copy"]), db.get_meta(_p4_k["move"])),
+              (db.get_meta(_p4_k["copy"]) or "") == ""
+              and (db.get_meta(_p4_k["move"]) or "") == "")
+        _p4_d3 = MoveSelector(app, db, mode="copy"); pump(app, 8)
+        check("需求4隔离: 未用过的 copy 模式不预选 [选中=%s]"
+              % (list(_p4_d3.tree.selection()),),
+              list(_p4_d3.tree.selection()) == [])
+        _p4_d3.tree.selection_set(_p4_iid(_p4_d3, _p4_b))
+        _p4_d3._confirm(); pump(app, 3)
+        check("需求4: copy 记忆独立写入且不动 link 记忆 [copy=%s link=%s]"
+              % (db.get_meta(_p4_k["copy"]), db.get_meta(_p4_k["link"])),
+              db.get_meta(_p4_k["copy"]) == str(_p4_b)
+              and db.get_meta(_p4_k["link"]) == str(_p4_a))
+        _p4_d4 = MoveSelector(app, db, mode="link"); pump(app, 8)
+        check("需求4隔离: copy 的写入不影响 link 的既有记忆 [选中=%s]"
+              % (_p4_sel_ids(_p4_d4),), _p4_sel_ids(_p4_d4) == [_p4_a])
+        _p4_d4.destroy(); pump(app, 2)
+
+        # 3) 上次节点已属条目当前位置（exclude，树上标"已在"）→ 不自动选中
+        _p4_d5 = MoveSelector(app, db, mode="link", exclude=[_p4_a]); pump(app, 8)
+        check("需求4: 上次节点在 exclude 中时不自动选中 [选中=%s]"
+              % (list(_p4_d5.tree.selection()),),
+              list(_p4_d5.tree.selection()) == [])
+        _p4_d5.destroy(); pump(app, 2)
+
+        # 4) 记忆失效（分类已删除 / 脏数据）→ 静默不选中、不抛异常
+        db.set_meta(_p4_k["link"], "99999999"); pump(app, 1)
+        _p4_d6 = MoveSelector(app, db, mode="link"); pump(app, 8)
+        check("需求4: 记忆指向已不存在的分类 → 静默不选中 [选中=%s result=%s]"
+              % (list(_p4_d6.tree.selection()), _p4_d6.result),
+              list(_p4_d6.tree.selection()) == [] and _p4_d6.result == "cancel")
+        _p4_d6.destroy(); pump(app, 2)
+        db.set_meta(_p4_k["link"], "abc, ,%d" % _p4_a); pump(app, 1)
+        _p4_d7 = MoveSelector(app, db, mode="link"); pump(app, 8)
+        check("需求4: 记忆含脏数据时跳过脏项、保留有效项 [选中=%s]"
+              % (_p4_sel_ids(_p4_d7),), _p4_sel_ids(_p4_d7) == [_p4_a])
+        _p4_d7.destroy(); pump(app, 2)
+
+        # 5) move 模式走同一机制（单选）；「移入未分类」不覆盖记忆（追加批复）
+        db.set_meta(_p4_k["move"], str(_p4_a)); pump(app, 1)
+        _p4_d8 = MoveSelector(app, db, mode="move"); pump(app, 8)
+        check("需求4: move 模式同样自动定位上次节点 [选中=%s]"
+              % (_p4_sel_ids(_p4_d8),), _p4_sel_ids(_p4_d8) == [_p4_a])
+        _p4_d8._pick_uncategorized(); pump(app, 3)
+        check("需求4: 「移入未分类」结果正确且不覆盖 move 记忆 [result=%s 选中=%s 记忆=%s]"
+              % (_p4_d8.result, _p4_d8.selected_cat_ids, db.get_meta(_p4_k["move"])),
+              _p4_d8.result == "uncategorized" and _p4_d8.selected_cat_ids == []
+              and db.get_meta(_p4_k["move"]) == str(_p4_a))
+
+        # 6) 取消不写记忆（未确认即无"输出节点"）
+        db.set_meta(_p4_k["move"], ""); pump(app, 1)
+        _p4_d9 = MoveSelector(app, db, mode="move"); pump(app, 8)
+        _p4_d9.tree.selection_set(_p4_iid(_p4_d9, _p4_b))
+        _p4_d9._cancel(); pump(app, 3)
+        check("需求4: 取消不写入记忆 [result=%s move=%r]"
+              % (_p4_d9.result, db.get_meta(_p4_k["move"])),
+              _p4_d9.result == "cancel" and (db.get_meta(_p4_k["move"]) or "") == "")
+
+        _p4_clear(); pump(app, 2)
+
+        # ---------------- 2026-09-23（第 5 组需求 5）：导出对话框自动定位/加重显示"上次导出范围" ----------------
+        # 依据 问答 #05 第 765 行（施工口径）：
+        #   "导出对话框打开时树**自动滚动并加重显示（蓝加粗）到上一次的导出范围节点**；
+        #    不改只读特性，导出范围仍＝主窗口当前选中项"；
+        #   以及本项开工前的追加批复：「蓝加粗＋下划线区分」——本次范围＝蓝加粗（hl，原有），
+        #   上次范围＝蓝加粗＋下划线（hl2，新增）。
+        _p5_key = config.META_EXPORT_SCOPE_LAST
+        _p5_a = db.add_category("需求5范围A", domain_id=did)
+        _p5_b = db.add_category("需求5范围B", domain_id=did)
+
+        def _p5_iid(dlg, kind, oid):
+            """(kind, oid) → 树 iid（不在树中返回 None）"""
+            for _iid, _nk in dlg._node_kind.items():
+                if _nk == (kind, oid):
+                    return _iid
+            return None
+
+        def _p5_tags(dlg, kind, oid):
+            """节点的 tags 元组（节点不在树中返回 ()）"""
+            _iid = _p5_iid(dlg, kind, oid)
+            return tuple(dlg.tree.item(_iid, "tags") or ()) if _iid else ()
+
+        def _p5_count(dlg, tag):
+            """带某 tag 的节点数"""
+            return sum(1 for _iid in dlg._node_kind
+                       if tag in (dlg.tree.item(_iid, "tags") or ()))
+
+        db.set_meta(_p5_key, ""); pump(app, 2)
+
+        # 1) 无记忆：不标注上次范围；本次范围照旧；树仍只读；结果保持"未确认"
+        _p5_d1 = ExportScopeDialog(app, db, {"kind": "cat", "id": _c14}, "JSON"); pump(app, 8)
+        check("需求5: 无记忆时不标注上次范围节点、结果保持未确认 [hl2数=%d result=%s]"
+              % (_p5_count(_p5_d1, "hl2"), _p5_d1.result),
+              _p5_count(_p5_d1, "hl2") == 0 and _p5_d1.result is False)
+        check("需求5隔离: 树仍为只读、本次范围显示口径未变 [selectmode=%s 本次hl数=%d 选中=%s]"
+              % (_p5_d1.tree.cget("selectmode"), _p5_count(_p5_d1, "hl"),
+                 list(_p5_d1.tree.selection())),
+              str(_p5_d1.tree.cget("selectmode")) == "none"
+              and _p5_count(_p5_d1, "hl") > 0
+              and list(_p5_d1.tree.selection()) == [])
+        _p5_d1._cancel(); pump(app, 3)
+        check("需求5: 取消导出不写入上次范围 [result=%s 记忆=%r]"
+              % (_p5_d1.result, db.get_meta(_p5_key)),
+              _p5_d1.result is False and (db.get_meta(_p5_key) or "") == "")
+
+        # 2) 确认导出 → 写入本次范围（"kind:id"）
+        _p5_d2 = ExportScopeDialog(app, db, {"kind": "cat", "id": _p5_a}, "JSON"); pump(app, 8)
+        _p5_d2._confirm(); pump(app, 3)
+        check("需求5: 确认导出后记住本次导出范围 [记忆=%s result=%s]"
+              % (db.get_meta(_p5_key), _p5_d2.result),
+              db.get_meta(_p5_key) == "cat:%d" % _p5_a and _p5_d2.result is True)
+
+        # 3) 下次打开（本次范围换成 B）→ 上次范围 A 自动加重显示+展开父级+滚动可见
+        _p5_d3 = ExportScopeDialog(app, db, {"kind": "cat", "id": _p5_b}, "JSON"); pump(app, 8)
+        _p5_iid_a = _p5_iid(_p5_d3, "cat", _p5_a)
+        _p5_chain = []
+        _p5_p = _p5_d3.tree.parent(_p5_iid_a)
+        while _p5_p:                                   # 逐级上溯，父级链须全为展开
+            _p5_chain.append(bool(_p5_d3.tree.item(_p5_p, "open")))
+            _p5_p = _p5_d3.tree.parent(_p5_p)
+        check("需求5: 重开对话框时上次范围节点带 hl2（蓝加粗＋下划线）且父级全展开、滚动可见 "
+              "[tags=%s hl2数=%d 父级展开=%s bbox=%s]"
+              % (_p5_tags(_p5_d3, "cat", _p5_a), _p5_count(_p5_d3, "hl2"), _p5_chain,
+                 _p5_d3.tree.bbox(_p5_iid_a)),
+              _p5_tags(_p5_d3, "cat", _p5_a) == ("hl2",)
+              and _p5_count(_p5_d3, "hl2") == 1
+              and bool(_p5_chain) and all(_p5_chain)
+              and bool(_p5_d3.tree.bbox(_p5_iid_a)))
+        check("需求5隔离: 本次导出范围仍只标 hl（未越权改成 hl2） [上次=%s 本次=%s]"
+              % (_p5_tags(_p5_d3, "cat", _p5_a), _p5_tags(_p5_d3, "cat", _p5_b)),
+              _p5_tags(_p5_d3, "cat", _p5_b) == ("hl",))
+        _p5_d3._cancel(); pump(app, 2)
+
+        # 4) 本次范围与上次范围同一节点 → 叠加显示（hl + hl2），不重复、不冲突
+        _p5_d4 = ExportScopeDialog(app, db, {"kind": "cat", "id": _p5_a}, "JSON"); pump(app, 8)
+        check("需求5: 本次与上次为同一节点时 tags 叠加为 (hl, hl2) [tags=%s hl2数=%d]"
+              % (_p5_tags(_p5_d4, "cat", _p5_a), _p5_count(_p5_d4, "hl2")),
+              _p5_tags(_p5_d4, "cat", _p5_a) == ("hl", "hl2")
+              and _p5_count(_p5_d4, "hl2") == 1)
+        _p5_d4._cancel(); pump(app, 2)
+
+        # 5) 三种 kind 通用：domain / project 同样能定位并标注
+        db.set_meta(_p5_key, "domain:%d" % did); pump(app, 1)
+        _p5_d5 = ExportScopeDialog(app, db, {"kind": "cat", "id": _p5_b}, "JSON"); pump(app, 8)
+        check("需求5: 记忆为 domain 时定位到该根目录节点 [tags=%s hl2数=%d]"
+              % (_p5_tags(_p5_d5, "domain", did), _p5_count(_p5_d5, "hl2")),
+              _p5_tags(_p5_d5, "domain", did) == ("hl2",)
+              and _p5_count(_p5_d5, "hl2") == 1)
+        _p5_d5._cancel(); pump(app, 2)
+        db.set_meta(_p5_key, "project:%d" % pid); pump(app, 1)
+        _p5_d6 = ExportScopeDialog(app, db, {"kind": "domain", "id": did}, "JSON"); pump(app, 8)
+        check("需求5: 记忆为 project 时定位到该项目节点 [tags=%s hl2数=%d]"
+              % (_p5_tags(_p5_d6, "project", pid), _p5_count(_p5_d6, "hl2")),
+              _p5_tags(_p5_d6, "project", pid) == ("hl2",)
+              and _p5_count(_p5_d6, "hl2") == 1)
+        _p5_d6._cancel(); pump(app, 2)
+
+        # 6) 记忆失效/脏数据 → 静默不标注、不抛异常（无记忆语义与"没记过"一致）
+        for _p5_bad, _p5_desc in (("", "空值"), ("99999999", "无分隔符"),
+                                  ("cat:abc", "id 非整数"), ("cat:99999999", "分类已不存在"),
+                                  ("nope:1", "kind 非法")):
+            db.set_meta(_p5_key, _p5_bad); pump(app, 1)
+            _p5_dx = ExportScopeDialog(app, db, {"kind": "cat", "id": _p5_b}, "JSON"); pump(app, 8)
+            check("需求5: 记忆异常（%s=%r）时静默不标注 [hl2数=%d 本次hl数=%d]"
+                  % (_p5_desc, _p5_bad, _p5_count(_p5_dx, "hl2"), _p5_count(_p5_dx, "hl")),
+                  _p5_count(_p5_dx, "hl2") == 0 and _p5_count(_p5_dx, "hl") > 0)
+            _p5_dx._cancel(); pump(app, 2)
+
+        # 7) 记忆含空格（手工改库等场景）仍能解析
+        db.set_meta(_p5_key, " cat: %d " % _p5_a); pump(app, 1)
+        _p5_d7 = ExportScopeDialog(app, db, {"kind": "cat", "id": _p5_b}, "JSON"); pump(app, 8)
+        check("需求5: 记忆值含首尾/内部空格仍可解析 [tags=%s]"
+              % (_p5_tags(_p5_d7, "cat", _p5_a),),
+              _p5_tags(_p5_d7, "cat", _p5_a) == ("hl2",))
+        _p5_d7._cancel(); pump(app, 2)
+
+        db.set_meta(_p5_key, ""); pump(app, 2)
 
         fails = [n for n, ok_ in results if not ok_]
         # 2026-09-15（stage3 专项排查）：把"悬停选中"干扰证据随汇总一起打印（无干扰时不打印）

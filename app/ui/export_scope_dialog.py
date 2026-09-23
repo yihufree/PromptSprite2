@@ -18,6 +18,7 @@ from tkinter import ttk
 
 import customtkinter as ctk
 
+from .. import config as _config             # 2026-09-23：用于读取/写入"上次导出范围"meta
 from ..parser import json_io
 from . import ui_common as _ui_common        # 2026-09-22：用于取控件缩放系数
 
@@ -81,7 +82,8 @@ class ExportScopeDialog(ctk.CTkToplevel):
         # ---- 第 2 行：结构树表头 ----
         ctk.CTkLabel(
             self, anchor="w", font=("Microsoft YaHei", 11), text_color=_DIM_FG,
-            text="全库结构树（括号内为该分类本级条目数）："
+            text="全库结构树（括号内为该分类本级条目数）：\n"
+                 "　【蓝色加粗】＝本次导出范围；【蓝色加粗＋下划线】＝上次导出范围。"
         ).grid(row=2, column=0, sticky="ew", padx=16, pady=(6, 0))
 
         # ---- 第 3 行：树（可滚动） ----
@@ -97,8 +99,12 @@ class ExportScopeDialog(ctk.CTkToplevel):
         self._hl_ids = self._scope_cat_ids()          # 需加重显示的分类 id
         self._hl_node = (self.scope.get("kind"), self.scope.get("id"))
         self._dim_tag_ids = []
+        # 2026-09-23（用户要求 5）：上次导出范围节点（无记忆/已失效时为 (None, None)）
+        self._last_node = self._load_last_scope()
         self._build_tree()
         self._apply_tags()
+        # 2026-09-23（用户要求 5）：建树后**展开并滚动到上次导出范围节点**（只影响视图）
+        self._locate_last_scope()
 
         # ---- 第 4 行：范围统计 ----
         if has_scope:
@@ -291,21 +297,91 @@ class ExportScopeDialog(ctk.CTkToplevel):
         return False
 
     def _apply_tags(self) -> None:
-        """把"已选分支及其下属"标为蓝色加粗，其余置灰"""
+        """把"已选分支及其下属"标为蓝色加粗，其余置灰；上次导出范围节点另加下划线"""
         try:
             _bold = tkfont.Font(root=self, family="Microsoft YaHei", size=11, weight="bold")
             self.tree.tag_configure("hl", foreground=_HL_FG, font=_bold)
         except Exception:                                  # noqa: BLE001
             self.tree.tag_configure("hl", foreground=_HL_FG)
+        # 2026-09-23（用户要求 5）："上次导出范围"第二个 tag —— 蓝色加粗＋下划线，
+        #   与"本次导出范围"（hl，蓝色加粗）区分开（用户批复：蓝加粗+下划线区分）。
+        try:
+            _bold_u = tkfont.Font(root=self, family="Microsoft YaHei", size=11,
+                                  weight="bold", underline=True)
+            self.tree.tag_configure("hl2", foreground=_HL_FG, font=_bold_u)
+        except Exception:                                  # noqa: BLE001
+            self.tree.tag_configure("hl2", foreground=_HL_FG, underline=True)
         self.tree.tag_configure("dim", foreground=_DIM_FG)
         for iid, (kind, oid) in self._node_kind.items():
-            self.tree.item(
-                iid, tags=("hl",) if self._node_highlighted(kind, oid) else ("dim",))
+            # 2026-09-23（用户要求 5）：tags 按顺序叠加，后者的字体/颜色覆盖前者；
+            #   同一节点既是"本次范围"又是"上次范围"时 → ("hl","hl2") 显示为"蓝加粗＋下划线"。
+            _tags = []
+            if self._node_highlighted(kind, oid):
+                _tags.append("hl")
+            if self._last_node and self._last_node[0] and (kind, oid) == self._last_node:
+                _tags.append("hl2")
+            self.tree.item(iid, tags=tuple(_tags) if _tags else ("dim",))
+
+    # ------------------------------------------------------------------ #
+    # 2026-09-23（用户要求 5）：记住 / 定位"上次导出范围节点"
+    # ------------------------------------------------------------------ #
+    def _load_last_scope(self) -> tuple:
+        """读取"上次导出范围"→ (kind, id)；无记忆或数据异常返回 (None, None)。
+
+        值为 `"kind:id"`（如 `"cat:20"`），kind ∈ {project, domain, cat}，
+        由 `_confirm()` 在用户点「确认导出」时写入。
+        """
+        try:
+            raw = str(self.db.get_meta(_config.META_EXPORT_SCOPE_LAST) or "").strip()
+        except Exception:                                  # noqa: BLE001
+            return (None, None)
+        kind, _sep, sid = raw.partition(":")
+        kind = kind.strip()
+        if kind not in ("project", "domain", "cat"):
+            return (None, None)
+        try:
+            return (kind, int(sid.strip()))
+        except ValueError:                                 # 脏数据（非整数 id）
+            return (None, None)
+
+    def _locate_last_scope(self) -> None:
+        """展开并滚动到上次导出范围节点（无记忆/节点已不存在则静默不做）。
+
+        只做视图操作（展开父级 + see 滚动），**不改变任何结果字段**，
+        也不改变只读特性（树仍为 selectmode="none"）。
+        """
+        if not self._last_node or not self._last_node[0]:
+            return
+        iid = None
+        for _iid, _nk in self._node_kind.items():
+            if _nk == self._last_node:
+                iid = _iid
+                break
+        if iid is None:                                    # 节点已删除（如分类被删）
+            return
+        parent = self.tree.parent(iid)                      # 依次展开父级，保证节点可见
+        while parent:
+            self.tree.item(parent, open=True)
+            parent = self.tree.parent(parent)
+        try:
+            self.tree.see(iid)                              # 滚动到该节点
+        except Exception:                                   # noqa: BLE001
+            pass
 
     # ------------------------------------------------------------------ #
     # 按钮
     # ------------------------------------------------------------------ #
     def _confirm(self) -> None:
+        # 2026-09-23（用户要求 5）：记住本次**实际导出**的范围（"kind:id"），供下次打开
+        #   本对话框时自动展开/滚动并加重显示（蓝加粗＋下划线）。仅当范围有效时写入；
+        #   写入失败不影响导出主流程。取消（_cancel）不写。
+        _kind = self.scope.get("kind")
+        _oid = self.scope.get("id")
+        if _kind in ("project", "domain", "cat") and _oid:
+            try:
+                self.db.set_meta(_config.META_EXPORT_SCOPE_LAST, "%s:%s" % (_kind, _oid))
+            except Exception:                              # noqa: BLE001
+                pass
         self.result = True
         self.destroy()
 

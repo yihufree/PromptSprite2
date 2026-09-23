@@ -47,6 +47,7 @@ from .field_defs_diff_dialog import confirm_field_defs_file  # 2026-09-13：导�
 from .field_manager_dialog import FieldManagerDialog  # 2026-09-13（1-A-4）：字段管理（内置区块改名）
 from .export_scope_dialog import ExportScopeDialog  # 2026-09-22（用户要求 1）：导出前范围确认（结构树）
 from .import_wizard_dialog import ImportWizardDialog  # 2026-09-13（第 4 期 4-c）：网上资源结构化向导
+from .source_tag_dialog import SourceTagDialog  # 2026-09-23（阶段 1-3）：来源标注（整支 / 逐条）
 from .move_selector import MoveSelector
 from .progress_dialog import ProgressDialog
 from .quick_add import QuickAddWindow
@@ -183,6 +184,11 @@ _BAR_UNFOLD_MARGIN = 60
 #   ② `_BAR_ROW2_MIN_LEFT`：折行时"第二行首列留白"的下限兜底（源码值；正常情况用实测/缓存值）。
 _SCREEN_BOTTOM_MARGIN = 40
 _BAR_ROW2_MIN_LEFT = 100
+# 2026-09-23 14:40（阶段1-4，用户决策 24）：工具栏「全部 / 外部 / 自建」来源筛选段控的
+#   "显示文案 ⇄ 存储值"双向映射——存储值与 `database.SOURCE_TYPES` 同一口径
+#   （""＝不筛选；"external"＝外部；"original"＝自建），非法值读取时回退 ""。
+_SOURCE_SEG_LABELS = {"": "全部", "external": "外部", "original": "自建"}
+_SOURCE_SEG_TO_KEY = {v: k for k, v in _SOURCE_SEG_LABELS.items()}
 # 2026-09-15（用户要求 8）：标签页搜索框的"防抖"延迟（毫秒）——
 #   标签页每输入一个字符都会**全量重算 + 重建标签云/列表**（622 个标签时很慢），故加延迟；
 #   刻意**不复用**主搜索框的 1500ms（标签页搜索更"轻"，停顿 0.4s 即刷新）。
@@ -220,12 +226,31 @@ _BAR_ROW2_GRID = dict(row=1, column=0, columnspan=13, sticky="ew",
 _TAG_PAGE_MIN_WIDTH = 1277
 # 2026-09-14 20:35（用户要求，本轮）：详情区**两行各 3 个按钮统一宽度**——
 #   目的：让「➜ 移动到 / ↔ 关联到 / ⧉ 复制到」（第一行左起 2~4 个）与
-#   「📋 复制全部 / 复制中文 / 复制英文」（第二行左起第 1~3 个）这 6 个按钮
+#   「复制中文 / 复制英文 / 📋 复制全部」（第二行左起第 2~4 个）这 6 个按钮
 #   **大小一致、上下对齐**（用户："大小一样大、上下对齐"）。
+#   ⚠ 2026-09-23（本轮需求 2，用户要求）：第二行行首标签「⑧/⑨ 提示词：」删除、
+#     「☆ 收藏」移入第二行最左、「📋 复制全部」右移到「复制英文」右侧 ⇒
+#     **"上下逐列对齐"不再成立**（用户明确要求的新排布）；本常量仍保留 ⇒
+#     这 6 个按钮**仍然大小一致**（宽度统一，本机 96px），只是不再逐列对齐。
 #   取值：6 者中"文字+内边距"需求最大者 = "📋 复制全部" 实际 96px ⇒ 源码 80（本机 120% 缩放，
 #   80 × 1.2 = 96）；取其最大值可保证任何按钮的文字都不被裁。
 #   ⚠ 这两行原来的宽度各自"刚好显示文字"（82/88/90 与 96/78/78），故宽度不一、列不对齐。
+#   ⚠ 2026-09-23 21:30（用户要求，本轮）：「详情区工具行第一行左侧 4 钮 / 第二行左侧 4 钮」改为
+#     **按列缩窄、上下同宽、逐列对齐**（不裁字前提下尽量短）⇒ 本"六钮统一宽度"常量**已废弃**
+#     （各列不再同宽），改由下方 4 个"列宽常量"取代；保留本行仅为历史留档，代码不再引用。
 _DETAIL6_BTN_W = 80
+# 2026-09-23 21:30（用户要求，本轮）：详情区工具行**左侧 4 列**逐列统一宽度（源码值；本机 120% 缩放，
+#   实际 px = 源码 × 1.2）。取值口径：每列＝该列"上下两钮"所需宽度的**较大者**
+#   （文字宽 + 12px 内边距），即在"不裁掉按钮文字标签"前提下尽量短、且上下同宽：
+#     · 列1 ➜ 移动到 / ☆ 收藏      ⇒ 69（须容纳较宽文案「★ 已收藏」 82px）＝ 实际 82px
+#     · 列2 ↔ 关联到 / 复制中文    ⇒ 74（「↔ 关联到」 88px 最大）        ＝ 实际 88px
+#     · 列3 ⧉ 复制到 / 复制英文    ⇒ 69（「⧉ 复制到」 82px 最大）        ＝ 实际 82px
+#     · 列4 ⧉ 复制为我的 / 📋 复制全部 ⇒ 95（「⧉ 复制为我的」 114px 最大，不可再窄）＝ 实际 114px
+#   同列上下取值相同 ⇒ 两行左起 4 钮**逐列对齐**（前 3 列已由原 96px 缩至 82/88/82）。
+_DETAIL_C1_W = 69
+_DETAIL_C2_W = 74
+_DETAIL_C3_W = 69
+_DETAIL_C4_W = 95
 # 2026-09-14 21:05（用户选方案 A）：详情区**右侧 4 个控件的两列统一宽度**——
 #   第一行「✏️ 编辑 / 🔧」与第二行「重置 / 💾 保存」**逐列对齐、两块总宽一致**：
 #     · A 列（左）＝ 编辑 / 重置：编辑文字需求 72px（不可再窄）⇒ 源码 **60**（60×1.2 = 72）；
@@ -328,10 +353,14 @@ def _text_px(text: str, size: int, bold: bool = False) -> int:
 #     条目区默认 200 → **50**（约 3 秒，"显示更多"步长同步 200 → 50，节奏一致）；
 #     标签页默认 100 → **50**（实测前 50 个标签已覆盖 89.7% 的标签使用量，前 100 仅 91.9%）。
 #     另：集合超过 ENTRY_ALL_CONFIRM_THRESHOLD 时，「全部显示」先二次确认（避免误点后长时间卡死）。
-ENTRY_RENDER_LIMIT = 50        # 条目区首屏渲染条数（0 = 全部）
-ENTRY_RENDER_STEP = 50         # 每次"显示更多"追加条数
+ENTRY_RENDER_LIMIT = 50        # 条目区「每页」条数默认值（首屏＝第 1 页；0 = 不限）
 TAG_PAGE_LIMIT = 50            # 标签页（云/列表）首屏显示个数（0 = 全部）
-ENTRY_ALL_CONFIRM_THRESHOLD = 500   # 「全部显示」超过该条数时先二次确认
+ENTRY_ALL_CONFIRM_THRESHOLD = 500   # 「全部」（一次性显示全部）超过该条数时先二次确认
+# 2026-09-23（第 5 组需求 1-②，用户批复"对齐标签页 50/100/200/500/不限"）：
+#   条目区「每页」档位（长按「下一页 ▶」弹出的页面控制小窗中可选；选择即写 meta 记忆）。
+ENTRY_PAGE_LIMITS = ("50", "100", "200", "500", "不限")
+# 上列档位对应的**数值串**（用于 meta 记忆的合法性校验："不限" 记为 "0"）
+_ENTRY_PAGE_LIMIT_VALUES = frozenset(("0" if v == "不限" else v) for v in ENTRY_PAGE_LIMITS)
 
 _COPY_ALL = 0
 _COPY_CN = 1
@@ -779,6 +808,9 @@ class MainWindow(ctk.CTk):
         self._view_mode = "card"   # 卡片/列表
         # 2026-09-16（批次 11-7，用户要求 3）：条目区排序方式（"updated"/"created"/"name"）
         self._entry_sort = "updated"
+        # 2026-09-23 14:40（阶段1-4）：工具栏来源筛选当前值（""＝全部/不筛选；由 _load_settings 载入；
+        #   实际筛选值取自 `self._src()`，供各条目列表视图查询时透传 source_type）。
+        self._source_filter = ""
         self._detail_mode = config.DETAIL_MODE_AUTO  # 2026-08-18：详情字段策略（自动/全部/精简）
         self._remember_size = True                   # 2026-08-18：是否记住窗口大小
         self._detail_entry_id = None
@@ -814,13 +846,28 @@ class MainWindow(ctk.CTk):
         self._hotword_search = ""
         self._hotword_entry = None
         # 2026-09-14（性能优化，用户确认）：条目区渲染上限 / 标签一次性预取 / 分批追加
-        self._entry_render_limit = ENTRY_RENDER_LIMIT
-        self._entries_all = []          # 当前条目区**完整**列表（供"显示更多"）
+        # 2026-09-23（第 5 组需求 1-①②④，用户批复）：条目区由"累积式显示更多"改为**替换式分页**——
+        #   `_entry_page_limit`＝「每页」档位（记忆于 meta：50/100/200/500/0=不限）；
+        #   `_entry_page_no`＝当前页码（1 起；新建视图复位为 1）；
+        #   `_entry_all_once`＝本次浏览是否按了「全部」（**只影响本次显示，不改档位、不写 meta**）。
+        self._entry_page_limit = ENTRY_RENDER_LIMIT
+        self._entry_page_no = 1
+        self._entry_all_once = False
+        self._entry_press_after = None  # 翻页按钮长按计时句柄（需求 1-③）
+        self._entries_all = []          # 当前条目区**已加载**列表（分页视图下＝当前页）
         self._entries_title = ""        # 当前条目区标题（重渲染用）
-        self._entry_render_shown = []   # 已渲染的条目（追加时只渲染新增部分）
-        self._entry_more_btns = []      # 「显示更多 / 全部显示」按钮引用
-        self._entry_count_lbl = None    # 「共 N 条（已显示前 M 条）」标签引用
+        self._entry_render_shown = []   # 已渲染的条目（当前页）
+        self._entry_more_btns = []      # 翻页按钮引用 [◀ 上一页, 下一页 ▶, 全部]
+        self._entry_count_lbl = None    # 「第 X / Y 页 · 本页 N 条」标签引用
         self._entry_tags_cache = {}     # {entry_id: [标签名]} 一次性预取，消除逐条查询
+        # 2026-09-23（阶段0-2，用户批准"搜索改 SQL 分页"）：搜索视图的分页数据源与总数。
+        #   `_entries_pager=None` ⇒ 非分页视图（行为与原先完全一致）；非 None 时为
+        #   {"loader": 取下一页, "count": 取总数, "full": 取全部}（search 视图专用）。
+        #   `_entries_total=None` ⇒ 总数尚未补算（首屏先渲染，计数随后补上）。
+        self._entries_pager = None
+        self._entries_total = None
+        self._entry_more_box = None     # 分页模式下"计数 + 显示更多"整块容器（便于整块隐藏）
+        self._entry_total_lbl = None    # 「共 N 条」标签引用（分页模式下计数到位后需刷新）
         self._tag_page_limit = TAG_PAGE_LIMIT
         # 2026-09-15（用户要求 6+7）：标签页分页——当前页码（仅"标签云/列表"两档生效；
         #   页码在渲染时按总页数自动钳制，改每页条数/搜索/排序/切档都会复位到第 1 页）。
@@ -1152,6 +1199,24 @@ class MainWindow(ctk.CTk):
         #   ⇒ 对应列最小宽度 183 → **260**（= 202 + 54 + 4）。
         self.search_box = ctk.CTkFrame(bar, fg_color="transparent")
         self.search_box.grid(row=0, column=12, padx=(4, 6), sticky="ew")
+        # ---- 2026-09-23 15:00（阶段1-4，用户决策 24 / 用户答复"紧邻搜索框成组"）----
+        #   「全部 / 外部 / 自建」来源筛选段控 + 「🏷 来源标注」按钮**并入搜索框同一容器**
+        #   （本容器仍占工具栏 col12）⇒ 工具栏列结构 col0~col12 与弹性空白列 col11 **完全不动**，
+        #   新控件不占列号、搜索框列号（col12）也不需后移。
+        #   宽窗（未折行）排布（pack 顺序决定左右）：
+        #     [⚙ 设置] → 弹性空白(col11) → [段控] → [🏷 来源标注] → [搜索框(输入框+✕+🔍)]
+        #   窄窗（折行）：本容器**整体**下移工具栏第二行（`_set_bar_folded` 仍只搬本容器），
+        #     容器左边缘与第一行「🏷 标签」按钮左边缘上下对齐，容器内段控在搜索框左侧
+        #     ⇒ 一次满足用户①②③（与其"统一移动"的诉求：零额外搬移逻辑）。
+        self.source_seg = ctk.CTkSegmentedButton(
+            self.search_box, values=list(_SOURCE_SEG_LABELS.values()), width=132,
+            command=self._on_source_filter_change)
+        self.source_seg.set(_SOURCE_SEG_LABELS.get(self._source_filter, "全部"))
+        self.source_seg.pack(side="left", padx=(0, 4))
+        self.source_tag_btn = ctk.CTkButton(
+            self.search_box, text="🏷 来源标注", width=1, corner_radius=5,
+            command=self._open_source_tag)
+        self.source_tag_btn.pack(side="left", padx=(0, 4))
         self.search_entry = ctk.CTkEntry(self.search_box, placeholder_text="搜索提示词（匹配全部字段）",
                                          width=202)
         self.search_entry.pack(side="left", fill="x", expand=True)
@@ -1296,28 +1361,39 @@ class MainWindow(ctk.CTk):
         # 名称输入框已移入详情区（① 条目名称），row1 只保留命令按钮；
         # 2026-09-10（用户要求）："编辑/浏览"与"☆ 收藏"互换位置 →
         #   显示顺序（左→右）＝ ☆ 收藏 → 移动到 → 关联到 → 复制到 …… 编辑/浏览（最右）。
+        # 2026-09-23（本轮需求 2，用户要求）：「☆ 收藏」移入第二行最左端（原行首标签已删）⇒
+        #   本行显示顺序（左→右）＝ ➜ 移动到 → ↔ 关联到 → ⧉ 复制到 → ⧉ 复制为我的 …… 🔧 → ✏️ 编辑（最右）。
         # 2026-09-14（用户要求，本轮）：详情区上方**所有按钮**宽度＝"刚好显示文字"（width=1 自适应）、
         #   内边距 5（corner_radius=5）、按钮之间间距 5（源码 padx=2 → 本机实际每侧 2px、相邻合计 4px）。
-        # 2026-09-10（用户第2条）："☆ 收藏"文案短、宽度余量大 → 92→74。
         # 2026-09-10（用户要求）：三个按钮文字标签**去掉末尾省略号**（…）。
-        # 2026-09-14（用户要求，本轮）："☆ 收藏"按钮宽度**再增加约 1 个汉字字符**
-        #   （约 +14px 实际，源码 width 由"自适应(width=1)"改为 67 → 实测渲染 ≈80px）。
-        # 2026-09-14 20:29（用户确认"以现状为准"）：本行最终值为 **87**（67 + 20px ≈ 1 个汉字，
-        #   本机字体 15pt ≈ 20px）；测试断言同步为 87。
-        self.fav_btn = ctk.CTkButton(row1, text="☆ 收藏", width=87, corner_radius=5)
+        # 2026-09-23（本轮需求 2，用户要求）：「☆ 收藏」按钮**由本行移到第二行最左端**，
+        #   其历史沿革（宽度 92→74→67→87）与创建语句见下方 row2 区块（row2 定义处）。
         # 2026-09-10（用户要求 附）："移动到/关联到/复制到"宽度缩减到刚好容纳文字标签。
         # 2026-09-14 20:35（用户要求，本轮）：这三个按钮改用**统一固定宽度** `_DETAIL6_BTN_W`
         #   （与第二行"复制全部/复制中文/复制英文"同宽、上下对齐）；
         #   同时把被外部改坏的文案「➜ 移-动-到」**恢复为「➜ 移动到」**（用户明确：对齐后即可去掉横线）。
-        self.copyto_btn = ctk.CTkButton(row1, text="⧉ 复制到", width=_DETAIL6_BTN_W, corner_radius=5,
+        self.copyto_btn = ctk.CTkButton(row1, text="⧉ 复制到", width=_DETAIL_C3_W, corner_radius=5,
                                         command=lambda: None)
-        self.link_btn = ctk.CTkButton(row1, text="↔ 关联到", width=_DETAIL6_BTN_W, corner_radius=5,
+        # 2026-09-23 21:30（用户要求，本轮）：宽度 _DETAIL6_BTN_W(96px) → _DETAIL_C3_W(69→82px)，缩窄且不裁字。
+        # 2026-09-23（阶段 1-5，用户决策）：新增「⧉ 复制为我的」——把条目派生为**自建**的独立副本
+        #   （来源重置为 original/空/当前时间，见 `_copy_entry_as_mine`）。
+        #   宽度＝"刚好显示文字"（width=1 自适应）——本按钮不参与既有"两行逐列对齐"，
+        #   若沿用 _DETAIL6_BTN_W(80→96px) 会裁掉文字。
+        # 2026-09-23 21:30（用户要求，本轮）：宽度由"自适应(width=1，实测 114px)"改为**固定**
+        #   _DETAIL_C4_W（源码 95 → 114px，与自适应值相同、不裁字）；与第二行「📋 复制全部」同列同宽。
+        self.mine_btn = ctk.CTkButton(row1, text="⧉ 复制为我的", width=_DETAIL_C4_W, corner_radius=5,
                                       command=lambda: None)
-        self.move_btn = ctk.CTkButton(row1, text="➜ 移动到", width=_DETAIL6_BTN_W, corner_radius=5,
+        self.link_btn = ctk.CTkButton(row1, text="↔ 关联到", width=_DETAIL_C2_W, corner_radius=5,
                                       command=lambda: None)
+        # 2026-09-23 21:30（用户要求，本轮）：宽度 _DETAIL6_BTN_W(96px) → _DETAIL_C2_W(74→88px)，缩窄且不裁字。
+        self.move_btn = ctk.CTkButton(row1, text="➜ 移动到", width=_DETAIL_C1_W, corner_radius=5,
+                                      command=lambda: None)
+        # 2026-09-23 21:30（用户要求，本轮）：宽度 _DETAIL6_BTN_W(96px) → _DETAIL_C1_W(69→82px)，缩窄且不裁字。
         # 2026-09-14 20:35（用户要求，本轮）：右侧内边距 2 → 3（+1px），使本行三个按钮的
         #   起始 x（111）与第二行三个按钮的起始 x（111 = "⑧/⑨ 提示词："标签宽 109 + padx 2）**逐列对齐**。
-        self.fav_btn.pack(side="left", padx=(2, 3))   # 收藏换到最左端
+        # ⚠ 2026-09-23（本轮需求 2，用户要求）：行首标签「⑧/⑨ 提示词：」已删、「☆ 收藏」移入第二行 ⇒
+        #   上述"两行逐列对齐"约定**已取消**（本行自「➜ 移动到」起排）。
+        # 2026-09-23（本轮需求 2，用户要求）：「☆ 收藏」的 pack 移入下方 row2 区块。
 
         # 2026-09-09：浏览/编辑切换——浏览时详情文本只读（可选中复制），避免误改内容
         # 2026-09-10（用户第2条）：CTkSegmentedButton 的 width 参数不生效，整体宽度由各分段按钮
@@ -1357,28 +1433,44 @@ class MainWindow(ctk.CTk):
         self.move_btn.pack(side="left", padx=2)
         self.link_btn.pack(side="left", padx=2)
         self.copyto_btn.pack(side="left", padx=2)
+        # 2026-09-23（阶段 1-5）：紧邻「复制到」右侧（同为 side="left"，先 pack 者更靠左）
+        self.mine_btn.pack(side="left", padx=2)
 
         row2 = ctk.CTkFrame(self.detail_head, fg_color="transparent")
         row2.pack(fill="x", padx=6, pady=(2, 6))
-        # 2026-09-14 20:35（用户要求，本轮）：标签宽度固定为源码 92（实际 110px；其文字需求 109px，
-        #   故不裁字），使本行三个按钮的起始 x 与第一行**完全一致**（112/212/312），实现逐列对齐。
-        ctk.CTkLabel(row2, text="⑧/⑨ 提示词：", width=92,
-                     font=("Microsoft YaHei", 13, "bold")).pack(side="left")
+        # 2026-09-23（本轮需求 2，用户要求）：**删除**本行行首文字标签「⑧/⑨ 提示词：」
+        #   （原 width=92 → 实际 110px，用于使本行按钮与第一行"逐列对齐"；该对齐约定随之取消），
+        #   并把第一行「☆ 收藏」移入本行该位置（最左端；padx=2 ⇒ 左边界与第一行首钮「➜ 移动到」一致）。
+        # 2026-09-10（用户第2条）："☆ 收藏"文案短、宽度余量大 → 92→74。
+        # 2026-09-14（用户要求，本轮）："☆ 收藏"按钮宽度**再增加约 1 个汉字字符**
+        #   （约 +14px 实际，源码 width 由"自适应(width=1)"改为 67 → 实测渲染 ≈80px）。
+        # 2026-09-14 20:29（用户确认"以现状为准"）：最终值为 **87**（67 + 20px ≈ 1 个汉字，
+        #   本机字体 15pt ≈ 20px）；测试断言同步为 87。
+        self.fav_btn = ctk.CTkButton(row2, text="☆ 收藏", width=_DETAIL_C1_W, corner_radius=5)
+        # 2026-09-23 21:30（用户要求，本轮）：宽度 87(104px) → _DETAIL_C1_W(69→82px)；
+        #   口径＝按**较宽文案**「★ 已收藏」（需 82px）取值 ⇒ 两种文案均不裁字，且与第一行「➜ 移动到」同列同宽。
         # 2026-09-10（用户要求）："复制中文/复制英文/保存"各减 1 个英文字符（≈7px），
         # 为右侧"重置"腾出空间；保存宽度 78→71（上一条要求已 92→78）；
         # "复制全部"再减 1 个英文字符（86→79），进一步为"重置"腾空间。
         # 2026-09-14（用户要求，本轮）：本行按钮全部改为"刚好显示文字"（width=1）+ 内边距 5 + 间距 5。
         # 2026-09-14 20:35（用户要求，本轮）："复制全部/复制中文/复制英文"改用**统一固定宽度**
         #   `_DETAIL6_BTN_W`（与第一行"移动到/关联到/复制到"同宽、上下对齐）。
-        self.copy_all_btn = ctk.CTkButton(row2, text="📋 复制全部", width=_DETAIL6_BTN_W,
+        # 2026-09-23 21:30（用户要求，本轮）：宽度由 96px → _DETAIL_C4_W(95→114px)，与同列「⧉ 复制为我的」对齐（列4 由较大者决定）。
+        self.copy_all_btn = ctk.CTkButton(row2, text="📋 复制全部", width=_DETAIL_C4_W,
                                           corner_radius=5, fg_color=_C_OK)
-        self.copy_all_btn.pack(side="left", padx=2)
-        self.copy_cn_btn = ctk.CTkButton(row2, text="复制中文", width=_DETAIL6_BTN_W,
+        # 2026-09-23 21:30（用户要求，本轮）：宽度由 96px → _DETAIL_C2_W(74→88px)，与同列「↔ 关联到」对齐。
+        self.copy_cn_btn = ctk.CTkButton(row2, text="复制中文", width=_DETAIL_C2_W,
                                          corner_radius=5)
+        # 2026-09-23 21:30（用户要求，本轮）：宽度由 96px → _DETAIL_C3_W(69→82px)，与同列「⧉ 复制到」对齐。
+        self.copy_en_btn = ctk.CTkButton(row2, text="复制英文", width=_DETAIL_C3_W,
+                                         corner_radius=5)
+        # 2026-09-23（本轮需求 2，用户要求）：pack 次序决定显示次序（同为 side="left" 时先 pack 者更靠左）⇒
+        #   本行显示次序（左→右）＝ ☆ 收藏 → 复制中文 → 复制英文 → 📋 复制全部
+        #   （即「📋 复制全部」右移、排到「复制英文」右侧）。
+        self.fav_btn.pack(side="left", padx=2)
         self.copy_cn_btn.pack(side="left", padx=2)
-        self.copy_en_btn = ctk.CTkButton(row2, text="复制英文", width=_DETAIL6_BTN_W,
-                                         corner_radius=5)
         self.copy_en_btn.pack(side="left", padx=2)
+        self.copy_all_btn.pack(side="left", padx=2)
         # ⚠ 2026-09-15（审核 L-4）：以下为"保存 / 重置"宽度的**完整沿革**，
         #   最终取值见**最后一条**：保存 `_DETAIL_RCOL_B_W`（源码 55 → 66px）、重置 `_DETAIL_RCOL_A_W`（源码 60 → 72px）。
         # 2026-09-10（用户要求 3）：保存宽度 −2 个英文字符（≈14px）：92→78；
@@ -1513,8 +1605,13 @@ class MainWindow(ctk.CTk):
         l2 = 0
         for c in self.db.list_categories(parent_id=None):
             l2 += len(self.db.list_categories(parent_id=c["id"]))
+        # 2026-09-23 15:00（阶段1-4）：状态栏显示"当前来源筛选"（用户 1-4 规格："标题/状态栏显示当前筛选"）。
+        #   未筛选（"全部"）时不追加任何文字 ⇒ 与改动前的状态栏完全一致（功能隔离）。
+        _src_txt = ""
+        if self._source_filter:
+            _src_txt = "｜🔎 来源筛选：" + _SOURCE_SEG_LABELS.get(self._source_filter, "全部")
         self.status_label.configure(
-            text=f"总提示词数 {total}｜项目类别 {np_}｜根目录 {nd}｜一级目录 {l1}｜二级目录 {l2}")
+            text=f"总提示词数 {total}｜项目类别 {np_}｜根目录 {nd}｜一级目录 {l1}｜二级目录 {l2}{_src_txt}")
 
     def _status_hover_project(self, project_id: Optional[int]) -> None:
         """悬停项目类别：项目名 + 根目录数 + 提示词总数（"未分配"显示无归属统计）"""
@@ -2228,6 +2325,9 @@ class MainWindow(ctk.CTk):
         self._tag_head = None
         self._tag_stat_lbl = None
         self._tag_page_lbl = None
+        # 2026-09-23（第 5 组需求 1-⑤）：页码「第 X 页」的 X 改为**可输入小框**（回车跳转），
+        #   本字段为其引用；`_tag_page_lbl` 改作后缀「/ 共 Y 页」文案（见 `_update_tag_head`）。
+        self._tag_page_entry = None
         self._tag_limit_om = None
         self._tag_page_btns = {}
         self._tag_sort_seg = None       # 2026-09-15（用户要求 1）：列表档排序控件（固定头部，仅列表档显示）
@@ -2349,9 +2449,19 @@ class MainWindow(ctk.CTk):
                                    font=("Microsoft YaHei", 11), command=_cmd)
                 _b.pack(side="left", padx=_pad)
                 self._tag_page_btns[_key] = _b
-            self._tag_page_lbl = ctk.CTkLabel(pg, text="", font=("Microsoft YaHei", 10),
+            # 2026-09-23（第 5 组需求 1-⑤）：原「第 X / Y 页」为只读标签，现拆为
+            #   「第 [__] / 共 Y 页」——X 为可输入小框（回车跳转，越界自动钳制），Y 为只读后缀。
+            ctk.CTkLabel(pg, text="第", font=("Microsoft YaHei", 10),
+                         text_color="#5b6b7c").pack(side="left", padx=(6, 2))
+            self._tag_page_entry = ctk.CTkEntry(pg, width=40, height=24,
+                                                justify="center",
+                                                font=("Microsoft YaHei", 10))
+            self._tag_page_entry.pack(side="left")
+            self._tag_page_entry.bind("<Return>", lambda _e: self._on_tag_page_jump(), add="+")
+            _attach_tooltip(self._tag_page_entry, "输入页码后按回车跳转（越界自动取最近页）")
+            self._tag_page_lbl = ctk.CTkLabel(pg, text="/ 共 1 页", font=("Microsoft YaHei", 10),
                                               text_color="#5b6b7c")
-            self._tag_page_lbl.pack(side="left", padx=(6, 4))
+            self._tag_page_lbl.pack(side="left", padx=(4, 4))
             for _key, _txt, _cmd, _pad in (("next", "▶", self._on_tag_page_next, (4, 0)),
                                            ("last", "⏭", self._on_tag_page_last, (4, 0))):
                 _b = ctk.CTkButton(pg, text=_txt, width=28, height=24, fg_color="#8a94a6",
@@ -2467,7 +2577,14 @@ class MainWindow(ctk.CTk):
             if self._tag_limit_om is not None and self._tag_limit_om.winfo_exists():
                 self._tag_limit_om.set("不限" if lim <= 0 else str(lim))
             if self._tag_page_lbl is not None and self._tag_page_lbl.winfo_exists():
-                self._tag_page_lbl.configure(text=f"第 {page} / {pages} 页")
+                self._tag_page_lbl.configure(text=f"/ 共 {pages} 页")
+            # 2026-09-23（第 5 组需求 1-⑤）：页码输入框回填**钳制后**的真实页码（输入越界/
+            #   非法时用户能看到被纠正后的值）；仅在内容不同时改写，避免打断用户输入光标。
+            if self._tag_page_entry is not None and self._tag_page_entry.winfo_exists():
+                _cur = str(self._tag_page_entry.get()).strip()
+                if _cur != str(page):
+                    self._tag_page_entry.delete(0, "end")
+                    self._tag_page_entry.insert(0, str(page))
             for _k, _b in (self._tag_page_btns or {}).items():
                 if not _b.winfo_exists():
                     continue
@@ -2503,6 +2620,21 @@ class MainWindow(ctk.CTk):
         """
         self._tag_page_no = max(1, int(no))
         self._render_tag_main()
+
+    def _on_tag_page_jump(self) -> None:
+        """2026-09-23（第 5 组需求 1-⑤）：「第 X 页」输入框**回车跳转**。
+
+        非法/空输入 → 保持当前页（由 `_update_tag_head` 回填纠正）；越界页码交由
+        `_render_tag_main` 按总页数自动钳制。本方法只驱动既有 `_tag_goto_page`，不改其语义。
+        """
+        _e = getattr(self, "_tag_page_entry", None)
+        if _e is None or not _e.winfo_exists():
+            return
+        try:
+            _no = int(str(_e.get()).strip())
+        except Exception:
+            _no = int(getattr(self, "_tag_page_no", 1) or 1)
+        self._tag_goto_page(_no)
 
     def _on_tag_page_first(self) -> None:
         self._tag_goto_page(1)
@@ -2710,7 +2842,9 @@ class MainWindow(ctk.CTk):
         join = " ∧ " if mode == "and" else " ∨ "
         title = "🏷 " + join.join(names)
         self._view = ("tag", (ids, mode, title))
-        self._render_entries(self.db.list_entries_by_tags(ids, mode), title)
+        # 2026-09-23 16:30（阶段1-4，决策23）：来源筛选透传（本视图属"条目列表视图"）。
+        self._render_entries(
+            self.db.list_entries_by_tags(ids, mode, source_type=self._src()), title)
 
     def _refresh_detail_if_safe(self) -> None:
         """标签管理操作后，若详情区无未保存内容则重建，使标签块同步（防丢改动）。"""
@@ -3506,6 +3640,60 @@ class MainWindow(ctk.CTk):
         BatchTagDialog(self, self.db,
                        db_path=os.path.join(config.data_dir(), config.DB_FILE_NAME))
 
+    def _open_source_tag(self, kind: str = "", scope_id=None) -> None:
+        """打开「🏷 来源标注（整支 / 逐条）」对话框（2026-09-23，阶段 1-3）。
+
+        入口（用户决策 19 / 21）：
+          ① 设置 → 标签与词表 页「🏷 来源标注…」按钮；
+          ② 项目类别 / 根目录 / 分类 的右键菜单（**预选该节点范围**，用户确认）；
+          ③ 工具栏「🏷 来源标注」按钮（2026-09-23，阶段 1-4 加入）。
+
+        `kind` ∈ "project"/"domain"/"cat"，`scope_id` 为对应节点 id；
+        缺省（设置入口）则对话框默认落在「🌐 全库」。
+        """
+        # 锁定态不打开该对话框（其内可整支批量写来源字段，属写操作）。
+        if not self._assert_unlocked("打开来源标注"):
+            return
+        SourceTagDialog(self, self.db,
+                        db_path=os.path.join(config.data_dir(), config.DB_FILE_NAME),
+                        preset_kind=kind, preset_id=scope_id)
+
+    def _src(self):
+        """当前"来源筛选"值，供各条目列表视图查询时透传 `source_type`。
+
+        返回 ""＝**不筛选**（`database._norm_source_filter` 对 ""/None/"all"/非法值均按不筛选处理）。
+        2026-09-23 15:00（阶段1-4，用户决策 23/24）。
+        """
+        return self._source_filter or ""
+
+    def _on_source_filter_change(self, value=None) -> None:
+        """工具栏「全部 / 外部 / 自建」段控切换（2026-09-23，阶段1-4，用户决策 23 / 24）。
+
+        行为（逐条对应用户要求）：
+          · 文案 → 存储值归一（"" / "external" / "original"；未知文案回退 ""＝不筛选）；
+          · **立即写入 meta**（`config.META_SOURCE_FILTER`）⇒ 重启后记住上次选择（1-4 验收项）；
+          · 重渲染**当前视图**（决策 23：来源筛选作用于所有条目列表视图）；
+          · 状态栏显示当前筛选（用户 1-4 规格："标题/状态栏显示当前筛选"）。
+        若有未保存的详情编辑且用户选择取消，则**段控回退到原档位**（避免"显示已切换、实际未切"）。
+        """
+        key = _SOURCE_SEG_TO_KEY.get(str(value), "")
+        if key == self._source_filter:
+            return
+        if self._view is not None and not self._confirm_unsaved():
+            try:
+                self.source_seg.set(_SOURCE_SEG_LABELS.get(self._source_filter, "全部"))
+            except Exception as exc:
+                _geom_warn("还原来源筛选段控", exc)
+            return
+        self._source_filter = key
+        try:
+            self.db.set_meta(config.META_SOURCE_FILTER, key)
+        except Exception as exc:
+            _geom_warn("保存来源筛选", exc)
+        self._status_default()      # 状态栏立即反映当前筛选
+        if self._view is not None:
+            self._restore_view()
+
     # ------------------------------------------------------------------ #
     # 工具栏"折成两行"（2026-09-14 用户设计）
     # ------------------------------------------------------------------ #
@@ -3631,6 +3819,9 @@ class MainWindow(ctk.CTk):
             # 2026-09-22（用户要求 3-2）：批量删除本分支全部数据（项目类别 = 最高风险层）
             m.add_command(label="🧹 批量删除本分支全部数据…", state=lock_state,
                           command=lambda: self._batch_delete_branch("project", project_id))
+            # 2026-09-23（阶段 1-3）：来源标注（整支）——预选本项目类别范围
+            m.add_command(label="🏷 来源标注（整支）…", state=lock_state,
+                          command=lambda: self._open_source_tag("project", project_id))
             self._add_move_menu_items(m, "project", project_id, lock_state)  # 2026-09-11：上移/下移
         m.tk_popup(event.x_root, event.y_root)
 
@@ -3899,8 +4090,10 @@ class MainWindow(ctk.CTk):
         if self.db.category_has_children(cat_id):
             self._refresh_l2()          # 有子级：重建二级列展示子分类
             self._view = ("cat", cat_id)
+            # 2026-09-23 16:30（阶段1-4，决策23）：来源筛选透传（有子分类分支）。
             self._render_entries(
-                self.db.list_entries(cat_id, order_by=self._entry_sort), "条目")
+                self.db.list_entries(cat_id, order_by=self._entry_sort,
+                                     source_type=self._src()), "条目")
             self._apply_nav_highlight()
         else:
             cat = self.db.get_category(cat_id)
@@ -3909,8 +4102,10 @@ class MainWindow(ctk.CTk):
                 # 否则从其他一级分类移入时，上一分类的二级按钮不会消失、造成误认。
                 self._refresh_l2()
             self._view = ("cat", cat_id)
+            # 2026-09-23 16:30（阶段1-4，决策23）：来源筛选透传（无子分类分支）。
             self._render_entries(
-                self.db.list_entries(cat_id, order_by=self._entry_sort), "条目")
+                self.db.list_entries(cat_id, order_by=self._entry_sort,
+                                     source_type=self._src()), "条目")
             self._apply_nav_highlight()  # 原地更新高亮，不重建按钮，杜绝闪烁
 
     # ------------------------------------------------------------------ #
@@ -3920,13 +4115,17 @@ class MainWindow(ctk.CTk):
         if not self._confirm_unsaved():
             return
         self._view = ("uncat", None)
-        self._render_entries(self.db.list_uncategorized(), "📂 未分类")
+        # 2026-09-23 16:30（阶段1-4，决策23）：来源筛选透传。
+        self._render_entries(
+            self.db.list_uncategorized(source_type=self._src()), "📂 未分类")
 
     def _show_favorites(self) -> None:
         if not self._confirm_unsaved():
             return
         self._view = ("fav", None)
-        self._render_entries(self.db.list_favorites(), "⭐ 常用")
+        # 2026-09-23 16:30（阶段1-4，决策23）：来源筛选透传。
+        self._render_entries(
+            self.db.list_favorites(source_type=self._src()), "⭐ 常用")
 
     # 2026-09-14（用户要求"无标签条目"入口 方案 A）：工具栏"🏷 无标条目"按钮的响应。
     #   列出所有**没有任何标签**的条目（按修改时间倒序），标题带总数；用户可逐条点选，
@@ -4029,7 +4228,7 @@ class MainWindow(ctk.CTk):
             self._restore_view()
             return
         self._view = ("search", kw)
-        self._render_entries(self.db.search(kw), f"搜索结果（{kw}）")
+        self._render_search_entries(kw)   # 2026-09-23（阶段0-2）：改为 SQL 分页首屏加载
 
     def _on_search_click(self) -> None:
         """点击搜索框右侧"🔍"图标按钮：立即按输入内容执行搜索并保持输入焦点（2026-09-10，用户要求 2）"""
@@ -4074,19 +4273,24 @@ class MainWindow(ctk.CTk):
             self._refresh_l1()
             self._render_entries([], "条目")
         elif kind == "cat":
+            # 2026-09-23 16:30（阶段1-4，决策23）：来源筛选透传。
             self._render_entries(
-                self.db.list_entries(ref, order_by=self._entry_sort), "条目")
+                self.db.list_entries(ref, order_by=self._entry_sort,
+                                     source_type=self._src()), "条目")
         elif kind == "uncat":
-            self._render_entries(self.db.list_uncategorized(), "📂 未分类")
+            self._render_entries(
+                self.db.list_uncategorized(source_type=self._src()), "📂 未分类")
         elif kind == "fav":
-            self._render_entries(self.db.list_favorites(), "⭐ 常用")
+            self._render_entries(
+                self.db.list_favorites(source_type=self._src()), "⭐ 常用")
         elif kind == "untagged":
             # 2026-09-14（"无标签条目"入口 方案 A + 方案 C 共用）：ref = 关键词（""＝不过滤）。
             #   标题里的总数每次重建都重算，故"给某条打了标签"后该条会立即移出并更新计数。
             # 2026-09-15（审核 L-9）：**本通路补容错**——原先与"计数通路"（有 try + −1 哨兵）不一致，
             #   库被锁/损坏/缺表时异常会冒泡到 Tk 回调（无控制台 EXE 下表现为"点了没反应"）。
             try:
-                items = self.db.list_untagged()
+                # 2026-09-23 16:30（阶段1-4，决策23）：来源筛选透传。
+                items = self.db.list_untagged(source_type=self._src())
                 if ref:
                     keep = {e["id"] for e in self.db.search(ref)}
                     items = [e for e in items if e["id"] in keep]
@@ -4099,19 +4303,47 @@ class MainWindow(ctk.CTk):
                      + f"（共 {len(items)} 条）")
             self._render_entries(items, title)
         elif kind == "search":
-            self._render_entries(self.db.search(ref), f"搜索结果（{ref}）")
+            self._render_search_entries(ref)   # 2026-09-23（阶段0-2）：改为 SQL 分页首屏加载
         elif kind == "tag":
             # 2026-09-13（1-C-3b）：标签视图（跨分类），ref=(tag_ids, mode, title)
             ids, mode, title = ref
-            self._render_entries(self.db.list_entries_by_tags(ids, mode), title)
+            # 2026-09-23 16:30（阶段1-4，决策23）：来源筛选透传。
+            self._render_entries(
+                self.db.list_entries_by_tags(ids, mode, source_type=self._src()), title)
         elif kind == "search_tag":
             # 2026-09-13（1-C-4b）："#标签 + 关键词"组合搜索，ref=(tag_ids, 关键词, 标题)
             ids, kw, title = ref
-            items = self.db.list_entries_by_tags(ids, "and") if ids else []
+            # 2026-09-23 16:30（阶段1-4，决策23）：来源筛选透传（本视图属"条目列表视图"）。
+            items = (self.db.list_entries_by_tags(ids, "and", source_type=self._src())
+                     if ids else [])
             if kw:
                 keep = {e["id"] for e in self.db.search(kw)}
                 items = [e for e in items if e["id"] in keep]
             self._render_entries(items, title)
+
+    def _render_search_entries(self, kw: str) -> None:
+        """渲染"关键词搜索"视图（2026-09-23，阶段0-2：改为 SQL 分页加载）。
+
+        改动前：`self.db.search(kw)` 一次把**全部**命中行查回并逐行转 dict（实测 2398 行约
+        98~116ms），而首屏只渲染前 50 条；现改为：
+          - 首屏只取 ENTRY_RENDER_LIMIT 条（实测 ~1.3ms）；
+          - 命中总数由 `pager["count"]` 在界面空闲后**延迟补算**（精确 COUNT 需 14~53ms）；
+          - 「显示更多」按 LIMIT/OFFSET 逐页取（`pager["loader"]`），「全部显示」用 `pager["full"]`。
+        **仅搜索视图使用分页**（其余视图不传 pager ⇒ 走原逻辑，行为与改动前完全一致）。
+        """
+        # 2026-09-23（第 5 组需求 1-②）：首屏页大小＝「每页」档位（"不限"＝0 ⇒ None＝不限制）
+        lim = int(getattr(self, "_entry_page_limit", ENTRY_RENDER_LIMIT) or 0) or None
+        # 2026-09-23 16:30（阶段1-4，决策23）：来源筛选透传。一次性取值 ⇒ 本页
+        #   loader/count/full/首屏 四路口径严格一致（避免"显示更多"与计数错位）。
+        _st = self._src()
+        pager = {
+            "loader": lambda offset, limit: self.db.search(
+                kw, limit=limit, offset=offset, source_type=_st),
+            "count": lambda: self.db.search_count(kw, source_type=_st),
+            "full": lambda: self.db.search(kw, source_type=_st),
+        }
+        self._render_entries(self.db.search(kw, limit=lim, offset=0, source_type=_st),
+                             f"搜索结果（{kw}）", pager=pager)
 
     # ------------------------------------------------------------------ #
     # 条目区（卡片/列表视图切换）
@@ -4151,15 +4383,39 @@ class MainWindow(ctk.CTk):
         self._view_mode = "card" if value == "卡片" else "list"
         self._restore_view()
 
-    def _render_entries(self, entries, title: str) -> None:
+    def _render_entries(self, entries, title: str, pager: dict = None,
+                        keep_page: bool = False) -> None:
         # 2026-09-14（性能优化，用户确认"默认前 200 条 + 显示更多"）：
         #   实测每条例目渲染约 54ms（100 条≈5.4 秒、2329 条≈137 秒），瓶颈在逐个创建 UI 控件。
         #   故先记下**完整**列表，再按上限截断渲染；其余由「显示更多 / 全部显示」按需追加。
+        # 2026-09-23（阶段0-2，用户批准"搜索改 SQL 分页"）：新增可选参数 `pager`——分页数据源，
+        #   **仅搜索视图传入**（其余视图一律不传 ⇒ 走原逻辑，行为与原先完全一致，实现功能隔离）。
+        #   分页模式下本方法只拿到"首屏一页"，其余条目在点「显示更多」时按 SQL LIMIT/OFFSET 拉取；
+        #   命中总数由 `pager["count"]` **延迟补算**（首屏不等计数，见 `_async_count_total`）。
+        _prev_pager = getattr(self, "_entries_pager", None)
+        self._entries_pager = pager or None
         self._entries_all = list(entries or [])
+        if self._entries_pager is None:
+            self._entries_total = len(self._entries_all)
+        elif self._entries_pager is not _prev_pager:
+            self._entries_total = None      # 新的分页视图 ⇒ 总数待延迟补算
+        # 否则：同一分页视图内翻页（keep_page=True）⇒ 保留已补算的总数，不重复计数
         self._entries_title = title
-        _lim = int(getattr(self, "_entry_render_limit", ENTRY_RENDER_LIMIT) or 0)
-        shown = (self._entries_all[:_lim]
-                 if (_lim and len(self._entries_all) > _lim) else list(self._entries_all))
+        # 2026-09-23（第 5 组需求 1-①②④）：新视图复位到第 1 页；翻页（keep_page=True）保留页码
+        if not keep_page:
+            self._entry_page_no = 1
+            self._entry_all_once = False
+        # 2026-09-23（阶段0-2）：提前清空"已渲染"记录——使下方计数区块的占位文本从 0 起算
+        self._entry_render_shown = []
+        _size = self._entry_page_size()          # 0 = 不限（含「全部」一次性显示）
+        if self._entries_pager:
+            shown = list(self._entries_all)      # 已是"当前页一页"，无需再切片
+        elif _size:
+            # 2026-09-23（第 5 组需求 1-①②）：**替换式**——只取当前页切片（不再累积显示）
+            _start = (int(getattr(self, "_entry_page_no", 1)) - 1) * _size
+            shown = self._entries_all[_start:_start + _size]
+        else:
+            shown = list(self._entries_all)
         entries = shown
 
         self.entry_frame.configure(label_text=title)
@@ -4183,31 +4439,24 @@ class MainWindow(ctk.CTk):
             self._add_entry_btn.configure(
                 state="normal" if self._add_available() else "disabled")
 
-        # 2026-09-14：被截断时显示"已显示前 N 条 · 剩余 M 条" + 「显示更多 / 全部显示」
-        # （整行 fill=x，适配条目区仅 224px 的窄宽度；不再截断后按钮置灰）
+        # 2026-09-23（第 5 组需求 1-④）：翻页区块改为**三钮同行**
+        #   `◀ 上一页 ｜ 下一页 ▶ ｜ 全部`（按钮名后不再带数量；数量与页码见计数标签/浮动提示）；
+        #   仅当"存在第 2 页"时构建（分页视图总数未补算时也先建好，按钮置灰等待）。
         self._entry_more_btns = []
         self._entry_count_lbl = None
-        if len(shown) < len(self._entries_all):
-            self._entry_count_lbl = ctk.CTkLabel(
-                self.entry_frame, text=self._entry_count_text(),
-                text_color="#8a94a6", font=("Microsoft YaHei", 10))
-            self._entry_count_lbl.pack(fill="x", padx=8, pady=(2, 0))
-            _b1 = ctk.CTkButton(self.entry_frame,
-                                text=f"▼ 显示更多（+{ENTRY_RENDER_STEP}）", height=26,
-                                font=("Microsoft YaHei", 11), fg_color="#25639c",
-                                command=self._show_more_entries)
-            _b1.pack(fill="x", padx=6, pady=(2, 0))
-            _b2 = ctk.CTkButton(self.entry_frame,
-                                text=f"全部显示（共 {len(self._entries_all)} 条）", height=24,
-                                font=("Microsoft YaHei", 11), fg_color="#6b7280",
-                                command=lambda: self._show_more_entries(all_=True))
-            _b2.pack(fill="x", padx=6, pady=(2, 0))
-            self._entry_more_btns = [_b1, _b2]
+        self._entry_more_box = None
+        _size_now = int(getattr(self, "_entry_page_limit", ENTRY_RENDER_LIMIT) or 0)
+        if (self._entries_pager is not None
+                or (_size_now > 0 and len(self._entries_all) > _size_now)):
+            self._build_entry_pager_block(self.entry_frame)
 
         toggle = ctk.CTkFrame(self.entry_frame, fg_color="transparent")
         toggle.pack(fill="x", padx=6, pady=(4, 2))
-        ctk.CTkLabel(toggle, text=f"共 {len(self._entries_all)} 条",
-                     text_color="gray").pack(side="left")
+        self._entry_total_lbl = ctk.CTkLabel(
+            toggle, text=(f"共 {self._entries_total} 条" if self._entries_total is not None
+                          else "共 ? 条"),
+            text_color="gray")
+        self._entry_total_lbl.pack(side="left")
         switch = ctk.CTkSegmentedButton(toggle, values=["卡片", "列表"], width=150,
                                         command=self._set_view_mode)
         switch.set("卡片" if self._view_mode == "card" else "列表")
@@ -4219,19 +4468,395 @@ class MainWindow(ctk.CTk):
             ctk.CTkLabel(self.entry_frame, text="（暂无条目）",
                          text_color="gray").pack(pady=30)
             self._scroll_top(self.entry_frame)  # 2026-09-07（第4条改进）
+            # 2026-09-23（阶段0-2）：分页模式首屏为空时也要补算总数（确认"确实 0 条"并收掉计数区块）
+            if self._entries_pager is not None and self._entries_total is None:
+                self.after_idle(self._async_count_total)
             return
         # 2026-09-14：一次性预取标签（消除"逐条查询"的 N+1），再渲染
         self._entry_tags_cache = self._prefetch_entry_tags(entries)
         self._entry_render_shown = []
         self._append_entry_items(entries)
+        if self._entry_more_btns:
+            # 渲染完成 → 刷新计数文本与三钮状态（此时"本页 N 条"才是准确值）
+            self._refresh_more_block()
+        if self._entries_pager is not None and self._entries_total is None:
+            # 新的分页视图首屏 → **延迟**补算总数（不阻塞首屏；翻页时总数已知，不会重复计数）
+            self.after_idle(self._async_count_total)
         self._scroll_top(self.entry_frame)  # 2026-09-07（第4条改进）：切换分类后条目列回到顶部
 
-    # ---- 条目区：渲染上限相关辅助（2026-09-14 性能优化） ---- #
+    # ---- 条目区：分页 / 翻页辅助（2026-09-23，第 5 组需求 1-①②③④） ---- #
+    def _entry_page_size(self) -> int:
+        """当前「每页」条数（0 = 不限）。
+
+        2026-09-23（第 5 组需求 1-①②④，用户批复）：`_entry_all_once`（本次按了「全部」）
+        视作不限，但**不**改 `_entry_page_limit`、**不**写记忆 —— 只影响本次浏览。
+        """
+        if getattr(self, "_entry_all_once", False):
+            return 0
+        try:
+            return max(0, int(getattr(self, "_entry_page_limit", ENTRY_RENDER_LIMIT) or 0))
+        except Exception:
+            return ENTRY_RENDER_LIMIT
+
+    def _entry_total_pages(self) -> int:
+        """总页数（「不限」或总数尚未补算时为 1）。"""
+        size = self._entry_page_size()
+        total = getattr(self, "_entries_total", None)
+        if not size or total is None:
+            return 1
+        return max(1, (int(total) + size - 1) // size)
+
     def _entry_count_text(self) -> str:
-        """「已显示前 N 条 · 剩余 M 条（共 X 条）」提示文本。"""
-        total = len(getattr(self, "_entries_all", []) or [])
+        """计数标签文本：「第 X / Y 页 · 本页 N 条（共 T 条）」。
+
+        2026-09-23（阶段0-2）：分页模式下总数可能**尚未补算**（None）⇒ 显示"正在统计总数…"，
+        不谎报页数/总数（真实总数可能远大于首屏一页）。
+        """
+        total = getattr(self, "_entries_total", None)
+        no = int(getattr(self, "_entry_page_no", 1) or 1)
         cur = len(getattr(self, "_entry_render_shown", []) or [])
-        return f"已显示前 {cur} 条 · 剩余 {max(0, total - cur)} 条（共 {total} 条）"
+        if total is None:
+            return f"第 {no} 页 · 正在统计总数…"
+        return f"第 {no} / {self._entry_total_pages()} 页 · 本页 {cur} 条（共 {total} 条）"
+
+    def _refresh_more_block(self) -> None:
+        """按当前页码/总数刷新「计数标签 + 三钮（◀ 上一页 / 下一页 ▶ / 全部）」状态。
+
+        2026-09-23（第 5 组需求 1-①②④）：语义由"累积式显示更多"改为**替换式翻页**：
+          - 首页禁「◀ 上一页」、末页禁「下一页 ▶」；
+          - 总数未知（分页视图尚未补算）时三钮一律置灰（避免无意义的翻页/全部）；
+          - 总数已知且只有 1 页 ⇒ 整块收起（本就无需翻页；与改动前"全部显示后收起"行为一致）。
+        """
+        box = getattr(self, "_entry_more_box", None)
+        btns = list(getattr(self, "_entry_more_btns", None) or [])
+        total = getattr(self, "_entries_total", None)
+        try:
+            if self._entry_count_lbl is not None and self._entry_count_lbl.winfo_exists():
+                self._entry_count_lbl.configure(text=self._entry_count_text())
+            if self._entry_total_lbl is not None and self._entry_total_lbl.winfo_exists():
+                self._entry_total_lbl.configure(
+                    text=(f"共 {total} 条" if total is not None else "共 ? 条"))
+            if total is None:
+                for b in btns:
+                    if b.winfo_exists():
+                        b.configure(state="disabled")
+                return
+            if self._entry_total_pages() <= 1:
+                if box is not None and box.winfo_exists():
+                    box.pack_forget()
+                return
+            no = int(getattr(self, "_entry_page_no", 1) or 1)
+            states = ("normal" if no > 1 else "disabled",
+                      "normal" if no < self._entry_total_pages() else "disabled",
+                      "disabled" if getattr(self, "_entry_all_once", False) else "normal")
+            for b, st in zip(btns, states):
+                if b.winfo_exists():
+                    b.configure(state=st)
+        except Exception:
+            pass
+
+    def _build_entry_pager_block(self, parent) -> None:
+        """构建条目区翻页区块：`上一页 ｜ 下一页 ｜ 全部` 三钮同行 + 计数标签。
+
+        2026-09-23（第 5 组需求 1-①②③④，用户批复"A：三钮同行"）：
+          - 按钮名后**不再带数量**（数量/页码见右侧计数标签与浮动提示）；
+          - 2026-09-23（本轮需求 1，用户要求）：按钮文案**去掉装饰箭头小图标**
+            （原 `◀ 上一页` / `下一页 ▶` → 现 `上一页` / `下一页`）——三钮同行时空间过挤，
+            原图标把按钮文字挤到显示不全；
+          - `上一页` / `全部` 用普通 command（与既有行为一致）；
+          - `下一页 ▶` **不设 command=**：CTkButton 内部 `<Button-1>` 在"按下瞬间"即调 command，
+            无法区分点击/长按；故自绑 `<ButtonPress-1>`（起 500ms 计时）与 `<ButtonRelease-1>`
+            （未满 500ms ＝ 短点击翻下一页），满 500ms 由定时器打开「页面控制」小弹窗（需求 1-③）。
+        """
+        box = ctk.CTkFrame(parent, fg_color="transparent")
+        box.pack(fill="x", padx=6, pady=(4, 2))
+        self._entry_more_box = box
+
+        # 2026-09-23（本轮需求 1，用户要求）：去掉「上一页」左侧的 `◀`、「下一页」右侧的 `▶`
+        #   小图标（三钮同行过挤、导致按钮文字显示不全）；宽度 78 保持不变，
+        #   去掉图标后文字余量更充足（"上一页"文字 ≈60px + 内边距 ≈12px < 78）。
+        # 2026-09-23 21:42（用户要求，本轮）：「上一页」「下一页」仍偏宽 ⇒ 两钮宽度由 78 缩至 **58**
+        #   （＝与同行的「全部」按钮**同宽**；「全部」宽度 58 **不动**）。
+        # 2026-09-23 21:46（用户要求，本轮）：三钮（上一页 / 下一页 / 全部）宽度**各减 1 个英文字符**
+        #   （沿用本项目既有口径：1 个英文字符 ≈ 7 源码 px）⇒ 58 → **51**（实际 ≈61px）。
+        prev_btn = ctk.CTkButton(box, text="上一页", width=51,
+                                 command=self._on_entry_page_prev)
+        prev_btn.pack(side="left")
+        _attach_tooltip(prev_btn, "显示上一页条目")
+        next_btn = ctk.CTkButton(box, text="下一页", width=51)
+        next_btn.pack(side="left", padx=(4, 0))
+        _attach_tooltip(next_btn, "点击：显示下一轮条目\n长按 0.5 秒：打开页面控制（跳页 / 每页条数）")
+        all_btn = ctk.CTkButton(box, text="全部", width=51, command=self._on_entry_page_all)
+        all_btn.pack(side="left", padx=(4, 0))
+        _attach_tooltip(all_btn, "一次性显示全部结果（只影响本次浏览，不改变「每页」设置）")
+        count_lbl = ctk.CTkLabel(box, text=self._entry_count_text(), text_color="gray")
+        count_lbl.pack(side="left", padx=(10, 0))
+
+        self._entry_count_lbl = count_lbl
+        self._entry_more_btns = [prev_btn, next_btn, all_btn]
+        self._entry_next_btn = next_btn
+        next_btn.bind("<ButtonPress-1>", self._on_entry_next_press)
+        next_btn.bind("<ButtonRelease-1>", self._on_entry_next_release)
+        # 渲染完成前先置灰（避免在"本页 N 条"未刷新时误操作），随后由 _refresh_more_block() 统一刷新
+        for b in (prev_btn, next_btn, all_btn):
+            b.configure(state="disabled")
+
+    # ---- 条目区：翻页动作（2026-09-23，第 5 组需求 1-①②③） ---- #
+    def _cancel_entry_press_timer(self) -> None:
+        """取消「下一页 ▶」的长按计时（需求 1-③）。"""
+        _h = getattr(self, "_entry_press_after", None)
+        if _h is not None:
+            try:
+                self.after_cancel(_h)
+            except Exception:
+                pass
+        self._entry_press_after = None
+
+    def _entry_next_enabled(self) -> bool:
+        """「下一页 ▶」当前是否可用（未禁用 ⇒ 存在下一页）。"""
+        btn = getattr(self, "_entry_next_btn", None)
+        try:
+            return btn is not None and str(btn.cget("state")) != "disabled"
+        except Exception:
+            return False
+
+    def _on_entry_next_press(self, event=None) -> None:
+        """「下一页 ▶」按下：起 500ms 长按计时（未满 500ms 由松开事件判定为短点击）。"""
+        self._cancel_entry_press_timer()
+        if not self._entry_next_enabled():
+            return
+        self._entry_press_after = self.after(500, self._on_entry_next_longpress)
+
+    def _on_entry_next_release(self, event=None) -> None:
+        """「下一页 ▶」松开：计时仍在（未满 500ms）⇒ 短点击＝翻到下一页。"""
+        if getattr(self, "_entry_press_after", None) is None:
+            return                  # 长按已触发（或按下时按钮禁用）⇒ 不作为短点击
+        self._cancel_entry_press_timer()
+        if not self._entry_next_enabled():
+            return
+        self._on_entry_page_next()
+
+    def _on_entry_next_longpress(self) -> None:
+        """长按满 500ms：打开「页面控制」小弹窗（需求 1-③）。"""
+        self._entry_press_after = None
+        self._open_entry_page_dialog()
+
+    def _on_entry_page_prev(self) -> None:
+        """「◀ 上一页」：翻到上一页。"""
+        self._goto_entry_page(int(getattr(self, "_entry_page_no", 1) or 1) - 1)
+
+    def _on_entry_page_next(self) -> None:
+        """「下一页 ▶」短点击：翻到下一页。"""
+        self._goto_entry_page(int(getattr(self, "_entry_page_no", 1) or 1) + 1)
+
+    def _on_entry_page_all(self) -> None:
+        """「全部」：**一次性**显示全部命中（不改「每页」档位、不写记忆；用户批复）。
+
+        超大集合沿用既有二次确认（渲染期间界面无响应、不可中断）。
+        """
+        if getattr(self, "_entry_all_once", False):
+            return
+        total = getattr(self, "_entries_total", None)
+        if total is None:
+            return
+        size = int(getattr(self, "_entry_page_limit", ENTRY_RENDER_LIMIT) or 0)
+        if size and total > ENTRY_ALL_CONFIRM_THRESHOLD:
+            _secs = int(total * 0.054) + 1      # 按实测 54ms/条 估算
+            if not messagebox.askyesno(
+                    "显示全部",
+                    f"将一次渲染全部 {total} 条条目，约需 {_secs} 秒"
+                    "（渲染期间界面无响应、不可中断）。\n\n"
+                    "建议改用「下一页 ▶」分页浏览。确定要全部显示吗？", parent=self):
+                return
+        self._entry_all_once = True
+        self._entry_page_no = 1
+        pager = getattr(self, "_entries_pager", None)
+        if pager is not None:
+            full = pager.get("full")
+            items = []
+            try:
+                if callable(full):
+                    items = list(full() or [])
+            except Exception as exc:
+                _geom_warn("全部显示条目", exc)
+            self._render_entries(items, self._entries_title, pager=pager, keep_page=True)
+        else:
+            self._render_entries(self._entries_all, self._entries_title,
+                                 pager=None, keep_page=True)
+
+    def _goto_entry_page(self, no: int, force: bool = False) -> None:
+        """跳转到第 `no` 页（替换式渲染：只渲染该页）。
+
+        - 分页视图（搜索）：按 SQL LIMIT/OFFSET 取该页（`pager["loader"]`）；总数已补算则保留，不重复计数；
+        - 非分页视图（其余）：`_entries_all` 为全量，由 `_render_entries` 按内存切片取该页（无 SQL offset）。
+        """
+        size = self._entry_page_size()
+        no = max(1, int(no))
+        if self._entries_total is not None:
+            no = min(no, self._entry_total_pages())
+        if not force and no == int(getattr(self, "_entry_page_no", 1) or 1):
+            self._refresh_more_block()
+            return
+        pager = getattr(self, "_entries_pager", None)
+        if pager is not None:
+            if not size:                    # 「全部」一次性显示态下不应走到翻页
+                return
+            loader = pager.get("loader")
+            items = []
+            try:
+                if callable(loader):
+                    items = list(loader((no - 1) * size, size) or [])
+            except Exception as exc:
+                _geom_warn("条目翻页", exc)
+                return
+            self._entry_page_no = no
+            self._render_entries(items, self._entries_title, pager=pager, keep_page=True)
+        else:
+            self._entry_page_no = no
+            self._render_entries(self._entries_all, self._entries_title,
+                                 pager=None, keep_page=True)
+
+    def _apply_entry_page_setting(self, limit: int, no: int) -> None:
+        """应用「页面控制」小弹窗的「每页」档位与页码（2026-09-23，需求 1-②③）。
+
+        - 「每页」变化 ⇒ **立即写 meta 记忆**（下次启动恢复该档位）；
+        - 只改「每页」而未改页码 ⇒ 回到第 1 页（避免同一个页码在换档后指向不同数据）；
+        - 「不限」⇒ 只有第 1 页；
+        - 档位生效即退出"本次全部显示"态（`_entry_all_once`）。
+        """
+        old = max(0, int(getattr(self, "_entry_page_limit", ENTRY_RENDER_LIMIT) or 0))
+        _changed = (int(limit) != old)
+        if _changed:
+            self._entry_page_limit = int(limit)
+            try:
+                self.db.set_meta(config.META_ENTRY_PAGE_LIMIT, str(int(limit)))
+            except Exception as exc:
+                _geom_warn("保存条目区「每页」档位", exc)
+        self._entry_all_once = False
+        if not limit:
+            no = 1
+        elif _changed and int(no) == max(1, int(getattr(self, "_entry_page_no", 1) or 1)):
+            no = 1
+        self._goto_entry_page(no, force=True)
+
+    def _open_entry_page_dialog(self) -> None:
+        """打开「页面控制」小弹窗（2026-09-23，需求 1-③）：跳页 + 每页条数。
+
+        由「下一页 ▶」长按 0.5 秒触发；「每页」档位与标签页对齐（50/100/200/500/不限），
+        选择「确定」即写 meta 记忆（见 `_apply_entry_page_setting`）。
+        """
+        total = getattr(self, "_entries_total", None)
+        pages = self._entry_total_pages()
+        cur_no = max(1, int(getattr(self, "_entry_page_no", 1) or 1))
+        limit = max(0, int(getattr(self, "_entry_page_limit", ENTRY_RENDER_LIMIT) or 0))
+        cur_limit = "不限" if limit == 0 else str(limit)
+        if cur_limit not in ENTRY_PAGE_LIMITS:
+            cur_limit = ENTRY_PAGE_LIMITS[0]
+
+        dlg = ctk.CTkToplevel(self)
+        dlg.title("页面控制")
+        dlg.resizable(False, False)
+        try:
+            dlg.transient(self)
+        except Exception:
+            pass
+
+        body = ctk.CTkFrame(dlg, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=16, pady=14)
+        ctk.CTkLabel(body, text=(f"共 {total} 条 · 共 {pages} 页" if total is not None
+                                 else "正在统计总数…"), text_color="gray").pack(anchor="w")
+
+        row_page = ctk.CTkFrame(body, fg_color="transparent")
+        row_page.pack(fill="x", pady=(10, 0))
+        ctk.CTkLabel(row_page, text="跳到第").pack(side="left")
+        page_var = tk.StringVar(value=str(cur_no))
+        page_ent = ctk.CTkEntry(row_page, width=76, textvariable=page_var)
+        page_ent.pack(side="left", padx=6)
+        ctk.CTkLabel(row_page, text=f"页（1 ~ {pages}）").pack(side="left")
+
+        row_size = ctk.CTkFrame(body, fg_color="transparent")
+        row_size.pack(fill="x", pady=(10, 0))
+        ctk.CTkLabel(row_size, text="每页").pack(side="left")
+        limit_seg = ctk.CTkSegmentedButton(row_size, values=list(ENTRY_PAGE_LIMITS), width=320)
+        limit_seg.set(cur_limit)
+        limit_seg.pack(side="left", padx=6)
+
+        row_btns = ctk.CTkFrame(body, fg_color="transparent")
+        row_btns.pack(fill="x", pady=(14, 0))
+
+        def _do_ok() -> None:
+            try:
+                _no = int(str(page_var.get()).strip() or "1")
+            except Exception:
+                messagebox.showwarning("页面控制", "「跳到第」需填写整数页码。", parent=dlg)
+                return
+            _v = str(limit_seg.get()).strip()
+            _lim = 0 if (_v == "不限" or _v not in ENTRY_PAGE_LIMITS) else int(_v)
+            dlg.destroy()
+            self._apply_entry_page_setting(_lim, _no)
+
+        ctk.CTkButton(row_btns, text="取消", width=80, command=dlg.destroy).pack(side="right")
+        ctk.CTkButton(row_btns, text="确定", width=80, command=_do_ok).pack(side="right", padx=(0, 8))
+
+        # 小弹窗随主窗口居中显示（不改变主窗口状态/位置）；固定尺寸后 lift + 模态
+        _w, _h = 380, 196
+        try:
+            dlg.update_idletasks()
+            _x = self.winfo_rootx() + max((self.winfo_width() - _w) // 2, 0)
+            _y = self.winfo_rooty() + max((self.winfo_height() - _h) // 3, 0)
+            dlg.geometry("%dx%d+%d+%d" % (_w, _h, _x, _y))
+        except Exception:
+            pass
+        try:
+            dlg.lift()
+            dlg.grab_set()
+        except Exception:
+            pass
+        try:
+            page_ent.focus_set()
+            page_ent.select_range(0, "end")
+        except Exception:
+            pass
+
+    def _async_count_total(self) -> None:
+        """分页模式：**延迟**补算"全部命中"总数（首屏不等计数）。
+
+        2026-09-23（阶段0-2，用户批准"延迟精确计数"）：精确 COUNT 需扫描全部行（实测 14~53ms，
+        生产库更大），故首屏先渲染 50 条（实测 1.3ms），计数在界面空闲后补上。
+        期间若用户已切换视图/重新搜索（`_entries_pager` 已被替换）⇒ 丢弃过期结果，不刷新界面。
+        """
+        pager = getattr(self, "_entries_pager", None)
+        if not pager or not pager.get("count"):
+            return
+        try:
+            n = int(pager["count"]())
+        except Exception as exc:
+            _geom_warn("搜索结果计数", exc)
+            return
+        if getattr(self, "_entries_pager", None) is not pager:
+            return                      # 视图已切换 ⇒ 结果过期，丢弃
+        self._entries_total = n
+        self._refresh_more_block()
+
+    def _current_scope_entries(self) -> list:
+        """当前条目区"完整范围"条目（供批量打标等"按当前列表范围"的操作使用）。
+
+        2026-09-23（阶段0-2，用户确认方案 A）：搜索视图改为分页加载后，`_entries_all` 只含
+        **已加载部分**（首屏 50 条 + 用户点过的"显示更多"），若直接沿用会让"批量打标 → 范围＝
+        当前列表"**静默只作用于已加载的几十条**（数据风险）。故在此统一取值口：分页视图下
+        按需重查一次"全部命中"（一次 SQL，仅在该类操作真被打开时才发生），其余视图仍返回
+        `_entries_all`，语义与改动前完全一致。
+        """
+        pager = getattr(self, "_entries_pager", None)
+        if not pager:
+            return list(getattr(self, "_entries_all", None) or [])
+        try:
+            full = pager.get("full")
+            if callable(full):
+                return list(full() or [])
+        except Exception as exc:
+            _geom_warn("取当前范围（全部命中）", exc)
+        return list(getattr(self, "_entries_all", None) or [])
 
     def _prefetch_entry_tags(self, entries) -> dict:
         """一次性预取条目标签（消除 N+1 逐条查询；仅在开启"条目处显示标签"时执行）。"""
@@ -4256,61 +4881,6 @@ class MainWindow(ctk.CTk):
                                    + items)
         self._entry_ov_names = [x["name"] for x in self._entry_render_shown]
         self._entry_ov_ids = [x["id"] for x in self._entry_render_shown]
-
-    def _show_more_entries(self, all_: bool = False) -> None:
-        """追加渲染更多条目（只渲染新增部分；不重建已有控件，避免重复开销）。"""
-        total = len(getattr(self, "_entries_all", []) or [])
-        cur = len(getattr(self, "_entry_render_shown", []) or [])
-        if cur >= total:
-            return
-        if all_:
-            # 2026-09-14 13:40（用户确认）：超大集合先二次确认，避免误点后界面长时间无响应
-            if total > ENTRY_ALL_CONFIRM_THRESHOLD:
-                _secs = int(total * 0.054) + 1      # 按实测 54ms/条 估算
-                if not messagebox.askyesno(
-                        "全部显示",
-                        f"将一次渲染全部 {total} 条条目，约需 {_secs} 秒"
-                        "（渲染期间界面无响应、不可中断）。\n\n"
-                        "建议改用「▼ 显示更多」分步加载。确定要全部显示吗？", parent=self):
-                    return
-            self._entry_render_limit = 0
-            end = total
-        else:
-            self._entry_render_limit = (int(getattr(self, "_entry_render_limit",
-                                                   ENTRY_RENDER_STEP) or 0)
-                                        + ENTRY_RENDER_STEP)
-            end = min(self._entry_render_limit, total)
-        # 先给出"已点击"的反馈（渲染期间界面会短暂无响应，与既有行为一致）
-        for b in (getattr(self, "_entry_more_btns", None) or []):
-            try:
-                b.configure(state="disabled")
-            except Exception:
-                pass
-        try:
-            self.update_idletasks()
-        except Exception:
-            pass
-
-        self._append_entry_items(self._entries_all[cur:end])
-        # 追加部分的标签：只补查新增条目
-        if getattr(self, "_show_tags_in_list", False):
-            try:
-                self._entry_tags_cache.update(
-                    self.db.list_tags_for_entries([e["id"] for e in self._entries_all[cur:end]]))
-            except Exception:
-                pass
-        try:
-            if self._entry_count_lbl is not None and self._entry_count_lbl.winfo_exists():
-                self._entry_count_lbl.configure(text=self._entry_count_text())
-            done = len(self._entry_render_shown) >= total
-            if not done and self._entry_more_btns:
-                self._entry_more_btns[0].configure(
-                    text=f"▼ 显示更多（+{ENTRY_RENDER_STEP}）")
-            for b in (self._entry_more_btns or []):
-                if b.winfo_exists():
-                    b.configure(state=("disabled" if done else "normal"))
-        except Exception:
-            pass
 
     def _entry_tags_display(self, entry_id: int):
         """条目区标签显示 → (短文本, 完整文本)。
@@ -5941,6 +6511,8 @@ class MainWindow(ctk.CTk):
             self.del_btn.configure(command=lambda: None)
             self.link_btn.configure(state="disabled", command=lambda: None)
             self.copyto_btn.configure(state="disabled", command=lambda: None)
+            # 2026-09-23（阶段1-5）：无当前条目 → 「复制为我的条目」置灰（无源条目可派生）
+            self.mine_btn.configure(state="disabled", command=lambda: None)
             self.move_btn.configure(state="disabled", command=lambda: None)
             self.copy_all_btn.configure(command=lambda: None)
             self.copy_cn_btn.configure(command=lambda: None)
@@ -5974,6 +6546,9 @@ class MainWindow(ctk.CTk):
                                 command=lambda eid=e["id"]: self._link_entry(eid))
         self.copyto_btn.configure(state="normal",
                                   command=lambda eid=e["id"]: self._copy_entry_to_targets(eid))
+        # 2026-09-23（阶段1-5）：当前展示条目 → 「复制为我的条目」可用（作用于当前条目）
+        self.mine_btn.configure(state="normal",
+                                command=lambda eid=e["id"]: self._copy_entry_as_mine(eid))
         self.move_btn.configure(state="normal",
                                 command=lambda eid=e["id"]: self._move_entry(eid))
         self.copy_all_btn.configure(command=lambda: self._copy_entry(e["id"], _COPY_ALL))
@@ -6146,6 +6721,8 @@ class MainWindow(ctk.CTk):
           - 文本框 + 图片区统一放在 content_frame 内，折叠时整区 pack_forget。
         """
         has_content = bool((e[key] or "").strip())
+        # 2026-09-23 16:40（第 5 组需求 2）：⑧⑨ 提示词走"随内容自动扩展高度"分支，②~⑦⑩ 不受影响
+        _is_prompt = key in _COLLAPSIBLE_KEYS
         # 2026-09-16：全部展开模式下，②~⑦ 也默认展开（显示 6 行）
         _collapsed = default_collapsed and not getattr(self, "_detail_expand_all", False)
         if _collapsed:
@@ -6194,6 +6771,13 @@ class MainWindow(ctk.CTk):
             box.pack(fill="x", padx=6, pady=(0, 6))
         box.insert("1.0", e[key] or "")
         box.bind("<KeyRelease>", self._mark_dirty)
+        # 2026-09-23 16:40（第 5 组需求 2）：⑧⑨ 默认"自动全高"——建好即按内容自适应，
+        #   并随输入/粘贴持续自适应（与"快速新建"窗口行为一致）；②~⑦⑩ 不绑定，行为不变。
+        if _is_prompt:
+            _ui_common.fit_prompt_box(box, _EMPTY_H)
+            box.bind("<KeyRelease>",
+                     lambda _e=None, b=box, t=toggle: self._prompt_autofit_on_type(b, t),
+                     add="+")
         self._detail_boxes[key] = box
         full = e[key] or "（无内容）"
         # 2026-09-12（用户要求 2）：改用新的浮动提示（左移不遮正文、可滚动、同步滚动、光标行加深）
@@ -6208,23 +6792,30 @@ class MainWindow(ctk.CTk):
             content.pack(fill="x", padx=0, pady=(0, 2))
 
         if toggle is not None:
-            def _toggle(_c=_collapsed):
-                expanded = toggle.cget("text") == "展开"
-                if expanded:
-                    content.pack(fill="x", padx=0, pady=(0, 2))
-                    box.configure(height=self._content_fit_height(box))
-                    toggle.configure(text="收起")
-                    status.configure(text="⏶ 已展开", text_color="#25639c")
-                else:
-                    if _c:
-                        content.pack_forget()
+            if _is_prompt:
+                # 2026-09-23 16:40（第 5 组需求 2）：⑧⑨ 按钮改语义——默认"自动全高"时按钮＝
+                #   「收起为 6 行」（点击固定在 6 行）；固定后按钮＝「展开为全高」（点击恢复自动）。
+                toggle.configure(text="收起为 6 行")
+                toggle.configure(command=lambda b=box, t=toggle:
+                                 self._prompt_toggle_height(b, t, _EMPTY_H))
+            else:
+                def _toggle(_c=_collapsed):
+                    expanded = toggle.cget("text") == "展开"
+                    if expanded:
+                        content.pack(fill="x", padx=0, pady=(0, 2))
+                        box.configure(height=self._content_fit_height(box))
+                        toggle.configure(text="收起")
+                        status.configure(text="⏶ 已展开", text_color="#25639c")
                     else:
-                        box.configure(height=base_h)
-                    toggle.configure(text="展开")
-                    status.configure(text=("● 有内容" if has_content else "（无内容）"),
-                                     text_color=(_C_OK if has_content else "#9aa4b1"))
+                        if _c:
+                            content.pack_forget()
+                        else:
+                            box.configure(height=base_h)
+                        toggle.configure(text="展开")
+                        status.configure(text=("● 有内容" if has_content else "（无内容）"),
+                                         text_color=(_C_OK if has_content else "#9aa4b1"))
 
-            toggle.configure(command=_toggle)
+                toggle.configure(command=_toggle)
         return block
 
     @staticmethod
@@ -6235,6 +6826,39 @@ class MainWindow(ctk.CTk):
         （与「快速新建」窗口共用同一份），此处仅保留方法名以兼容既有调用点。
         """
         return _ui_common.content_fit_height(box)
+
+    # ------------------------------------------------------------------ #
+    # ⑧⑨ 提示词文本框：随内容自动扩展高度（2026-09-23 16:40，第 5 组需求 2）
+    # ------------------------------------------------------------------ #
+    def _prompt_autofit_on_type(self, box, toggle) -> None:
+        """⑧⑨ 提示词文本框：自动模式下随输入/粘贴自适应高度。
+
+        2026-09-23 16:40（第 5 组需求 2）：按钮文案以"收起"开头＝自动全高模式，
+        每次键入后按内容重算高度；为"展开为全高"＝用户已固定在 6 行，不再自动改高度。
+        ②~⑦⑩ 不绑定本函数，行为完全不变。
+        """
+        try:
+            if box is None or not box.winfo_exists():
+                return
+            if toggle is not None and toggle.winfo_exists() and \
+                    not str(toggle.cget("text")).startswith("收起"):
+                return
+            _ui_common.fit_prompt_box(box, _EMPTY_H)
+        except Exception:                                   # noqa: BLE001
+            pass
+
+    def _prompt_toggle_height(self, box, toggle, empty_h: int) -> None:
+        """⑧⑨ 提示词文本框的「收起为 6 行 / 展开为全高」切换。
+
+        2026-09-23 16:40（第 5 组需求 2）新增：默认＝自动全高（按钮显示"收起为 6 行"）；
+        点击后固定在 `_COLLAPSED_H`（6 行）并停用自动自适应，再点恢复自动全高。
+        """
+        if str(toggle.cget("text")).startswith("收起"):
+            box.configure(height=_COLLAPSED_H)
+            toggle.configure(text="展开为全高")
+        else:
+            _ui_common.fit_prompt_box(box, empty_h)
+            toggle.configure(text="收起为 6 行")
 
     def _build_image_area(self, parent=None, pack_now: bool = True) -> ctk.CTkFrame:
         """⑦ 代表高清配图 下的"**封面 + 图集**"区（返回容器，随折叠组显隐）。
@@ -6996,6 +7620,7 @@ class MainWindow(ctk.CTk):
         self.fav_btn.configure(state="disabled", command=lambda: None)
         self.del_btn.configure(state="disabled", command=lambda: None)
         for b in (self.move_btn, self.link_btn, self.copyto_btn,
+                  self.mine_btn,   # 2026-09-23（阶段1-5）：新增态无源条目可派生 → 一并置灰
                   self.copy_all_btn, self.copy_cn_btn, self.copy_en_btn):
             b.configure(state="disabled", command=lambda: None)
         self.save_btn.configure(state="normal", command=self._save_new_entry)
@@ -7059,17 +7684,11 @@ class MainWindow(ctk.CTk):
                                  **self._look_kwargs(key))   # 2026-09-15（批次 4）：⑧/⑨ 可叠加
             box.pack(fill="x", padx=6, pady=(0, 6))
 
-            def _toggle_prompt(b=box, t=toggle):
-                expanded = t.cget("text") == "展开"
-                # 无内容时展开仍保持 120px（避免输入框缩成 1 行无法录入）
-                # 2026-09-17（R-6）：内容读取统一经 ui_common.text_of（私有属性不落在外层）
-                if expanded and _ui_common.text_of(b).strip():
-                    b.configure(height=self._content_fit_height(b))
-                else:
-                    b.configure(height=_COLLAPSED_H)
-                t.configure(text="收起" if expanded else "展开")
-
-            toggle.configure(command=_toggle_prompt)
+            # 2026-09-23 16:40（第 5 组需求 2）：新增表单 ⑧⑨ 同样改为"随内容自动扩展高度"，
+            #   按钮语义＝「收起为 6 行 / 展开为全高」（默认自动全高；空内容时保持 120px 便于录入）。
+            toggle.configure(text="收起为 6 行")
+            toggle.configure(command=lambda b=box, t=toggle:
+                             self._prompt_toggle_height(b, t, _COLLAPSED_H))
             self._add_prompt_toggles[key] = toggle
         else:
             ctk.CTkLabel(block, text=label, text_color=label_c,
@@ -7090,6 +7709,13 @@ class MainWindow(ctk.CTk):
                                      border_color=box_border, corner_radius=6)
                 box.pack(fill="x", padx=6, pady=(0, 6))
         box.bind("<KeyRelease>", self._mark_dirty)
+        # 2026-09-23 16:40（第 5 组需求 2）：新增表单 ⑧⑨ 随输入/粘贴自动扩展高度
+        #   （_mark_dirty 绑定在前，此处 add="+" 追加，两者互不覆盖）
+        if prompt:
+            box.bind("<KeyRelease>",
+                     lambda _e=None, b=box, t=self._add_prompt_toggles.get(key):
+                     self._prompt_autofit_on_type(b, t),
+                     add="+")
         self._detail_boxes[key] = box
         return block
 
@@ -7169,11 +7795,13 @@ class MainWindow(ctk.CTk):
         for key, box in self._detail_boxes.items():
             box.delete("1.0", "end")
         # 2026-09-11（用户要求 1）：⑧/⑨ 若已"展开"，重置时一并还原为默认 120px（折叠态）
+        # 2026-09-23 16:40（第 5 组需求 2）：按钮语义改为「收起为 6 行 / 展开为全高」，
+        #   重置后回到"自动全高 + 空内容 120px"的初始态（按钮文案＝收起为 6 行）
         for key, toggle in self._add_prompt_toggles.items():
             box = self._detail_boxes.get(key)
             if box is not None:
                 box.configure(height=_COLLAPSED_H)
-            toggle.configure(text="展开")
+            toggle.configure(text="收起为 6 行")
         if self._add_group_open:
             self._toggle_add_group()
         # 2026-09-13（1-C-2）：标签一并清空
@@ -7394,6 +8022,9 @@ class MainWindow(ctk.CTk):
                       command=lambda: self._link_entry(entry_id))
         m.add_command(label="复制到…（多选）", state=lock_state,
                       command=lambda: self._copy_entry_to_targets(entry_id))
+        # 2026-09-23（阶段 1-5，用户决策 11/12）：派生为"我的条目"（自建来源）
+        m.add_command(label="复制为我的条目", state=lock_state,
+                      command=lambda: self._copy_entry_as_mine(entry_id))
         m.add_command(label="移动到…", state=lock_state,
                       command=lambda: self._move_entry(entry_id))
         ctx = self._current_cat_context()
@@ -7455,6 +8086,32 @@ class MainWindow(ctk.CTk):
             self.db.copy_entry_to(entry_id, cid)
         self._restore_view()
         self.toast(f"✅ 已复制到 {len(targets)} 个分类（独立副本）")
+
+    def _copy_entry_as_mine(self, entry_id: int) -> None:
+        """「复制为我的条目」（2026-09-23，阶段 1-5，用户决策 11/12）。
+
+        把条目派生为**自建**的独立副本：
+          - 目标分类：沿用「复制到…」同一多选选择器（`_pick_entry_targets("copy")`）；
+          - 内容/标签/自定义字段/图集：由 `db.copy_entry_to` 一并复制（含新 uuid）；
+          - **来源重置**：source_type='original'（自建）、source_name=''、source_time=当前时间。
+        与「复制到…」的区别仅在于"副本的来源被标记为自建"，其余行为完全一致。
+        """
+        if self._lock_on:
+            return
+        targets = self._pick_entry_targets("copy", entry_id)
+        if not targets:
+            return
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        n = 0
+        for cid in targets:
+            try:
+                new_id = self.db.copy_entry_to(entry_id, cid)
+                self.db.set_entry_source(new_id, "original", "", ts)
+                n += 1
+            except Exception as exc:
+                _geom_warn("复制为我的条目", exc)
+        self._restore_view()
+        self.toast(f"✅ 已复制为我的条目：{n} 个分类")
 
     def _unlink_entry(self, entry_id: int, cat_id: int) -> None:
         if self._lock_on:
@@ -7613,6 +8270,7 @@ class MainWindow(ctk.CTk):
         locked = self._lock_on
         state = "disabled" if locked else "normal"
         for attr in ("del_btn", "fav_btn", "move_btn", "link_btn", "copyto_btn",
+                     "mine_btn",  # 2026-09-23（阶段1-5）：锁定态下"复制为我的条目"同"复制到"一并置灰
                      "save_btn", "reset_btn",
                      "import_btn", "quick_add_btn"):
             w = getattr(self, attr, None)
@@ -7655,7 +8313,8 @@ class MainWindow(ctk.CTk):
         # 2026-09-06：新增条目态下 收藏/删除/移动/关联/复制 保持禁用（解锁后不误恢复）
         if self._adding_new and not locked:
             for w in (self.del_btn, self.fav_btn, self.move_btn, self.link_btn,
-                      self.copyto_btn, self.copy_all_btn,
+                      self.copyto_btn, self.mine_btn,   # 2026-09-23（阶段1-5）：新增态保持禁用
+                      self.copy_all_btn,
                       self.copy_cn_btn, self.copy_en_btn):
                 try:
                     w.configure(state="disabled")
@@ -7667,6 +8326,7 @@ class MainWindow(ctk.CTk):
         # 避免"看似可用实则空操作"。
         if not locked and not self._adding_new and self._detail_entry_id is None:
             for w in (self.del_btn, self.move_btn, self.link_btn, self.copyto_btn,
+                      self.mine_btn,   # 2026-09-23（阶段1-5）：无当前条目 → 一并置灰
                       self.fav_btn, self.copy_all_btn, self.copy_cn_btn,
                       self.copy_en_btn, self.save_btn, self.reset_btn):
                 try:
@@ -7735,7 +8395,8 @@ class MainWindow(ctk.CTk):
             _set_boxes_readonly(ds, browsing)
         if browsing:
             for w in (self.save_btn, self.reset_btn, self.del_btn,
-                      self.move_btn, self.link_btn, self.copyto_btn):
+                      self.move_btn, self.link_btn, self.copyto_btn,
+                      self.mine_btn):  # 2026-09-23（阶段1-5）：浏览态为只读 → "复制为我的条目"（写库）同"复制到"一并置灰
                 try:
                     w.configure(state="disabled")
                 except Exception:
@@ -7806,6 +8467,9 @@ class MainWindow(ctk.CTk):
         # 2026-09-22（用户要求 3-2）：批量删除本根目录下的全部数据
         m.add_command(label="🧹 批量删除本分支全部数据…", state=lock_state,
                       command=lambda: self._batch_delete_branch("domain", domain_id))
+        # 2026-09-23（阶段 1-3）：来源标注（整支）——预选本根目录范围
+        m.add_command(label="🏷 来源标注（整支）…", state=lock_state,
+                      command=lambda: self._open_source_tag("domain", domain_id))
         self._add_move_menu_items(m, "domain", domain_id, lock_state)  # 2026-09-11：上移/下移
         m.tk_popup(event.x_root, event.y_root)
 
@@ -7831,6 +8495,9 @@ class MainWindow(ctk.CTk):
         # 2026-09-22（用户要求 3-2）：批量删除本分类（含全部子分类）下的全部数据
         m.add_command(label="🧹 批量删除本分支全部数据…", state=lock_state,
                       command=lambda: self._batch_delete_branch("cat", cat_id))
+        # 2026-09-23（阶段 1-3）：来源标注（整支）——预选本分类（含整棵子树）范围
+        m.add_command(label="🏷 来源标注（整支）…", state=lock_state,
+                      command=lambda: self._open_source_tag("cat", cat_id))
         # 2026-09-11（用户要求 2）：一级/二级分类列内上移/下移
         self._add_move_menu_items(m, src_type, cat_id, lock_state)
         m.tk_popup(event.x_root, event.y_root)
@@ -8792,6 +9459,15 @@ class MainWindow(ctk.CTk):
         _es = self.db.get_meta(config.META_ENTRY_SORT)
         if _es in ("updated", "created", "name"):
             self._entry_sort = _es
+        # 2026-09-23 15:00（阶段1-4，用户确认"1-4 提前加常量"）：工具栏来源筛选——记忆上次选择；
+        #   非法/缺失值回退 ""（全部＝不筛选），老用户行为与改动前完全一致。
+        _sf = (self.db.get_meta(config.META_SOURCE_FILTER) or "").strip().lower()
+        self._source_filter = _sf if _sf in _SOURCE_SEG_LABELS else ""
+        # 2026-09-23 20:40（第 5 组需求 1-②，用户批复"对齐标签页 50/100/200/500/不限"）：
+        #   条目区「每页」档位——记忆上次选择；非法/缺失值保持默认（ENTRY_RENDER_LIMIT）。
+        _el = (self.db.get_meta(config.META_ENTRY_PAGE_LIMIT) or "").strip()
+        if _el in _ENTRY_PAGE_LIMIT_VALUES:
+            self._entry_page_limit = int(_el)
         if self._remember_size:
             size = self.db.get_meta(config.META_WINDOW_SIZE)
             if size and "x" in size:

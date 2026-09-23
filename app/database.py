@@ -99,7 +99,14 @@ CREATE TABLE IF NOT EXISTS entries (
     -- 2026-09-17（FR-93，schema v5）：条目**稳定身份**（uuid4 hex，跨机器一致）。
     --   空串 = 尚未分配（正常不会为空：新增自动生成、老库迁移回填）。
     --   放在最后，与老库 ALTER TABLE ADD COLUMN 的追加位置保持一致（顺序语义不敏感，仅便于核对）。
-    uuid        TEXT DEFAULT ''
+    uuid        TEXT DEFAULT '',
+    -- 2026-09-23（阶段1-1，schema v6）：来源标注三字段（**同样放在最后**，与老库 ALTER TABLE 追加位置一致）。
+    --   source_type：external 外部 / original 自建 / unspecified 未标定（老库迁移默认未标定）
+    --   source_name：来源名称（自由文本，界面为"下拉已有 + 允许新建"）
+    --   source_time：来源时间（获取/入库日期时间，格式 YYYY-MM-DD HH:MM:SS）
+    source_type TEXT DEFAULT 'unspecified',
+    source_name TEXT DEFAULT '',
+    source_time TEXT DEFAULT ''
 );
 
 -- 2026-09-17（FR-93，schema v5）：uuid 的**部分唯一索引**——空串（未分配）不参与唯一性约束。
@@ -126,6 +133,20 @@ CREATE INDEX IF NOT EXISTS idx_dc_domain          ON domain_category(domain_id);
 CREATE INDEX IF NOT EXISTS idx_dc_category        ON domain_category(category_id);
 CREATE INDEX IF NOT EXISTS idx_entries_category   ON entries(category_id);
 CREATE INDEX IF NOT EXISTS idx_entries_favorite   ON entries(is_favorite);
+-- 2026-09-23 09:45（阶段0-1，用户批准"为提速增加索引"）：条目默认排序索引。
+--   search / list_entries / list_favorites / list_untagged 均为 `ORDER BY updated_at DESC, id`
+--   （`id` 未写方向 ⇒ 默认升序 ASC）。索引列方向**必须与 ORDER BY 完全一致**：
+--     写 (updated_at DESC, id ASC) ⇒ 查询计划无临时排序，取够 LIMIT 行数即提前结束（实测 2.3ms）；
+--     写 (updated_at DESC, id DESC) ⇒ 残余 "USE TEMP B-TREE FOR RIGHT PART OF ORDER BY"，实测更慢。
+--   （本语句只对**新库**建索引；老库/已存在同名索引的修正由 `_ensure_sort_index()` 负责。）
+CREATE INDEX IF NOT EXISTS idx_entries_updated    ON entries(updated_at DESC, id ASC);
+-- 2026-09-23（阶段1-1，schema v6）：来源筛选索引 idx_entries_source。
+--   列为 (source_type, updated_at DESC, id ASC)：既支持"全部/外部/自建"等值筛选，
+--   又**精确匹配**条目默认排序 ORDER BY updated_at DESC, id ⇒ 无临时排序、取够 LIMIT 即止
+--   （实测：筛选"未标定"（几乎全命中）单列索引 21.8ms/有临时排序 → 复合索引 1.0ms/无排序）。
+--   注意：本语句**不能**放在此建表脚本中执行——旧库（v5）此时尚无 source_type 列，
+--   `CREATE INDEX IF NOT EXISTS` 只忽略"索引已存在"，**不忽略"列不存在"**，会直接报错。
+--   故该索引统一由 `_migrate_v5_to_v6()` 在"补列完成之后"建立（新增库/老库都走这一处）。
 CREATE INDEX IF NOT EXISTS idx_entry_links_cat    ON entry_links(category_id);
 
 -- 2026-09-07（第2条改进）：回收站/删除历史——保存被删条目的完整快照，支持恢复
@@ -216,8 +237,10 @@ CREATE INDEX IF NOT EXISTS idx_entry_images_entry ON entry_images(entry_id, sort
 """
 
 # 数据库结构版本（meta 键 schema_version）；
-# v1=旧版按领域归属分类，v2=全局分类+领域关联，v3=四级分类（项目类别），v4=字段定义/自定义取值/标签
-SCHEMA_VERSION = "4"
+# v1=旧版按领域归属分类，v2=全局分类+领域关联，v3=四级分类（项目类别），v4=字段定义/自定义取值/标签，
+# v5=条目稳定 ID（uuid），v6=来源标注字段（source_type/source_name/source_time）。
+# 注：实际版本号由各 `_migrate_vX_to_vY()` 写入 meta；本常量仅作**语义标注**（当前无代码引用它）。
+SCHEMA_VERSION = "6"
 
 # schema v4：内置字段定义（field_key, 显示名, 类型, is_builtin, sort_order）
 # 说明：① 条目名称 也在其中（与界面 10 个区块一一对应）；⑩ 图像获取方案 为链接型。
@@ -257,6 +280,12 @@ LIST_SOURCE_TYPES = ("sequence", "tree_level", "entries")
 TREE_LEVELS = ("project", "domain", "cat1", "cat2")
 # 「目录层级型」的范围：all = 全库该层级全部节点；nodes = 仅取 node_refs 指定父节点子树内该层级节点。
 TREE_SCOPES = ("all", "nodes")
+
+# 2026-09-23（阶段1-2，schema v6）：来源标注的取值域（**白名单**）与中文标签。
+#   external=外部（来自其他来源的资料）/ original=自建（用户原创）/ unspecified=未标定（默认）。
+#   中文标签供界面（筛选按钮、来源标注对话框）显示，避免用英文值误认。
+SOURCE_TYPES = ("external", "original", "unspecified")
+SOURCE_TYPE_LABELS = {"external": "外部", "original": "自建", "unspecified": "未标定"}
 
 
 def _ref_token(kind: str, oid: int) -> str:
@@ -309,6 +338,28 @@ class Database:
         cols = self.conn.execute(f"PRAGMA table_info({table})").fetchall()
         return any(r["name"] == column for r in cols)
 
+    def _ensure_sort_index(self) -> None:
+        """校验并修正"条目默认排序索引"idx_entries_updated 的列方向（幂等、低成本）。
+
+        2026-09-23 09:45（阶段0-1）：`CREATE INDEX IF NOT EXISTS` **无法替换已存在的同名索引**，
+        而该索引在早期实现中曾建成 `(updated_at DESC, id DESC)`（第二列方向与
+        `ORDER BY updated_at DESC, id` 不匹配，残余临时排序）。故此处比对 sqlite_master.sql：
+        仅当方向不一致时才 DROP 后重建——正常启动只多一次查询，不重建索引，
+        避免大库（生产库）每次启动都付出重建索引的开销。
+        """
+        row = self.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_entries_updated'"
+        ).fetchone()
+        idx_sql = (row["sql"] or "") if row else ""
+        if "id asc" in idx_sql.replace("  ", " ").lower():     # 方向已正确 → 不动
+            return
+        if row:                                                # 存在但方向不对 → 重建
+            self.conn.execute("DROP INDEX idx_entries_updated")
+        self.conn.execute(
+            "CREATE INDEX idx_entries_updated ON entries(updated_at DESC, id ASC)"
+        )
+        self.conn.commit()
+
     def _migrate_if_needed(self) -> None:
         """结构迁移：v1 → v2 → v3 → v4 按序执行（幂等）＋ v3 增量增强补列。
 
@@ -320,6 +371,9 @@ class Database:
           tags/entry_tags 五表（建表由 _SCHEMA_SQL 完成）＋ 预置内置 10 个字段定义；不搬动既有数据。
         - v4→v5（2026-09-17，FR-93）：`entries` 补 `uuid` 列（条目**稳定身份**）＋ 回填 ＋
           部分唯一索引；**不搬动既有数据**，不动 entry_links（多位置关系不变）。
+        - v5→v6（2026-09-23，阶段1-1）：`entries` 补来源标注三列（`source_type` 默认
+          'unspecified' 未标定 / `source_name` / `source_time`）＋ `idx_entries_source` 索引；
+          **不搬动既有数据**（存量条目一律为"未标定"，由用户用"来源标注"对话框逐步标注）。
         注：v2→v3 仅做"结构"升级（建表/加列/预置），不移动任何数据；
         根目录→项目类别的"归属分配"由 assign_domains_to_projects() 执行（迁移向导/自动迁移）。
         """
@@ -332,6 +386,10 @@ class Database:
         self.ensure_virtual_blocks()
         # 2026-09-17（FR-93，schema v5）：条目稳定 ID（uuid）——加列 + 回填 + 部分唯一索引。
         self._migrate_v4_to_v5()
+        # 2026-09-23（阶段1-1，schema v6）：来源标注字段——加列（默认"未标定"）+ 索引。
+        self._migrate_v5_to_v6()
+        # 2026-09-23（阶段0-1）：条目默认排序索引——校验/修正列方向（幂等，方向正确时不重建）。
+        self._ensure_sort_index()
 
     def _migrate_v4_to_v5(self) -> None:
         """v4 → v5（2026-09-17，FR-93：条目**稳定 ID**）——**幂等**。
@@ -366,6 +424,54 @@ class Database:
             self.conn.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_entries_uuid"
                 " ON entries(uuid) WHERE uuid <> ''")
+            self.conn.commit()
+
+    def _migrate_v5_to_v6(self) -> None:
+        """v5 → v6（2026-09-23，阶段1-1：**来源标注字段**）——**幂等**。
+
+        做什么：
+          1. 为 `entries` 补三列（**仅**老库需要；新库建表时已带这三列，见 `_SCHEMA_SQL`）：
+             `source_type`（默认 'unspecified' 未标定）/ `source_name` / `source_time`；
+          2. 存量行 `source_type` 为 NULL 或空串的，统一回填为 'unspecified'（"未标定"）；
+          3. 建立索引 `idx_entries_source (source_type, updated_at DESC, id ASC)`
+             ——2026-09-23 用户批准：由报告原案的**单列**索引升级为**复合**索引（同时匹配
+             筛选列与默认排序列 `ORDER BY updated_at DESC, id`，消除临时排序）；
+          4. 写 `schema_version = "6"`。
+
+        **不搬动任何既有数据**：不动条目的任何原有字段，也不动 `entry_links`；
+        存量条目来源一律为"未标定"，由用户通过"来源标注"对话框逐步标注
+        （迁移前备份由 `main.py` 启动流程中既有的 `backup_db()` 负责，本方法不重复备份）。
+
+        重要（步骤顺序）：`source_type` 索引**必须**在补列之后建立——若放进 `_SCHEMA_SQL`
+        并在旧库上提前执行，会因"旧表尚无该列"而报错。
+        故本方法在**版本已为 6 时也会**补建索引（防止极端情况下索引缺失）。
+        """
+        if self.get_meta("schema_version") != "6":
+            for _col, _ddl in (
+                    ("source_type",
+                     "ALTER TABLE entries ADD COLUMN source_type TEXT DEFAULT 'unspecified'"),
+                    ("source_name",
+                     "ALTER TABLE entries ADD COLUMN source_name TEXT DEFAULT ''"),
+                    ("source_time",
+                     "ALTER TABLE entries ADD COLUMN source_time TEXT DEFAULT ''")):
+                if not self._has_column("entries", _col):
+                    self.conn.execute(_ddl)
+            self.conn.commit()
+            # 统一"未标定"：NULL/空串 → unspecified（可重复执行 ⇒ 幂等；已标定的不动）
+            if self._has_column("entries", "source_type"):
+                self.conn.execute(
+                    "UPDATE entries SET source_type = 'unspecified'"
+                    " WHERE source_type IS NULL OR source_type = ''")
+                self.conn.commit()
+            self.set_meta("schema_version", "6")
+        # 索引：无论何时都确保存在（幂等）
+        #   2026-09-23（阶段1-1，用户批准把报告原案的"单列 (source_type)"升级为复合索引）：
+        #   列顺序 = 筛选列 + 默认排序列（updated_at DESC, id ASC），与
+        #   `ORDER BY updated_at DESC, id` 完全一致 ⇒ 无临时排序、取够 LIMIT 即提前结束。
+        if self._has_column("entries", "source_type"):
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_entries_source"
+                " ON entries(source_type, updated_at DESC, id ASC)")
             self.conn.commit()
 
     def _ensure_v3_enhancements(self) -> None:
@@ -1291,28 +1397,34 @@ class Database:
         self.conn.commit()
 
     def list_entries_by_tags(self, tag_ids, mode: str = "and",
-                             namespace: str = GLOBAL_TAG_NS) -> List[dict]:
+                             namespace: str = GLOBAL_TAG_NS,
+                             source_type=None) -> List[dict]:
         """按标签**跨分类**查询条目。
 
         - mode="and"：同时包含全部给定标签；
         - mode="or" ：包含任一给定标签。
         返回与其它 list_* 一致的 entries 行（按 updated_at DESC, id 排序）；无 tag_ids 返回 []。
+        2026-09-23 12:35（阶段1-4，决策23）：新增可选 source_type 筛选（作用于条目本体
+        e.source_type），None/"" /"all"/非法值 ⇒ 不过滤，默认行为不变。
         """
         ids = [int(t) for t in (tag_ids or [])]
         if not ids:
             return []
         ph = ",".join("?" * len(ids))
+        _st = self._norm_source_filter(source_type)          # 2026-09-23 12:35（阶段1-4）
+        _sf = " AND e.source_type = ?" if _st else ""
+        _sp = (_st,) if _st else ()
         if mode == "and":
             sql = ("SELECT e.* FROM entries e JOIN entry_tags et ON et.entry_id = e.id"
-                   " WHERE et.tag_id IN (" + ph + ")"
+                   " WHERE et.tag_id IN (" + ph + ")" + _sf +
                    " GROUP BY e.id HAVING COUNT(DISTINCT et.tag_id) = ?"
                    " ORDER BY e.updated_at DESC, e.id")
-            params = tuple(ids) + (len(ids),)
+            params = tuple(ids) + _sp + (len(ids),)
         else:
             sql = ("SELECT DISTINCT e.* FROM entries e JOIN entry_tags et ON et.entry_id = e.id"
-                   " WHERE et.tag_id IN (" + ph + ")"
+                   " WHERE et.tag_id IN (" + ph + ")" + _sf +
                    " ORDER BY e.updated_at DESC, e.id")
-            params = tuple(ids)
+            params = tuple(ids) + _sp
         return [dict(r) for r in self.conn.execute(sql, params).fetchall()]
 
     def list_tags_for_entries(self, entry_ids) -> dict:
@@ -2585,7 +2697,7 @@ class Database:
         return cls._ENTRY_ORDER_SQL.get(order_by or "", cls._ENTRY_ORDER_SQL["updated"])
 
     def list_entries(self, category_id: int, include_descendants: bool = False,
-                     order_by: Optional[str] = None) -> List[dict]:
+                     order_by: Optional[str] = None, source_type=None) -> List[dict]:
         """列出某分类可见条目（主挂靠=该分类 ∪ 关联表含该分类，去重）。
 
         include_descendants=True 时含所有子分类子树内的可见条目。
@@ -2594,8 +2706,13 @@ class Database:
         order_by（2026-09-16 批次 11-7，用户要求 3）：条目区排序方式，**白名单**取值——
           None / "updated"（默认，最后修改时间倒序）/ "created"（新增时间倒序）/ "name"（名称升序）；
           非法值一律回退默认 ⇒ 老调用方（不传）行为**完全不变**。
+        source_type（2026-09-23 12:35，阶段1-4，决策23）：可选来源筛选，作用于两路并集
+          的**条目本体**（e.source_type）；None/"" /"all"/非法值 ⇒ 不过滤，默认行为不变。
         """
         _order = self.entry_order_sql(order_by)
+        _st = self._norm_source_filter(source_type)          # 2026-09-23 12:35（阶段1-4）：来源筛选
+        _sf = " AND e.source_type = ?" if _st else ""
+        _sp = (_st,) if _st else ()
         if include_descendants:
             ids = self._collect_category_ids(category_id)
             if not ids:
@@ -2603,22 +2720,22 @@ class Database:
             ph = ",".join("?" * len(ids))
             rows = self.conn.execute(
                 "SELECT * FROM ("
-                f" SELECT e.* FROM entries e WHERE e.category_id IN ({ph})"
+                f" SELECT e.* FROM entries e WHERE e.category_id IN ({ph}){_sf}"
                 " UNION "
                 f" SELECT e.* FROM entries e JOIN entry_links l ON l.entry_id = e.id"
-                f"  WHERE l.category_id IN ({ph})"
+                f"  WHERE l.category_id IN ({ph}){_sf}"
                 f") ORDER BY {_order}",
-                ids + ids,
+                tuple(ids) + _sp + tuple(ids) + _sp,
             ).fetchall()
         else:
             rows = self.conn.execute(
                 "SELECT * FROM ("
-                " SELECT e.* FROM entries e WHERE e.category_id = ?"
+                f" SELECT e.* FROM entries e WHERE e.category_id = ?{_sf}"
                 " UNION "
                 " SELECT e.* FROM entries e JOIN entry_links l ON l.entry_id = e.id"
-                "  WHERE l.category_id = ?"
+                f"  WHERE l.category_id = ?{_sf}"
                 f") ORDER BY {_order}",
-                (category_id, category_id),
+                (category_id,) + _sp + (category_id,) + _sp,
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -2667,34 +2784,52 @@ class Database:
             stack.extend(child["id"] for child in children)
         return ids
 
-    def list_uncategorized(self) -> List[dict]:
+    def list_uncategorized(self, source_type=None) -> List[dict]:
         """列出未分类条目：主挂靠为空 **且** 无任何关联位置。
 
         2026-09-07（条目多位置施工）：若条目经 entry_links 关联到某分类，
         即使 category_id 为空也不再视为"未分类"。
+        2026-09-23 12:35（阶段1-4，决策23）：新增可选 source_type 筛选，默认不筛选。
         """
+        _st = self._norm_source_filter(source_type)          # 2026-09-23 12:35（阶段1-4）
+        _sf = " AND source_type = ?" if _st else ""
+        _sp = (_st,) if _st else ()
         rows = self.conn.execute(
             "SELECT * FROM entries WHERE category_id IS NULL "
-            "AND id NOT IN (SELECT entry_id FROM entry_links) "
-            "ORDER BY updated_at DESC, id"
+            "AND id NOT IN (SELECT entry_id FROM entry_links)" + _sf +
+            " ORDER BY updated_at DESC, id",
+            _sp,
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def list_favorites(self) -> List[dict]:
+    def list_favorites(self, source_type=None) -> List[dict]:
+        """列出 ⭐ 常用 条目（2026-09-23 12:35，阶段1-4：新增可选 source_type 筛选）。"""
+        _st = self._norm_source_filter(source_type)
+        _sf = " AND source_type = ?" if _st else ""
+        _sp = (_st,) if _st else ()
         rows = self.conn.execute(
-            "SELECT * FROM entries WHERE is_favorite = 1 ORDER BY updated_at DESC, id"
+            "SELECT * FROM entries WHERE is_favorite = 1" + _sf +
+            " ORDER BY updated_at DESC, id",
+            _sp,
         ).fetchall()
         return [dict(r) for r in rows]
 
     # 2026-09-14（用户要求，"无标签条目"入口的数据层）：没有任何标签的条目。
     #   与 list_uncategorized（无分类）对称；供「🏷 无标签条目」视图、标签页面入口
     #   与搜索框 `#无标签` 语法共用，便于逐条为其打标签。
-    def list_untagged(self) -> List[dict]:
-        """列出**没有任何标签**的条目（按修改时间倒序）。"""
+    def list_untagged(self, source_type=None) -> List[dict]:
+        """列出**没有任何标签**的条目（按修改时间倒序）。
+
+        2026-09-23 12:35（阶段1-4，决策23）：新增可选 source_type 筛选，默认不筛选。
+        """
+        _st = self._norm_source_filter(source_type)
+        _sf = " AND source_type = ?" if _st else ""
+        _sp = (_st,) if _st else ()
         rows = self.conn.execute(
             "SELECT * FROM entries WHERE id NOT IN "
-            "(SELECT DISTINCT entry_id FROM entry_tags) "
-            "ORDER BY updated_at DESC, id"
+            "(SELECT DISTINCT entry_id FROM entry_tags)" + _sf +
+            " ORDER BY updated_at DESC, id",
+            _sp,
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -2732,31 +2867,215 @@ class Database:
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def search(self, keyword: str) -> List[dict]:
-        """全局搜索：匹配全部文本字段（名称/介绍/溯源/特征/场景/代表作/配图/中英提示词/图像方案）。
+    def _search_where(self, keyword: str, source_type=None) -> tuple:
+        """构造"全字段搜索"的 WHERE 子句与参数（search / search_count 共用，避免两处条件不一致）。
 
-        2026-08-18（第020条，P2-B1 修复）：对 LIKE 通配符 % / _ 做转义（ESCAPE '\\'），
-        使搜索含 % 或 _ 的关键词按字面匹配，避免意外通配匹配到多余结果。
-        2026-09-13（schema v4，第 1 期 1-A）：追加匹配"自定义字段取值"
-        （entry_field_values.value_text），内置 10 字段的匹配逻辑与排序保持不变。
+        2026-09-23 09:45（阶段0-1）：从 search() 中抽出，供分页查询与计数查询共用同一套匹配条件。
+        2026-09-23 12:35（阶段1-4，决策23）：新增可选 source_type 过滤；仍由
+          `_norm_source_filter` 归一化，None/"" /"all"/非法值 ⇒ 不追加条件（行为与原先完全一致）。
         """
         # 转义顺序：先转义反斜杠自身，再转义 % 与 _（ESCAPE 字符为反斜杠）
         escaped = keyword.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         kw = f"%{escaped}%"
         esc = " ESCAPE '\\' "
-        rows = self.conn.execute(
-            "SELECT * FROM entries WHERE name LIKE ?" + esc + "OR intro LIKE ?" + esc +
+        # 2026-09-23 12:35（阶段1-4）：整条 OR 匹配链**加一对括号**，使后续追加的
+        #   "AND source_type = ?" 作用于整体（否则 AND 优先级高于 OR，会只贴在最后一个
+        #   OR 项上，导致筛选失效）。无筛选时括号语义与原先完全等价。
+        where = (
+            " WHERE (name LIKE ?" + esc + "OR intro LIKE ?" + esc +
             "OR origin LIKE ?" + esc + "OR features LIKE ?" + esc + "OR scenes LIKE ?" + esc +
             "OR works LIKE ?" + esc + "OR image_desc LIKE ?" + esc + "OR prompt_cn LIKE ?" + esc +
             "OR prompt_en LIKE ?" + esc + "OR image_plan LIKE ?" + esc +
             "OR EXISTS (SELECT 1 FROM entry_field_values v"
             "           WHERE v.entry_id = entries.id AND v.value_text LIKE ?" + esc + ") " +
             "OR EXISTS (SELECT 1 FROM entry_tags et JOIN tags t ON t.id = et.tag_id"
-            "           WHERE et.entry_id = entries.id AND t.name LIKE ?" + esc + ") " +
-            "ORDER BY updated_at DESC, id",
-            (kw,) * 12,
-        ).fetchall()
+            "           WHERE et.entry_id = entries.id AND t.name LIKE ?" + esc + ") ) ")
+        params = (kw,) * 12
+        # 2026-09-23 12:35（阶段1-4，决策23）：追加来源筛选；非法/空值不追加 ⇒ 口径与原先一致。
+        _st = self._norm_source_filter(source_type)
+        if _st:
+            where += " AND source_type = ? "
+            params = params + (_st,)
+        return where, params
+
+    def search(self, keyword: str, limit: Optional[int] = None,
+               offset: int = 0, source_type=None) -> List[dict]:
+        """全局搜索：匹配全部文本字段（名称/介绍/溯源/特征/场景/代表作/配图/中英提示词/图像方案）。
+
+        2026-08-18（第020条，P2-B1 修复）：对 LIKE 通配符 % / _ 做转义（ESCAPE '\\'），
+        使搜索含 % 或 _ 的关键词按字面匹配，避免意外通配匹配到多余结果。
+        2026-09-13（schema v4，第 1 期 1-A）：追加匹配"自定义字段取值"
+        （entry_field_values.value_text），内置 10 字段的匹配逻辑与排序保持不变。
+        2026-09-23 09:45（阶段0-1，用户批准"改 SQL 分页+计数"）：新增可选 `limit`/`offset`。
+          原先一次性把**全部**命中行查回并逐个转 dict（实测 2398 行约 98~116ms），而界面首屏
+          只渲染前 50 条。改为 LIMIT/OFFSET 后首屏只取 50 行（实测 2.3ms）。
+          **默认 limit=None 时行为与原先完全一致**（返回全部命中），既有调用方不受影响。
+        2026-09-23 12:35（阶段1-4，决策23）：新增可选 `source_type` 过滤（作用于搜索结果视图），
+          None/"" /"all"/非法值 ⇒ 不过滤，默认行为不变。
+        """
+        where, params = self._search_where(keyword, source_type)
+        sql = "SELECT * FROM entries" + where + "ORDER BY updated_at DESC, id"
+        if limit is not None:
+            sql += " LIMIT ? OFFSET ?"
+            params = params + (int(limit), max(0, int(offset)))
+        rows = self.conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
+
+    def search_count(self, keyword: str, source_type=None) -> int:
+        """搜索命中总数（供界面"已显示前 N 条 · 剩余 M 条"及分页判断用）。
+
+        2026-09-23 09:45（阶段0-1）：实测精确 COUNT 需 23~53ms（10 个字段 LIKE 的扫描不可避免），
+        故界面采用"首屏先渲染 + 总数异步补算"的策略，不拖慢首屏。
+        2026-09-23 12:35（阶段1-4，决策23）：新增可选 `source_type`，与 `search` 口径一致。
+        """
+        where, params = self._search_where(keyword, source_type)
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM entries" + where, params).fetchone()[0]
+
+    # ------------------------------------------------------------------ #
+    # 来源标注（2026-09-23，阶段1-2，schema v6）
+    #   source_type：external 外部 / original 自建 / unspecified 未标定（默认）
+    #   source_name：来源名称（自由文本，界面为"下拉已有 + 允许新建"）
+    #   source_time：来源时间（YYYY-MM-DD HH:MM:SS）
+    #   设计要点：筛选查询直接写 `ORDER BY updated_at DESC, id` ⇒ 精确命中复合索引
+    #   idx_entries_source(source_type, updated_at DESC, id ASC)，无临时排序、取够即止。
+    #   本区**只做来源字段的读写**，不改动分类/标签/字段等既有功能。
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _norm_source_filter(source_type) -> str:
+        """把"来源筛选"输入归一化为白名单值；None / "" / "all" / 非法值 ⇒ ""（表示**不筛选**）。
+
+        2026-09-23（阶段1-2）：供 `list_entries_by_source` 与后续 search 的 source_type 过滤共用，
+        避免两处口径不一致。非法值一律按"不筛选"处理（不报错）——筛选是只读查询，
+        放宽取值比中断界面更安全；写入路径（set/batch）则严格校验（见 `set_entry_source`）。
+        """
+        s = str(source_type or "").strip().lower()
+        return s if s in SOURCE_TYPES else ""
+
+    def list_entries_by_source(self, source_type=None, limit: Optional[int] = None,
+                               offset: int = 0, order_by: Optional[str] = None) -> List[dict]:
+        """按**来源类型**列出条目（2026-09-23，阶段1-2，schema v6）。
+
+        source_type：external / original / unspecified；None / "" / "all" / 非法值 ⇒ 不筛选（全部）。
+        order_by：走既有**白名单** `entry_order_sql`（None=最后修改时间倒序 / created / name），
+          非法值回退默认 ⇒ 与既有 `list_entries` 排序口径一致。
+        limit/offset：可选（None=返回全部命中，与既有 list_* 行为一致）。
+          默认排序下 SQL 为 `... ORDER BY updated_at DESC, id LIMIT ? OFFSET ?`，
+          与复合索引 idx_entries_source 列方向精确匹配 ⇒ 无临时排序。
+        """
+        _st = self._norm_source_filter(source_type)
+        where, params = ("", ())
+        if _st:
+            where, params = " WHERE source_type = ?", (_st,)
+        sql = "SELECT * FROM entries" + where + " ORDER BY " + self.entry_order_sql(order_by)
+        if limit is not None:
+            sql += " LIMIT ? OFFSET ?"
+            params = params + (int(limit), max(0, int(offset)))
+        return [dict(r) for r in self.conn.execute(sql, params)]
+
+    def set_entry_source(self, entry_id: int, source_type: str = "unspecified",
+                         source_name: str = "", source_time: str = "") -> None:
+        """设置**单个**条目的来源标注（2026-09-23，阶段1-2，schema v6）。
+
+        - source_type 必须在 SOURCE_TYPES 白名单内，否则抛 ValueError（与既有
+          `set_entry_field_value` 的取值白名单风格一致）——防止写入界面/统计无法识别的值；
+        - source_name / source_time 原样存文本（source_time 约定 YYYY-MM-DD HH:MM:SS，不在此强校验）；
+        - **同步刷新 updated_at**（2026-09-23 用户批准）：与既有 P1-D 规则一致（标签/自定义字段的
+          写入口都会 touch 时间戳），保证来源标注能进"当日变更包"、换机同步**不丢**该标注。
+          副作用（已知并接受）：标注后条目按默认排序会浮到列表最前。
+        """
+        _st = str(source_type or "").strip().lower()
+        if _st not in SOURCE_TYPES:
+            raise ValueError("非法来源类型：%r（允许：%s）"
+                             % (source_type, " / ".join(SOURCE_TYPES)))
+        self.conn.execute(
+            "UPDATE entries SET source_type = ?, source_name = ?, source_time = ?,"
+            " updated_at = ? WHERE id = ?",
+            (_st, str(source_name or ""), str(source_time or ""), _now(), int(entry_id)))
+        self.conn.commit()
+
+    def _scope_category_ids(self, kind: str, scope_id) -> Optional[List[int]]:
+        """解析"整支"范围 → 分类 id 列表；**全库**返回 None（调用方按全库处理）。
+
+        2026-09-23（阶段1-2）：kind="all" ⇒ None；kind="project"/"domain"/"cat" + scope_id
+        ⇒ 复用既有 3-c 的 `_ref_category_ids`（节点令牌 → 覆盖的全部分类，**含整棵子树**）；
+        非法 kind / 非法 id / 节点不存在 ⇒ []（空范围，调用方按"不做任何事"返回 0）。
+        """
+        _k = str(kind or "").strip().lower()
+        if _k == "all":
+            return None
+        if _k not in ("project", "domain", "cat"):
+            return []
+        try:
+            oid = int(scope_id)
+        except (TypeError, ValueError):
+            return []
+        snap = self._tree_snapshot()
+        return sorted(self._ref_category_ids(snap, [_ref_token(_k, oid)]))
+
+    def batch_set_source_by_scope(self, kind: str, scope_id, source_type: str = "unspecified",
+                                  source_name: str = "", source_time: str = "") -> int:
+        """按"**整支**"批量设置来源标注（2026-09-23，阶段1-2，schema v6）——返回受影响条目数。
+
+        范围口径（2026-09-23 用户批准）：与既有「批量打标 → 指定根目录」**完全一致**
+        （见 batch_tag_dialog._entries_of_domain / list_entries）：
+          - kind="all"（忽略 scope_id）⇒ **全库**条目（含"未分类"）；
+          - kind="project"/"domain"/"cat" + scope_id ⇒ 该节点**子树内全部分类**的条目，取
+            「主挂靠 category_id 在该分类集合内」∪「经 entry_links 关联到该分类集合」的条目。
+        注意：非全库时**不含"未分类"**条目（它们不属于任何整支）；写入值与单条设置同口径；
+        同样**同步刷新 updated_at**（当日变更包能采集到，见 `set_entry_source`）。
+        """
+        _st = str(source_type or "").strip().lower()
+        if _st not in SOURCE_TYPES:
+            raise ValueError("非法来源类型：%r（允许：%s）"
+                             % (source_type, " / ".join(SOURCE_TYPES)))
+        ids = self._scope_category_ids(kind, scope_id)
+        if ids is not None and not ids:
+            return 0                                   # 空范围：不做任何事
+        args = (_st, str(source_name or ""), str(source_time or ""), _now())
+        if ids is None:
+            cur = self.conn.execute(
+                "UPDATE entries SET source_type = ?, source_name = ?, source_time = ?,"
+                " updated_at = ?", args)
+        else:
+            ph = ",".join("?" * len(ids))
+            cur = self.conn.execute(
+                "UPDATE entries SET source_type = ?, source_name = ?, source_time = ?,"
+                " updated_at = ? WHERE category_id IN (" + ph + ")"
+                " OR id IN (SELECT entry_id FROM entry_links WHERE category_id IN (" + ph + "))",
+                args + tuple(ids) + tuple(ids))
+        self.conn.commit()
+        return cur.rowcount
+
+    def list_source_names(self, source_type: str = "") -> List[str]:
+        """库中已有的**来源名称**（distinct、非空、按名称排序）——供"下拉已有 + 允许新建"。
+
+        2026-09-23（阶段1-2）：空串不返回（"未标定"没有来源名）；source_type 可选过滤
+        （"" / None / 非法值 ⇒ 不筛选，返回全部来源名）。
+        """
+        _st = self._norm_source_filter(source_type)
+        sql = ("SELECT DISTINCT source_name FROM entries"
+               " WHERE source_name IS NOT NULL AND TRIM(source_name) <> ''")
+        params: tuple = ()
+        if _st:
+            sql += " AND source_type = ?"
+            params = (_st,)
+        return [r[0] for r in self.conn.execute(sql + " ORDER BY source_name", params)]
+
+    def source_stats(self) -> dict:
+        """来源统计（2026-09-23，阶段1-2）：`{"external": n, "original": n, "unspecified": n, "total": N}`。
+
+        缺失的键补 0（界面取值稳定）；`source_type` 为 NULL / 空串 / 未知值一律计入 **unspecified**
+        （与迁移归一化口径一致，避免统计漏行）。仅两次 COUNT 查询，不加载条目行。
+        """
+        out = {t: 0 for t in SOURCE_TYPES}
+        for r in self.conn.execute(
+                "SELECT COALESCE(NULLIF(TRIM(source_type), ''), 'unspecified') AS st,"
+                " COUNT(*) AS n FROM entries GROUP BY st"):
+            _st = str(r["st"] or "").strip().lower()
+            out[_st if _st in SOURCE_TYPES else "unspecified"] += int(r["n"] or 0)
+        out["total"] = self.conn.execute("SELECT COUNT(*) FROM entries").fetchone()[0]
+        return out
 
     # ------------------------------------------------------------------ #
     # 条目多位置：关联 / 复制 / 移动（2026-09-07 施工）
@@ -4240,9 +4559,9 @@ def _migrate_selftest() -> None:
         conn.close()
 
         _u = ""   # 迁移后第 1 条的 uuid（供"重开幂等"断言比对；提前初始化避免掩盖真实错误）
-        db = Database(v2)  # 触发结构迁移 v2→v3→v4→v5
+        db = Database(v2)  # 触发结构迁移 v2→v3→v4→v5→v6
         try:
-            assert db.get_meta("schema_version") == "5"
+            assert db.get_meta("schema_version") == "6"     # 2026-09-23 12:50（阶段1-4）：v5→v6 后应为 "6"
             assert db._has_column("domains", "project_id")
             assert len(db.list_projects()) == 5
             assert db.get_entry(1)["name"] == "迁移条目"  # 数据无损
@@ -4262,6 +4581,17 @@ def _migrate_selftest() -> None:
             assert db.conn.execute(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type='index'"
                 " AND name='idx_entries_uuid'").fetchone()[0] == 1
+            # 2026-09-23 12:50（阶段1-4 补齐）：v5→v6（阶段1-1）——entries 补来源三列 +
+            #   存量回填 'unspecified' + 复合索引 idx_entries_source。
+            for _c in ("source_type", "source_name", "source_time"):
+                assert db._has_column("entries", _c), _c
+            assert db.get_entry(1)["source_type"] == "unspecified"      # 存量回填"未标定"
+            assert db.conn.execute(
+                "SELECT COUNT(*) FROM entries WHERE source_type IS NULL"
+                " OR source_type = ''").fetchone()[0] == 0
+            assert db.conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index'"
+                " AND name='idx_entries_source'").fetchone()[0] == 1
             # 归属分配：全命中 + 未知根目录未回答 → 兜底"未明确分类"
             st = db.assign_domains_to_projects(PROJECT_DOMAIN_MAPPING)
             assert st["matched"] == 2, st
@@ -4273,13 +4603,13 @@ def _migrate_selftest() -> None:
             # 幂等：重跑不再产生变化
             st2 = db.assign_domains_to_projects({}, None)
             assert st2 == {"matched": 0, "unmatched": 0, "fallback": 0}, st2
-            print("[迁移] v2→v5 结构升级/字段预置/uuid回填/归属分配/兜底/幂等 通过")
+            print("[迁移] v2→v6 结构升级/字段预置/uuid回填/来源三列与索引/归属分配/兜底/幂等 通过")
         finally:
             db.close()
         # 幂等：重开库不再重复迁移（uuid 保持不变）
         db2 = Database(v2)
         try:
-            assert db2.get_meta("schema_version") == "5"
+            assert db2.get_meta("schema_version") == "6"  # 2026-09-23 12:55（阶段1-4）：v6 后应为 6
             assert db2.get_entry(1)["uuid"] == _u                   # 重开不改 uuid
             assert len(db2.list_projects()) == 6  # 5 预置 + 未明确分类
             assert len(db2.list_field_defs()) == 13  # 2026-09-16：10 内置 + 3 虚拟（迁移后补齐）
@@ -4300,7 +4630,7 @@ def _fields_selftest() -> None:
         p = os.path.join(tmp, "fields.db")
         db = Database(p)
         try:
-            assert db.get_meta("schema_version") == "5"
+            assert db.get_meta("schema_version") == "6"  # 2026-09-23 12:55（阶段1-4）：v6 后应为 6
             defs = db.list_field_defs()
             assert len(defs) == 13, len(defs)  # 2026-09-16：10 内置 + 3 虚拟区块
             # 顺序：虚拟区块（sort_order 负）→ name → ②~⑩

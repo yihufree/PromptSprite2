@@ -43,3 +43,12 @@ class Entry:
     is_favorite: int = 0                       # 收藏标记 0/1
     created_at: str = ""
     updated_at: str = ""
+    # 2026-09-23 12:50（阶段1-4 修复：1-1 加列遗留缺陷）：补上 schema v6 的三个来源字段。
+    #   起因：`get_entry`/`list_entries` 返回的行 dict 自 1-1 起含这三键，而
+    #   `Entry(**{**行dict, ...})`（database.py 复制分类子树 / 自测各 1 处）会因
+    #   未知关键字而抛 TypeError，导致"复制/移动分类"等功能崩溃。
+    #   注意：**刻意不加入 `_entry_params()`** ⇒ add_entry/update_entry 的 SQL 列与
+    #   行为完全不变（来源不会被"编辑保存"覆盖），这三字段仅供上层读取与传递。
+    source_type: str = "unspecified"            # external 外部 / original 自建 / unspecified 未标定
+    source_name: str = ""                      # 来源名称
+    source_time: str = ""                      # 来源时间（YYYY-MM-DD HH:MM:SS）

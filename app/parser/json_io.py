@@ -33,7 +33,7 @@ import json
 from datetime import datetime
 from typing import Optional
 
-from ..database import Database, GLOBAL_TAG_NS  # 2026-08-18（P1-1）：内容判重键；2026-09-13：标签命名空间
+from ..database import Database, GLOBAL_TAG_NS, SOURCE_TYPES  # 2026-08-18（P1-1）：内容判重键；2026-09-13：标签命名空间；2026-09-23（1-5）：来源类型白名单
 from ..models import Entry
 
 # 导入导出格式版本（当前）：
@@ -265,6 +265,18 @@ def _entry_payload(db, e, locations=None) -> dict:
         _ca = ""
     if _ca:
         payload["created_at"] = _ca
+    # 2026-09-23（阶段 1-5，用户决策）：随包携带**来源标注**三键（source_type / source_name / source_time）。
+    #   口径＝**逐键判断、各自为空则不写**（与上面 uuid/created_at 完全一致，文件不膨胀）；
+    #   `source_type` 库中恒有值（未标定为 'unspecified'），`source_name`/`source_time` 允许为空。
+    #   旧版本软件读本包会忽略这三键（只增键、不改既有键语义）；旧包无这三键 ⇒ 导入时不动来源。
+    for _key, _col in (("source_type", "source_type"), ("source_name", "source_name"),
+                       ("source_time", "source_time")):
+        try:
+            _val = str(e[_col] or "").strip() if _col in e.keys() else ""
+        except Exception:
+            _val = ""
+        if _val:
+            payload[_key] = _val
     # 2026-09-13（1-A-5 第 3 步·下）：自定义字段取值（为空则**不写**该键，保持与旧格式一致、文件不膨胀）
     try:
         cf = {r["field_key"]: r["value_text"] for r in db.list_entry_field_values(e["id"])}
@@ -649,6 +661,66 @@ def _apply_v6_aux(db, entry_id: int, ep) -> None:
             pass
 
 
+# ---------------------------------------------------------------------- #
+# 来源标注三键（2026-09-23，阶段 1-5，用户决策）
+#   导出：`_entry_payload()` 逐键"为空则不写"；
+#   导入：**有键才更新、键缺失一律不动**（与 `_apply_v6_aux` 同口径）——
+#         旧包（无来源键）不会把目标库已标注的来源洗成"未标定"。
+# ---------------------------------------------------------------------- #
+def _source_triple(src) -> tuple:
+    """归一化来源三键：(source_type, source_name, source_time)（2026-09-23，阶段 1-5）。
+
+    - `source_type` 非法/为空 ⇒ 归一为 'unspecified'（未标定），保证落库值在白名单内；
+    - `source_name` / `source_time` 仅去除首尾空白。
+    """
+    _src = src if isinstance(src, dict) else {}
+    st = str(_src.get("source_type") or "").strip().lower()
+    if st not in SOURCE_TYPES:
+        st = "unspecified"
+    return (st, str(_src.get("source_name") or "").strip(),
+            str(_src.get("source_time") or "").strip())
+
+
+def _apply_source_fields(db, entry_id: int, ep) -> bool:
+    """按包内来源三键**更新**已有条目（2026-09-23，阶段 1-5）。
+
+    **有键才更新、键缺失一律不动**：包内三键全部缺失（旧包）⇒ 直接返回 False，不触碰库中来源。
+    返回是否写入。
+    """
+    if not any(k in ep for k in ("source_type", "source_name", "source_time")):
+        return False
+    st, sn, stm = _source_triple(ep)
+    try:
+        db.set_entry_source(entry_id, st, sn, stm)
+        return True
+    except Exception:
+        return False
+
+
+def _restore_pending_sources(db, max_id_before: int, pending_src: list) -> int:
+    """批量插入后按序写回**来源标注**（2026-09-23，阶段 1-5）。
+
+    与 `_restore_pending_*` 同一策略：仅当新增 id 数量与 pending 完全对应时才写
+    （宁可不写也不写错条目）；`pending_src` 中为 None 的条目跳过——旧包条目落库即
+    DEFAULT 'unspecified'（未标定），无需改写。返回写入条目数。
+    """
+    if not pending_src or not any(pending_src):
+        return 0
+    ids = _pending_ids(db, max_id_before, len(pending_src))
+    if ids is None:
+        return 0
+    n = 0
+    for eid, src in zip(ids, pending_src):
+        if not src:
+            continue
+        try:
+            db.set_entry_source(eid, src[0], src[1], src[2])
+            n += 1
+        except Exception:
+            pass
+    return n
+
+
 def _link_pending_locations(db, max_id_before: int, pending: list, pending_loc: list) -> int:
     """批量插入后，按"id 递增＝插入顺序"为新条目建立额外位置关联；返回建立的关联数。
 
@@ -793,6 +865,7 @@ def import_json(db, path, progress_cb=None, deletion_mode="apply",
     pending_tags = []  # 2026-09-13（1-C-4）：与 pending 一一对应的标签名列表（导入后写回）
     pending_img = []   # 2026-09-13（2-d）：与 pending 一一对应的图集（导入后写回）
     pending_loc = []   # 2026-09-17（FR-94）：与 pending 一一对应的"额外位置"分类 id 列表
+    pending_src = []   # 2026-09-23（阶段1-5）：与 pending 一一对应的"来源标注"三元组（None=包内无该键）
     seen_by_cat = {}  # category_id(None=未分类) -> 现有条目"详情内容"键集合
     for ep in add_entries:
         p = ep.get("path") or []
@@ -819,6 +892,7 @@ def import_json(db, path, progress_cb=None, deletion_mode="apply",
                          image_plan=e.image_plan, is_favorite=e.is_favorite)
             db.update_entry(_upd)
             _apply_v6_aux(db, _hit["id"], ep)                       # 标签/字段替换、图集并入
+            _apply_source_fields(db, _hit["id"], ep)                # 2026-09-23（1-5）：来源三键（有键才更新）
             _link_extra_locations(db, _hit["id"], cat_path, ep)     # FR-94：多位置
             updated += 1
             if progress_cb:
@@ -847,6 +921,11 @@ def import_json(db, path, progress_cb=None, deletion_mode="apply",
         pending_loc.append([_c for _c in (
             _resolve_category_by_path(cat_path, _x) for _x in _extra_location_paths(ep))
             if _c is not None])
+        # 2026-09-23（阶段1-5）：来源三键——**包内有键才写回**；旧包（无该键）记 None，
+        #   新条目落库即 DEFAULT 'unspecified'（未标定），无需改写。
+        pending_src.append(_source_triple(ep)
+                           if any(k in ep for k in ("source_type", "source_name", "source_time"))
+                           else None)
         done += 1
         if progress_cb:
             progress_cb(processed, total, e.name)
@@ -901,6 +980,9 @@ def import_json(db, path, progress_cb=None, deletion_mode="apply",
             pending_tags.append(sn.get("tags") or [])          # 2026-09-13（1-C-4）：快照中的标签
             pending_img.append(sn.get("images") or [])         # 2026-09-13（2-d）：快照中的图集
             pending_loc.append([])      # 2026-09-17：逆向恢复不带 locations（保持与 pending 对齐）
+            # 2026-09-23（阶段1-5，用户决策）：逆向恢复**沿用快照来源三键**
+            #   （快照＝`dict(entry)` 全列 ⇒ 恒含这三键；缺失/非法时归一为 'unspecified'）。
+            pending_src.append(_source_triple(sn))
             recovered += 1
             if progress_cb:
                 progress_cb(base + i + 1, total, f"逆向恢复条目：{e.name}")
@@ -914,6 +996,7 @@ def import_json(db, path, progress_cb=None, deletion_mode="apply",
         _restore_pending_tags(db, _max_id_before, pending_tags)   # 2026-09-13（1-C-4）：标签写回
         _restore_pending_images(db, _max_id_before, pending_img)  # 2026-09-13（2-d）：图集写回
         _link_pending_locations(db, _max_id_before, pending, pending_loc)  # 2026-09-17（FR-94）：多位置
+        _restore_pending_sources(db, _max_id_before, pending_src)  # 2026-09-23（1-5）：来源标注写回
 
     # 6. 删除同步（2026-08-29 增量备份增强 / 2026-09-08 V1.7.0 加固）：
     #    - 仅 deletion_mode="apply" 时执行；
@@ -1184,8 +1267,104 @@ def _json_v5_selftest() -> None:
         finally:
             db7.close()
 
+        # ---------- F. 来源标注随包（2026-09-23，阶段 1-5）---------- #
+        #   规格：复制条目 → 来源字段重置 → 导出 JSON 含来源字段 → 导入旧包默认 unspecified。
+        #   导出＝**逐键为空则不写**；导入＝**有键才更新、键缺失一律不动**。
+        src_db = _os.path.join(tmp, "source_src.db")
+        _ts_src = "2019-09-09 09:09:09"
+        _ts_now = "2026-09-23 10:20:30"
+        _e_ext = _e_mine = None
+        db8 = Database(src_db)
+        try:
+            _d8 = db8.add_domain("SRC根源")
+            _c8 = db8.add_category("SRC类", domain_id=_d8)
+            _e_ext = db8.add_entry(Entry(category_id=_c8, name="外部条目"))
+            db8.set_entry_source(_e_ext, "external", "某设计站", _ts_src)
+            # 「复制为我的条目」＝ copy_entry_to（**不写来源列** ⇒ 落库为 DEFAULT 'unspecified'）
+            #   + 随后 reset 来源三键（见 ui/main_window.py `_copy_entry_as_mine`）
+            _e_mine = db8.copy_entry_to(_e_ext, _c8)
+            assert db8.get_entry(_e_mine)["source_type"] == "unspecified", \
+                "copy_entry_to 不应写来源列（副本落库即未标定）"
+            assert db8.get_entry(_e_ext)["uuid"] != db8.get_entry(_e_mine)["uuid"], \
+                "副本须有独立 uuid"
+            db8.set_entry_source(_e_mine, "original", "", _ts_now)
+            _r8 = db8.get_entry(_e_mine)
+            assert (_r8["source_type"], _r8["source_name"], _r8["source_time"]) == \
+                ("original", "", _ts_now), dict(_r8)
+        finally:
+            db8.close()
+        src_json = _os.path.join(tmp, "source.json")
+        db8 = Database(src_db)
+        try:
+            assert export_json(db8, src_json) == 2
+        finally:
+            db8.close()
+        with open(src_json, "r", encoding="utf-8") as f:
+            _doc8 = {e["name"]: e for e in _json.load(f)["entries"]}
+        # 导出侧①：外部条目三键齐备（原样随包）
+        assert _doc8["外部条目"]["source_type"] == "external"
+        assert _doc8["外部条目"]["source_name"] == "某设计站"
+        assert _doc8["外部条目"]["source_time"] == _ts_src
+        # 导出侧②：副本 source_name 为空 ⇒ **不写该键**（逐键判断、文件不膨胀）
+        assert _doc8["外部条目（副本）"]["source_type"] == "original"
+        assert _doc8["外部条目（副本）"]["source_time"] == _ts_now
+        assert "source_name" not in _doc8["外部条目（副本）"], "空 source_name 不应写键"
+        # 导入侧①：三键随包恢复
+        src_dst = _os.path.join(tmp, "source_dst.db")
+        db9 = Database(src_dst)
+        try:
+            import_json(db9, src_json)
+            _g8 = {x["name"]: x for x in db9.list_all_entries()}
+            assert _g8["外部条目"]["source_type"] == "external"
+            assert _g8["外部条目"]["source_name"] == "某设计站"
+            assert _g8["外部条目"]["source_time"] == _ts_src
+            assert _g8["外部条目（副本）"]["source_type"] == "original"
+            assert (_g8["外部条目（副本）"]["source_name"] or "") == ""
+            assert _g8["外部条目（副本）"]["source_time"] == _ts_now
+        finally:
+            db9.close()
+        # 导入侧②：旧包（无来源三键）⇒ 新条目落库默认 'unspecified'（不报错）
+        legacy_src = _os.path.join(tmp, "legacy_source.json")
+        with open(legacy_src, "w", encoding="utf-8") as f:
+            _json.dump({"version": 5, "domains": [{"name": "LS根", "sort_order": 0}],
+                        "domain_links": {"LS根": ["LS类"]},
+                        "categories": [{"parent": None, "name": "LS类", "sort_order": 0}],
+                        "entries": [{"name": "无来源旧条目", "path": ["LS类"]}]},
+                       f, ensure_ascii=False)
+        db10 = Database(_os.path.join(tmp, "legacy_source.db"))
+        try:
+            import_json(db10, legacy_src)
+            _g10 = {x["name"]: x for x in db10.list_all_entries()}["无来源旧条目"]
+            assert _g10["source_type"] == "unspecified", dict(_g10)
+            assert (_g10["source_name"] or "") == "" and (_g10["source_time"] or "") == ""
+        finally:
+            db10.close()
+        # 导入侧③：「有键才更新」——同 uuid 已标 external，再导入**剥掉来源三键**的同包（走"更新"
+        #   路径）⇒ 不得把已标注来源洗成 unspecified（源端未提供 ≠ 源端为空）。
+        db11 = Database(src_dst)
+        try:
+            _g11 = {x["name"]: x for x in db11.list_all_entries()}["外部条目"]
+            assert _g11["source_type"] == "external", "上一步导入结果应作为'已标注'基线"
+            _stripped = _os.path.join(tmp, "stripped_source.json")
+            with open(src_json, "r", encoding="utf-8") as f:
+                _raw = _json.load(f)
+            for _e in _raw["entries"]:
+                for _k in ("source_type", "source_name", "source_time"):
+                    _e.pop(_k, None)
+            with open(_stripped, "w", encoding="utf-8") as f:
+                _json.dump(_raw, f, ensure_ascii=False)
+            import_json(db11, _stripped)
+            _g11b = {x["name"]: x for x in db11.list_all_entries()}["外部条目"]
+            assert _g11b["source_type"] == "external", "无来源键的包不得清洗已标注来源"
+            assert _g11b["source_name"] == "某设计站"
+            assert _g11b["source_time"] == _ts_src
+        finally:
+            db11.close()
+
         print("[JSON] v5 四层路径（分类父先子后·条目按最长路径落位·缺失回退）/字段定义随包"
               "（含 list 配置与内置改名）/标签·图集随包/判重幂等/旧版 v2 兼容/创建时间随包 通过")
+        print("[JSON] 来源标注随包（复制重置·导出逐键为空则不写·导入三键恢复·"
+              "旧包默认未标定·无键不清洗已标注）通过")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

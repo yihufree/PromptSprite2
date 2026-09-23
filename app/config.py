@@ -48,7 +48,10 @@ APP_NAME = "PromptSprite2"
 #       补记"批量删除项目类别"的专用口令（默认 123456）。
 #   升版依据：《项目需求规格和开发计划书 V9》§9.3（功能增量 → 提升版次）；
 #   用户于 2026-09-22 明确要求"将本次修改的版本设置为 V2.3.0"。
-APP_VERSION = "2.3.0"
+#   2026-09-23（阶段 1-6）：升版 V2.4.0 —— 阶段 1「来源标注」上线
+#     （条目来源三键 external/original/unspecified：库表迁移、来源标注对话框、
+#       工具栏来源筛选、复制为我的条目、JSON 导入导出随包）。
+APP_VERSION = "2.4.0"   # 2026-09-23 阶段1-6：V2.3.0 → V2.4.0（来源标注功能增量）
 
 # ---------- 开源仓库与许可（2026-09-22，用户要求 2） ----------
 # 供「设置 → 关于」页显示为**可点击链接**（原先写在只读文本框里，用户无法点开）。
@@ -111,6 +114,12 @@ META_DETAIL_HIDDEN_FIELDS = "settings_detail_hidden_fields"
 META_TAG_VIEW = "settings_tag_view"
 # 2026-09-13（1-C-4b）：是否"在条目处显示标签"（默认关；开启后条目区不自动加宽，超长截断+悬浮查看）
 META_SHOW_TAGS_IN_LIST = "settings_show_tags_in_list"
+# 2026-09-23 14:30（阶段1-4，用户确认"1-4 提前加常量"）：工具栏「全部 / 外部 / 自建」
+#   来源筛选的**当前选择**（记忆上次选择，重启后生效）。
+#   取值：""（全部＝不筛选）/ "external"（外部）/ "original"（自建）；
+#   与 database.SOURCE_TYPES 同口径（"unspecified" 不在筛选档内——工具栏只提供三档，
+#   未标定条目在"全部"里可见）。读取时非法值回退 ""（不筛选）。
+META_SOURCE_FILTER = "settings_source_filter"
 # 2026-09-14 11:15（阶段 4"热点词"）：热点词表与其"来源网址"列表，均为 JSON 数组字符串，存 meta 表。
 # 热点词表是"自动打标"⑧ 维度的候选词库（初始为空，可手动添加 / 文本导入 / 从来源网址抓取），
 # 与 tags 表无关：tags 是"已被使用过的标签"，热点词是"待匹配的词条"。
@@ -179,6 +188,26 @@ META_CHANGE_PACK_SNAPSHOT = "settings_change_pack_snapshot"  # 变更包是否�
 INCR_LEGACY_PREFIX = "增量"
 META_MIGRATE_MAPPING_VER = "migrate_mapping_version"  # 迁移映射表版本
 META_MIGRATE_WIZARD_DISMISSED = "migrate_wizard_dismissed"  # 迁移向导是否已取消过（避免每次启动打扰）
+
+# 2026-09-23（第 5 组需求 4）：目标选择对话框（关联到/复制到/移动到）「上次目标节点」——
+#   按对话框模式**分别记忆**（各 1 个 meta 键，共 3 键）；值为分类 id 的逗号拼接串
+#   （沿用 META_DETAIL_HIDDEN_FIELDS 的存储风格，无需 JSON）。
+#   下次以同模式打开对话框时，自动展开并选中/滚动到该节点（已失效或已在位置则忽略）。
+META_MOVE_TARGET_MOVE = "move_selector_target_move"
+META_MOVE_TARGET_LINK = "move_selector_target_link"
+META_MOVE_TARGET_COPY = "move_selector_target_copy"
+
+# 2026-09-23（第 5 组需求 5）：导出范围确认对话框（ExportScopeDialog）「上次导出范围节点」——
+#   导出范围有 3 种形态（project / domain / cat），故值用 "kind:id"（如 "cat:20"）承载；
+#   下次打开该对话框时，树自动展开并滚动到该节点，且该节点用"蓝色加粗＋下划线"与
+#   "本次导出范围（蓝色加粗）"区分开（用户批复：蓝加粗+下划线区分）。仅打开时展示，
+#   不影响导出范围本身（导出范围仍取主窗口当前选中项）。
+META_EXPORT_SCOPE_LAST = "export_scope_last"
+
+# 2026-09-23（第 5 组需求 1-②）：条目区「每页」档位记忆——档位与标签页对齐
+#   （50 / 100 / 200 / 500 / 不限），值存**数字串**（"不限"存 "0"）。
+#   注意：「全部」按钮是"一次性显示全部"，**不**改本档位、**不**写本键（用户批复）。
+META_ENTRY_PAGE_LIMIT = "entry_page_limit"
 
 # 项目根目录：config.py 位于 app/ 下，取其上级
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

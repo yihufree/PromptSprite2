@@ -383,6 +383,13 @@ class SettingsDialog(ctk.CTkToplevel):
                                              fg_color=_C_DANGER,
                                              command=self._open_tag_cleanup)
         self._mgr_btn_cleanup.pack(side="left", padx=(6, 0))
+        # 2026-09-23 16:05（阶段 1-3，用户决策 19）：新增「🏷 来源标注…」入口——
+        #   区分"来自外部的资料"与"自己创造"的提示词（整支批量设置 + 逐条修正）。
+        #   同样并入本行 Frame（只增宽不增高，保持本页高度断言安全）。
+        self._mgr_btn_source = ctk.CTkButton(_mgr_row, text="🏷 来源标注…", width=130,
+                                            fg_color=_C_TAG,
+                                            command=self._open_source_tag)
+        self._mgr_btn_source.pack(side="left", padx=(6, 0))
         _hint(pg_tag, "批量打标：先备份 + 先预演 + 二次确认 + 可精确撤销；"
                       "清理垃圾标签：先预览、执行前自动整库备份。", 5)
         # 2026-09-16（批次 12-2，用户要求 2）：取词是否用于"批量打标 / 离线打标"
@@ -395,18 +402,20 @@ class SettingsDialog(ctk.CTkToplevel):
         self.sw_fb_batch.grid(row=6, column=1, padx=pad, pady=8, sticky="w")
 
         # 2026-09-15（批次 6-2，用户选"锁定态允许打开设置、管理入口置灰"）：
-        #   本页 4 个管理入口都会**改数据** ⇒ 锁定态一律置灰；**设置对话框本身仍可打开**
+        #   本页 5 个管理入口都会**改数据** ⇒ 锁定态一律置灰；**设置对话框本身仍可打开**
         #   （窗口/视图/外观等纯偏好不受影响）。锁定状态由主窗口持有，故从 master 读取。
         # 2026-09-17：新增「🧹 清理垃圾标签…」——同样会改数据，故一并纳入置灰集合（本页 4 个）。
+        # 2026-09-23（阶段 1-3）：新增「🏷 来源标注…」——同样会改数据，纳入置灰集合（本页 5 个）。
         _locked = bool(getattr(self.master, "_lock_on", False))
         for _b in (self._mgr_btn_dict, self._mgr_btn_hot, self._mgr_btn_cleanup,
-                   self._mgr_btn_field, self._mgr_btn_batch):
+                   self._mgr_btn_field, self._mgr_btn_batch, self._mgr_btn_source):
             try:
                 _b.configure(state=("disabled" if _locked else "normal"))
             except Exception:
                 pass
         if _locked:
-            _hint(pg_tag, "⚠ 已锁定：以上 4 个管理入口暂不可用（解锁后即可使用）", 8, color="#C77700")
+            # 2026-09-23（阶段 1-3）：本页管理入口 4 → 5 个（新增「🏷 来源标注…」），文案同步更正。
+            _hint(pg_tag, "⚠ 已锁定：以上 5 个管理入口暂不可用（解锁后即可使用）", 8, color="#C77700")
             _hint(pg_field, "⚠ 已锁定：字段管理暂不可用（解锁后即可使用）", 2, color="#C77700")
 
         # ---------------- 标签推荐策略与顺序（2026-09-16 批次 11-6，用户确认问题 2） ----------------
@@ -689,6 +698,17 @@ class SettingsDialog(ctk.CTkToplevel):
         与「🏷 热点词管理…」同一做法：经主窗口方法调用（避免本模块反向依赖该对话框）。
         """
         fn = getattr(self.master, "_open_batch_tag", None)
+        if not callable(fn):
+            return
+        fn()
+
+    def _open_source_tag(self) -> None:
+        """打开主窗口的「🏷 来源标注」对话框（2026-09-23 阶段 1-3 新增入口）。
+
+        与「🤖 批量智能打标…」同一做法：经主窗口方法调用（避免本模块反向依赖该对话框）。
+        此入口不预选范围（默认「🌐 全库」）；右键菜单入口才会预选节点。
+        """
+        fn = getattr(self.master, "_open_source_tag", None)
         if not callable(fn):
             return
         fn()
